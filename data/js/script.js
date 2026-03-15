@@ -27,6 +27,8 @@
     // ── Configuration ──────────────────────────────────────
     const CONFIG = {
         POLL_INTERVAL: 3000,        // Status poll every 3 seconds
+        LOGS_REFRESH_INTERVAL: 15000,
+        USERS_REFRESH_INTERVAL: 20000,
         TOAST_DURATION: 3500,       // Toast notification display time
         GUEST_CODE_EXPIRY: 300,     // 5 minutes in seconds
         RFID_POLL_INTERVAL: 1000,   // RFID scan poll every 1 second
@@ -45,6 +47,11 @@
         connected: false,
         locked: true,
         alarm: false,
+        pollTimer: null,
+        logsTimer: null,
+        usersTimer: null,
+        lastUsersHash: '',
+        lastLogsHash: '',
         guestCode: null,
         guestExpiry: 0,
         guestTimer: null,
@@ -143,8 +150,15 @@
         try {
             const data = await apiFetch(CONFIG.API.STATUS);
             setConnectionState(true);
-            updateLockUI(data.locked);
-            updateAlarmState(data.alarm);
+
+            if (state.locked !== data.locked) {
+                updateLockUI(data.locked);
+            }
+
+            if (state.alarm !== data.alarm) {
+                updateAlarmState(data.alarm);
+            }
+
             state.locked = data.locked;
             state.alarm = data.alarm;
         } catch {
@@ -228,7 +242,7 @@
 
             if (data.success && data.code) {
                 displayGuestCode(data.code, data.expiresIn || CONFIG.GUEST_CODE_EXPIRY);
-                showToast('Guest code generated: ' + data.code, 'success');
+                showToast(`Guest code generated\n${data.code}`, 'success');
             } else {
                 showToast('Failed to generate guest code', 'error');
             }
@@ -294,6 +308,13 @@
         try {
             const data = await apiFetch(CONFIG.API.LOGS);
             const logs = data.logs || data || [];
+
+            const logsHash = JSON.stringify(logs);
+            if (logsHash === state.lastLogsHash) {
+                return;
+            }
+
+            state.lastLogsHash = logsHash;
             renderLogs(logs);
         } catch {
             DOM.logsTableBody.innerHTML =
@@ -310,20 +331,41 @@
             return;
         }
 
+        const isCompactMobile = window.matchMedia('(max-width: 640px)').matches;
+
         DOM.logsTableBody.innerHTML = logs.map(log => {
             const statusClass = log.status === 'success' ? 'status-success'
                               : log.status === 'alarm'   ? 'status-alarm'
                               : 'status-error';
-            const statusLabel = log.status === 'success' ? '\u2705 Granted'
-                              : log.status === 'alarm'   ? '\uD83D\uDEA8 Alarm'
-                              : '\u274C Denied';
+            const statusLabel = isCompactMobile
+                ? (log.status === 'success' ? 'OK' : log.status === 'alarm' ? 'ALRM' : 'DENY')
+                : (log.status === 'success' ? '\u2705 Granted'
+                   : log.status === 'alarm'   ? '\uD83D\uDEA8 Alarm'
+                   : '\u274C Denied');
+
+            const displayTime = formatLogTime(log.time, isCompactMobile);
+
             return `<tr>
-                <td class="col-time">${escapeHtml(log.time || '--')}</td>
+                <td class="col-time">${escapeHtml(displayTime)}</td>
                 <td class="col-user">${escapeHtml(log.user || 'Unknown')}</td>
                 <td class="col-method"><span class="method-badge">${escapeHtml(log.method || '--')}</span></td>
                 <td><span class="status-badge ${statusClass}">${statusLabel}</span></td>
             </tr>`;
         }).join('');
+    }
+
+    function formatLogTime(timeValue, compact) {
+        if (!timeValue) return '--';
+        if (!compact) return String(timeValue);
+
+        const matched = String(timeValue).match(/(\d{2}:\d{2})(?::\d{2})?/);
+        if (matched && matched[1]) {
+            return matched[1];
+        }
+
+        return String(timeValue).length > 8
+            ? String(timeValue).slice(0, 8)
+            : String(timeValue);
     }
 
     // ════════════════════════════════════════════════════════
@@ -334,6 +376,13 @@
         try {
             const data = await apiFetch(CONFIG.API.USERS);
             const users = data.users || data || [];
+
+            const usersHash = JSON.stringify(users);
+            if (usersHash === state.lastUsersHash) {
+                return;
+            }
+
+            state.lastUsersHash = usersHash;
             renderUsers(users);
         } catch {
             DOM.usersGrid.innerHTML =
@@ -344,7 +393,7 @@
     function renderUsers(users) {
         if (!Array.isArray(users) || users.length === 0) {
             DOM.usersGrid.innerHTML =
-                '<p style="color:var(--text-muted);text-align:center;padding:2rem;">' +
+                '<p class="users-empty">' +
                 'No users registered. Tap "Add User" to get started.</p>';
             return;
         }
@@ -596,6 +645,26 @@
         }, CONFIG.TOAST_DURATION);
     }
 
+    function startPollingLoops() {
+        if (!state.pollTimer) {
+            state.pollTimer = setInterval(() => {
+                if (!document.hidden) pollStatus();
+            }, CONFIG.POLL_INTERVAL);
+        }
+
+        if (!state.logsTimer) {
+            state.logsTimer = setInterval(() => {
+                if (!document.hidden) loadLogs();
+            }, CONFIG.LOGS_REFRESH_INTERVAL);
+        }
+
+        if (!state.usersTimer) {
+            state.usersTimer = setInterval(() => {
+                if (!document.hidden) loadUsers();
+            }, CONFIG.USERS_REFRESH_INTERVAL);
+        }
+    }
+
     // ════════════════════════════════════════════════════════
     //  FORM HELPERS
     // ════════════════════════════════════════════════════════
@@ -669,6 +738,15 @@
                 if (DOM.modalOverlay.dataset.visible === 'true') hideModal();
             }
         });
+
+        // Pause heavy UI refresh work while tab is not visible
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) {
+                pollStatus();
+                loadLogs();
+                loadUsers();
+            }
+        });
     }
 
     // ════════════════════════════════════════════════════════
@@ -685,12 +763,7 @@
         loadLogs();
         loadUsers();
 
-        // Start periodic status polling
-        setInterval(pollStatus, CONFIG.POLL_INTERVAL);
-
-        // Refresh logs and users every 10 seconds
-        setInterval(loadLogs, 10000);
-        setInterval(loadUsers, 15000);
+        startPollingLoops();
 
         console.log('[SecureLock] Dashboard ready');
     }

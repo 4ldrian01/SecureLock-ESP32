@@ -30,11 +30,19 @@ void SecurityManager::init() {
     pinMode(PIN_BUZZER, OUTPUT);
     pinMode(PIN_VIBE, INPUT);
     
-    digitalWrite(PIN_BUZZER, LOW);
+    _setBuzzer(false);
     
     Serial.println("[SECURITY] Initialized");
-    Serial.println("[SECURITY] Vibration sensor: ACTIVE");
-    Serial.println("[SECURITY] Buzzer: READY");
+    Serial.print("[SECURITY] Vibration sensor GPIO: ");
+    Serial.println(PIN_VIBE);
+    Serial.print("[SECURITY] Buzzer GPIO: ");
+    Serial.println(PIN_BUZZER);
+    Serial.print("[SECURITY] Buzzer polarity: ");
+#if SECURELOCK_BUZZER_ACTIVE_HIGH
+    Serial.println("ACTIVE-HIGH (HIGH = ON)");
+#else
+    Serial.println("ACTIVE-LOW (LOW = ON)");
+#endif
 }
 
 /**
@@ -187,5 +195,9 @@ void SecurityManager::_updateBuzzer() {
  * Private: Set buzzer state
  */
 void SecurityManager::_setBuzzer(bool on) {
+#if SECURELOCK_BUZZER_ACTIVE_HIGH
     digitalWrite(PIN_BUZZER, on ? HIGH : LOW);
+#else
+    digitalWrite(PIN_BUZZER, on ? LOW : HIGH);
+#endif
 }

@@ -64,12 +64,12 @@ void LockManager::update() {
 /**
  * Unlock the door
  * WHAT: Energizes relay to open solenoid lock
- * HOW: Sets GPIO 4 HIGH, starts 5-second auto-lock timer
+ * HOW: Sets relay GPIO HIGH, starts 5-second auto-lock timer
  * WHY: Provides temporary access while ensuring automatic re-locking for security
  */
 void LockManager::unlock() {
     if (_locked) {
-        _setRelay(true);              // Energize relay (GPIO 4 HIGH)
+        _setRelay(true);              // Energize relay
         _locked = false;
         _unlockStartTime = millis();  // Start timer for auto-lock
         _autoLockActive = true;

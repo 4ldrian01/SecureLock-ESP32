@@ -1,0 +1,8 @@
+{
+  "name": "WebServer",
+  "version": "1.0.0",
+  "dependencies": {
+    "esphome/ESPAsyncWebServer-esphome": "^3.4.0",
+    "bblanchon/ArduinoJson": "^7.0.4"
+  }
+}

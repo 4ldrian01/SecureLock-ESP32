@@ -28,14 +28,53 @@ AuthHandler::AuthHandler()
  * Initialize hardware
  */
 void AuthHandler::init() {
+    // Prepare RFID control pins before SPI init
+    pinMode(PIN_RFID_SS, OUTPUT);
+    digitalWrite(PIN_RFID_SS, HIGH);
+
+    pinMode(PIN_RFID_RST, OUTPUT);
+    digitalWrite(PIN_RFID_RST, LOW);
+    delay(20);
+    digitalWrite(PIN_RFID_RST, HIGH);
+    delay(50);
+
     // Initialize SPI for RFID
-    SPI.begin(18, 19, 23, PIN_RFID_SS);  // SCK, MISO, MOSI, SS
+    SPI.begin(
+        SECURELOCK_PIN_SPI_SCK,
+        SECURELOCK_PIN_SPI_MISO,
+        SECURELOCK_PIN_SPI_MOSI,
+        PIN_RFID_SS
+    );  // SCK, MISO, MOSI, SS
+
     _rfid.PCD_Init();
+    _rfid.PCD_AntennaOn();
     
     // Check RFID reader
-    byte version = _rfid.PCD_ReadRegister(_rfid.VersionReg);
+    byte version = 0x00;
+    for (int attempt = 0; attempt < 3; attempt++) {
+        version = _rfid.PCD_ReadRegister(_rfid.VersionReg);
+        if (version != 0x00 && version != 0xFF) {
+            break;
+        }
+
+        _rfid.PCD_Reset();
+        delay(50);
+        _rfid.PCD_AntennaOn();
+        delay(50);
+    }
+
     if (version == 0x00 || version == 0xFF) {
         Serial.println("[AUTH] ⚠️ RFID reader not detected! Check wiring.");
+        Serial.print("[AUTH] RFID pins → SS=");
+        Serial.print(PIN_RFID_SS);
+        Serial.print(", RST=");
+        Serial.print(PIN_RFID_RST);
+        Serial.print(", SCK=");
+        Serial.print(SECURELOCK_PIN_SPI_SCK);
+        Serial.print(", MOSI=");
+        Serial.print(SECURELOCK_PIN_SPI_MOSI);
+        Serial.print(", MISO=");
+        Serial.println(SECURELOCK_PIN_SPI_MISO);
     } else {
         Serial.print("[AUTH] RFID RC522 v");
         Serial.print(version, HEX);
@@ -50,6 +89,7 @@ void AuthHandler::init() {
     
     // Load user list from NVS
     _loadUserList();
+    _migrateUserStorageKeys();
     
     Serial.println("[AUTH] Initialized");
     Serial.println("[AUTH] Keypad: 4x4 Matrix");
@@ -188,9 +228,20 @@ AuthResult AuthHandler::validatePIN(const String& pin) {
  * Add new user
  */
 bool AuthHandler::addUser(const String& uid, const String& pin, const String& name) {
-    String key = "user_" + uid;
+    String key = _buildUserKey(uid);
     String value = pin + ":" + name;
-    _prefs.putString(key.c_str(), value);
+    size_t bytesWritten = _prefs.putString(key.c_str(), value);
+    if (bytesWritten == 0) {
+        Serial.print("[AUTH] ❌ Failed to store user record for UID: ");
+        Serial.println(uid);
+        return false;
+    }
+
+    // Cleanup legacy key if present
+    String legacyKey = _buildLegacyUserKey(uid);
+    if (legacyKey != key && _prefs.isKey(legacyKey.c_str())) {
+        _prefs.remove(legacyKey.c_str());
+    }
     
     // Track UID in list (avoid duplicates)
     bool alreadyTracked = false;
@@ -218,13 +269,22 @@ bool AuthHandler::addUser(const String& uid, const String& pin, const String& na
  * Remove user
  */
 bool AuthHandler::removeUser(const String& uid) {
-    String key = "user_" + uid;
-    
-    if (!_prefs.isKey(key.c_str())) {
+    String key = _buildUserKey(uid);
+    String legacyKey = _buildLegacyUserKey(uid);
+
+    bool removedRecord = false;
+    if (_prefs.isKey(key.c_str())) {
+        _prefs.remove(key.c_str());
+        removedRecord = true;
+    }
+    if (legacyKey != key && _prefs.isKey(legacyKey.c_str())) {
+        _prefs.remove(legacyKey.c_str());
+        removedRecord = true;
+    }
+
+    if (!removedRecord) {
         return false;
     }
-    
-    _prefs.remove(key.c_str());
     
     // Remove from tracked UID list
     for (int i = 0; i < _userCount; i++) {
@@ -250,16 +310,20 @@ bool AuthHandler::removeUser(const String& uid) {
  * Check if user exists
  */
 bool AuthHandler::userExists(const String& uid) {
-    String key = "user_" + uid;
-    return _prefs.isKey(key.c_str());
+    String key = _buildUserKey(uid);
+    if (_prefs.isKey(key.c_str())) {
+        return true;
+    }
+
+    String legacyKey = _buildLegacyUserKey(uid);
+    return legacyKey != key && _prefs.isKey(legacyKey.c_str());
 }
 
 /**
  * Get user name by UID
  */
 String AuthHandler::getUserName(const String& uid) {
-    String key = "user_" + uid;
-    String value = _prefs.getString(key.c_str(), "");
+    String value = _getUserValue(uid);
     
     if (value.length() == 0) return "Unknown";
     
@@ -346,8 +410,7 @@ void AuthHandler::performFactoryReset() {
  */
 bool AuthHandler::_validateStoredPIN(const String& pin) {
     for (int i = 0; i < _userCount; i++) {
-        String key = "user_" + _userUIDs[i];
-        String value = _prefs.getString(key.c_str(), "");
+        String value = _getUserValue(_userUIDs[i]);
         
         if (value.length() > 0) {
             int colonIndex = value.indexOf(':');
@@ -379,6 +442,83 @@ String AuthHandler::_uidToString(byte* uid, byte size) {
 }
 
 /**
+ * Private: Build compact NVS key (NVS key max length is 15 chars)
+ */
+String AuthHandler::_buildUserKey(const String& uid) const {
+    // 64-bit FNV-1a hash, truncated to 52 bits (13 hex chars)
+    uint64_t hash = 1469598103934665603ULL;
+    for (size_t i = 0; i < uid.length(); i++) {
+        hash ^= static_cast<uint8_t>(uid.charAt(i));
+        hash *= 1099511628211ULL;
+    }
+
+    uint64_t compact = (hash & 0x1FFFFFFFFFFFFFULL);
+    char key[16];
+    snprintf(key, sizeof(key), "u_%013llX", static_cast<unsigned long long>(compact));
+    return String(key);
+}
+
+/**
+ * Private: Build legacy user key format used by older firmware
+ */
+String AuthHandler::_buildLegacyUserKey(const String& uid) const {
+    return "user_" + uid;
+}
+
+/**
+ * Private: Read user value from compact key, fallback to legacy key
+ */
+String AuthHandler::_getUserValue(const String& uid) {
+    String key = _buildUserKey(uid);
+    if (_prefs.isKey(key.c_str())) {
+        return _prefs.getString(key.c_str(), "");
+    }
+
+    String legacyKey = _buildLegacyUserKey(uid);
+    if (legacyKey != key && _prefs.isKey(legacyKey.c_str())) {
+        return _prefs.getString(legacyKey.c_str(), "");
+    }
+
+    return "";
+}
+
+/**
+ * Private: Migrate legacy key format to compact key format
+ */
+void AuthHandler::_migrateUserStorageKeys() {
+    int migrated = 0;
+
+    for (int i = 0; i < _userCount; i++) {
+        String uid = _userUIDs[i];
+        String compactKey = _buildUserKey(uid);
+        String legacyKey = _buildLegacyUserKey(uid);
+
+        if (_prefs.isKey(compactKey.c_str())) {
+            continue;
+        }
+
+        if (!_prefs.isKey(legacyKey.c_str())) {
+            continue;
+        }
+
+        String value = _prefs.getString(legacyKey.c_str(), "");
+        if (value.length() == 0) {
+            continue;
+        }
+
+        if (_prefs.putString(compactKey.c_str(), value) > 0) {
+            _prefs.remove(legacyKey.c_str());
+            migrated++;
+        }
+    }
+
+    if (migrated > 0) {
+        Serial.print("[AUTH] Migrated legacy user keys: ");
+        Serial.println(migrated);
+    }
+}
+
+/**
  * Private: Save user UID list to NVS for persistence
  */
 void AuthHandler::_saveUserList() {
@@ -396,6 +536,7 @@ void AuthHandler::_saveUserList() {
 void AuthHandler::_loadUserList() {
     String list = _prefs.getString("user_list", "");
     _userCount = 0;
+    bool deduplicated = false;
     
     if (list.length() == 0) return;
     
@@ -407,9 +548,25 @@ void AuthHandler::_loadUserList() {
         String uid = list.substring(start, comma);
         uid.trim();
         if (uid.length() > 0) {
-            _userUIDs[_userCount++] = uid;
+            bool exists = false;
+            for (int i = 0; i < _userCount; i++) {
+                if (_userUIDs[i] == uid) {
+                    exists = true;
+                    deduplicated = true;
+                    break;
+                }
+            }
+
+            if (!exists && _userCount < MAX_USERS) {
+                _userUIDs[_userCount++] = uid;
+            }
         }
         start = comma + 1;
+    }
+
+    if (deduplicated) {
+        _saveUserList();
+        Serial.println("[AUTH] Deduplicated user list in NVS");
     }
     
     Serial.print("[AUTH] Loaded ");

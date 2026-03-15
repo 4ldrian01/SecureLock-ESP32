@@ -6,8 +6,8 @@
  * PURPOSE: Handles multi-factor authentication (RFID + Keypad + Duress)
  * 
  * HARDWARE:
- *   - RFID RC522 (SPI): SS=5, SCK=18, MOSI=23, MISO=19, RST=21
- *   - Keypad 4x4: Cols[34,35,36,39] Rows[32,33,25,26]
+ *   - RFID RC522 (SPI): SS=5, SCK=18, MOSI=23, MISO=19, RST=4
+ *   - Keypad 4x4 (safe scan): Rows[34,35,36,39], Cols[32,33,25,26]
  *   - Factory Reset: GPIO 0 (BOOT button - long press)
  * 
  * FEATURES:
@@ -48,6 +48,7 @@
 #include <MFRC522.h>
 #include <Keypad.h>
 #include <Preferences.h>
+#include "hardware_pins.h"
 
 // Authentication result codes
 enum AuthResult {
@@ -92,15 +93,25 @@ public:
     
 private:
     // Hardware pins
-    static const int PIN_RFID_SS = 5;
-    static const int PIN_RFID_RST = 21;
-    static const int PIN_FACTORY = 0;
+    static const int PIN_RFID_SS = SECURELOCK_PIN_RFID_SS;
+    static const int PIN_RFID_RST = SECURELOCK_PIN_RFID_RST;
+    static const int PIN_FACTORY = SECURELOCK_PIN_BOOT;
     
     // Keypad configuration
     static const byte ROWS = 4;
     static const byte COLS = 4;
-    byte _rowPins[ROWS] = {32, 33, 25, 26};
-    byte _colPins[COLS] = {34, 35, 36, 39};
+    byte _rowPins[ROWS] = {
+        SECURELOCK_PIN_KEYPAD_R1,
+        SECURELOCK_PIN_KEYPAD_R2,
+        SECURELOCK_PIN_KEYPAD_R3,
+        SECURELOCK_PIN_KEYPAD_R4
+    };
+    byte _colPins[COLS] = {
+        SECURELOCK_PIN_KEYPAD_C1,
+        SECURELOCK_PIN_KEYPAD_C2,
+        SECURELOCK_PIN_KEYPAD_C3,
+        SECURELOCK_PIN_KEYPAD_C4
+    };
     char _keys[ROWS][COLS] = {
         {'1', '2', '3', 'A'},
         {'4', '5', '6', 'B'},
@@ -129,6 +140,10 @@ private:
     String _readRFIDUID();
     bool _validateStoredPIN(const String& pin);
     String _uidToString(byte* uid, byte size);
+    String _buildUserKey(const String& uid) const;
+    String _buildLegacyUserKey(const String& uid) const;
+    String _getUserValue(const String& uid);
+    void _migrateUserStorageKeys();
     void _saveUserList();
     void _loadUserList();
     

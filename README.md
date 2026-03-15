@@ -106,6 +106,14 @@ Keypad 4x4 Matrix:
 
 Factory Reset:
   GPIO 0 (BOOT button) - Hold 10 seconds
+
+Advanced buzzer override:
+  - Set `SECURELOCK_PIN_BUZZER` and `SECURELOCK_BUZZER_ACTIVE_HIGH` in `include/secrets.h`
+  - Use ESP32 GPIO labels, not breadboard row/column numbers
+
+Centralized pin map:
+  - Core GPIO mapping is centralized in `include/hardware_pins.h`
+  - Components (`LockManager`, `SecurityManager`, `AuthHandler`) read pins from this file
 ```
 
 ---

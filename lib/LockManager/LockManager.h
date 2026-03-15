@@ -6,9 +6,9 @@
  * PURPOSE: Controls physical lock hardware (Relay, LED, Reed Switch)
  * 
  * HARDWARE:
- *   - Relay (Solenoid): GPIO 4 (Active HIGH to unlock)
- *   - Status LED: GPIO 2 (Onboard LED)
- *   - Reed Switch: GPIO 13 (INPUT_PULLUP, HIGH=Door Open)
+ *   - Relay (Solenoid): SECURELOCK_PIN_RELAY (Active HIGH to unlock)
+ *   - Status LED: SECURELOCK_PIN_LED
+ *   - Reed Switch: SECURELOCK_PIN_DOOR (INPUT_PULLUP, HIGH=Door Open)
  * 
  * FEATURES:
  *   - Non-blocking auto-lock timer (5 seconds)
@@ -31,6 +31,7 @@
 #define LOCK_MANAGER_H
 
 #include <Arduino.h>
+#include "hardware_pins.h"
 
 class LockManager {
 public:
@@ -59,9 +60,9 @@ public:
     
 private:
     // Hardware pins
-    static const int PIN_RELAY = 4;
-    static const int PIN_LED = 2;
-    static const int PIN_DOOR = 13;
+    static const int PIN_RELAY = SECURELOCK_PIN_RELAY;
+    static const int PIN_LED = SECURELOCK_PIN_LED;
+    static const int PIN_DOOR = SECURELOCK_PIN_DOOR;
     
     // Timing
     static const unsigned long DEFAULT_UNLOCK_TIME = 5000;  // 5 seconds

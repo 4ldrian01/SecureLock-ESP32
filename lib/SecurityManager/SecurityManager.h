@@ -37,6 +37,7 @@
 #define SECURITY_MANAGER_H
 
 #include <Arduino.h>
+#include "hardware_pins.h"
 
 class SecurityManager {
 public:
@@ -63,8 +64,8 @@ public:
     
 private:
     // Hardware pins
-    static const int PIN_BUZZER = 14;
-    static const int PIN_VIBE = 27;
+    static const int PIN_BUZZER = SECURELOCK_PIN_BUZZER;
+    static const int PIN_VIBE = SECURELOCK_PIN_VIBRATION;
     
     // Timing constants
     static const unsigned long BEEP_DURATION = 100;      // ms

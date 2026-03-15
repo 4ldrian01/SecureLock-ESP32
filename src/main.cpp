@@ -21,13 +21,9 @@
  * 
  * HARDWARE:
  *   - ESP32 DevKit V1 (30-Pin)
- *   - Solenoid Lock: GPIO 4 (Relay)
- *   - Status LED: GPIO 2
- *   - Buzzer: GPIO 14
- *   - Vibration: GPIO 27
- *   - Reed Switch: GPIO 13
- *   - RFID RC522: SPI (SS=5, RST=21)
- *   - Keypad 4x4: Cols[34,35,36,39] Rows[32,33,25,26]
+ *   - GPIO assignments are centralized in include/hardware_pins.h
+ *   - RFID RC522: SPI (SS=5, RST=4, SCK=18, MOSI=23, MISO=19)
+ *   - Keypad 4x4 uses safe scan mapping (Rows[34,35,36,39], Cols[32,33,25,26])
  * 
  * DEPLOYMENT:
  *   1. Edit include/secrets.h (WiFi credentials)
@@ -66,6 +62,12 @@ UniversalTelegramBot* bot = nullptr;
 
 bool systemArmed = true;        // System armed for intrusion detection
 String currentUser = "";        // Current authenticated user
+
+// ============================================================
+// FORWARD DECLARATIONS
+// ============================================================
+
+void handleAuthResult(AuthResult result, const char* method);
 
 // ============================================================
 // SETUP

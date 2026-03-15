@@ -5,6 +5,7 @@
  */
 
 #include "WebServer.h"
+#include <time.h>
 
 /**
  * Constructor - Store component references
@@ -82,6 +83,19 @@ void WebServer::_initWiFi(const char* ssid, const char* password) {
     if (WiFi.status() == WL_CONNECTED) {
         _wifiConnected = true;
         _ipAddress = WiFi.localIP().toString();
+
+        // Initialize NTP clock (UTC) for accurate world-time logging
+        configTzTime("UTC0", "pool.ntp.org", "time.google.com", "time.nist.gov");
+
+        bool timeReady = false;
+        for (int i = 0; i < 15; i++) {
+            time_t now = time(nullptr);
+            if (now > 1700000000) {
+                timeReady = true;
+                break;
+            }
+            delay(200);
+        }
         
         Serial.println("[WiFi] ✓ Connected!");
         Serial.print("[WiFi] IP: ");
@@ -89,6 +103,9 @@ void WebServer::_initWiFi(const char* ssid, const char* password) {
         Serial.print("[WiFi] RSSI: ");
         Serial.print(WiFi.RSSI());
         Serial.println(" dBm");
+
+        Serial.print("[TIME] NTP sync: ");
+        Serial.println(timeReady ? "OK (UTC)" : "PENDING (using fallback until synced)");
     } else {
         _wifiConnected = false;
         Serial.println("[WiFi] ✗ Connection failed");
@@ -227,29 +244,42 @@ void WebServer::_setupRoutes() {
  * Handle root path - Serve index.html
  */
 void WebServer::_handleRoot(AsyncWebServerRequest* request) {
-    String path = "/html/index.html";
-    
-    if (LittleFS.exists(path)) {
-        request->send(LittleFS, path, "text/html");
-        Serial.println("[WEB] GET / → index.html");
-    } else {
-        Serial.println("[WEB] ✗ index.html not found!");
-        request->send(404, "text/plain", 
-            "Dashboard not found.\n\n"
-            "Run: pio run --target uploadfs\n\n"
-            "Ensure data/html/index.html exists");
+    const char* candidates[] = {
+        "/html/index.html",
+        "/index.html"
+    };
+
+    for (const char* path : candidates) {
+        if (LittleFS.exists(path)) {
+            request->send(LittleFS, path, "text/html");
+            Serial.print("[WEB] GET / → ");
+            Serial.println(path);
+            return;
+        }
     }
+
+    Serial.println("[WEB] ✗ index.html not found in LittleFS!");
+    request->send(404, "text/html",
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>SecureLock Dashboard Missing</title></head><body>"
+        "<h2>SecureLock Dashboard files are missing</h2>"
+        "<p>Upload LittleFS data first, then reload this page.</p>"
+        "<pre>platformio run --target uploadfs</pre>"
+        "<p>Expected file: <code>data/html/index.html</code></p>"
+        "</body></html>");
 }
 
 /**
  * Handle CSS request
  */
 void WebServer::_handleCSS(AsyncWebServerRequest* request) {
-    String path = "/css/style.css";
-    
-    if (LittleFS.exists(path)) {
-        request->send(LittleFS, path, "text/css");
+    if (LittleFS.exists("/css/style.css")) {
+        request->send(LittleFS, "/css/style.css", "text/css");
         Serial.println("[WEB] GET /css/style.css → OK");
+    } else if (LittleFS.exists("/style.css")) {
+        request->send(LittleFS, "/style.css", "text/css");
+        Serial.println("[WEB] GET /css/style.css → fallback /style.css");
     } else {
         Serial.println("[WEB] ✗ style.css not found!");
         request->send(404, "text/plain", "CSS not found");
@@ -260,11 +290,12 @@ void WebServer::_handleCSS(AsyncWebServerRequest* request) {
  * Handle JavaScript request
  */
 void WebServer::_handleJS(AsyncWebServerRequest* request) {
-    String path = "/js/script.js";
-    
-    if (LittleFS.exists(path)) {
-        request->send(LittleFS, path, "application/javascript");
+    if (LittleFS.exists("/js/script.js")) {
+        request->send(LittleFS, "/js/script.js", "application/javascript");
         Serial.println("[WEB] GET /js/script.js → OK");
+    } else if (LittleFS.exists("/script.js")) {
+        request->send(LittleFS, "/script.js", "application/javascript");
+        Serial.println("[WEB] GET /js/script.js → fallback /script.js");
     } else {
         Serial.println("[WEB] ✗ script.js not found!");
         request->send(404, "text/plain", "JavaScript not found");
@@ -498,7 +529,7 @@ void WebServer::_handleAPIAddUser(AsyncWebServerRequest* request, uint8_t* data,
             file.close();
         }
         
-        if (!usersDoc.containsKey("users")) {
+        if (!usersDoc["users"].is<JsonArray>()) {
             usersDoc["users"] = JsonArray();
         }
         
@@ -690,7 +721,7 @@ void WebServer::_addLogEntry(const String& user, const String& method, const Str
         }
     }
     
-    if (!logsDoc.containsKey("logs")) {
+    if (!logsDoc["logs"].is<JsonArray>()) {
         logsDoc["logs"] = JsonArray();
     }
     
@@ -701,12 +732,20 @@ void WebServer::_addLogEntry(const String& user, const String& method, const Str
         logs.remove(0);
     }
     
-    // Build time string from uptime
-    unsigned long sec = millis() / 1000;
-    unsigned long m = (sec / 60) % 60;
-    unsigned long h = (sec / 3600) % 24;
-    char timeStr[16];
-    snprintf(timeStr, sizeof(timeStr), "%02lu:%02lu", h, m);
+    // Build accurate world time (UTC) when NTP is available.
+    // Fallback to uptime-style time if sync is not ready yet.
+    char timeStr[32];
+    time_t now = time(nullptr);
+    if (now > 1700000000) {
+        struct tm utcTime;
+        gmtime_r(&now, &utcTime);
+        strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M:%S UTC", &utcTime);
+    } else {
+        unsigned long sec = millis() / 1000;
+        unsigned long m = (sec / 60) % 60;
+        unsigned long h = (sec / 3600) % 24;
+        snprintf(timeStr, sizeof(timeStr), "%02lu:%02lu (uptime)", h, m);
+    }
     
     JsonObject entry = logs.add<JsonObject>();
     entry["time"]   = String(timeStr);

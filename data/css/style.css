@@ -146,6 +146,13 @@ h1, h2, h3, h4, h5, h6 {
     margin: 0 auto;
     padding: var(--space-md);
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+        "header"
+        "hero"
+        "guest"
+        "logs"
+        "users";
     gap: var(--space-lg);
 }
 
@@ -2262,5 +2269,535 @@ textarea:focus {
     .btn-dialog-cancel,
     .btn-dialog-submit {
         width: 100%;
+    }
+}
+
+/* ============================================================
+   RESPONSIVE STABILIZATION LAYER (MOBILE + TABLET)
+   - Resolves duplicated selector conflicts from earlier sections
+   - Ensures card separation/stacking and modal usability
+   ============================================================ */
+
+/* Keep dashboard status badge styling independent from log status badges */
+.header .status-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-sm);
+    background: var(--surface-glass);
+    border: 1px solid var(--border-glass);
+    border-radius: var(--radius-full);
+    padding: var(--space-sm) var(--space-md);
+    font-size: 0.875rem;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.header .status-badge[data-status="online"] {
+    border-color: rgba(16, 185, 129, 0.35);
+}
+
+.header .status-badge[data-status="offline"] {
+    border-color: rgba(239, 68, 68, 0.35);
+}
+
+.header .status-indicator {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+}
+
+.logs-table .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.35rem 0.75rem;
+    border-radius: var(--radius-sm);
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+/* Card separation + non-overlapping composition */
+.dashboard {
+    width: min(100%, 1200px);
+}
+
+.dashboard > header,
+.dashboard > section {
+    width: 100%;
+    min-width: 0;
+}
+
+.dashboard .glass-card {
+    width: 100%;
+    margin: 0;
+    position: relative;
+    isolation: isolate;
+}
+
+.logs-table-wrapper {
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+
+.users-grid {
+    align-items: stretch;
+}
+
+.users-grid .user-card {
+    margin: 0;
+    height: 100%;
+}
+
+/* Modal baseline: always scrollable when content is long */
+.add-user-dialog,
+.edit-user-dialog {
+    max-height: 92vh;
+    overflow: hidden;
+}
+
+.add-user-dialog .dialog-content,
+.edit-user-dialog .dialog-content {
+    max-height: calc(92vh - 2px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+/* ===================== TABLET + MOBILE ===================== */
+@media (max-width: 1023px) {
+    body {
+        padding-top: 0; /* cancels old simulation padding */
+    }
+
+    .dashboard {
+        padding: 16px;
+        gap: 16px;
+    }
+
+    .dashboard > section,
+    .dashboard > header {
+        position: relative;
+        z-index: 0;
+    }
+
+    .dashboard .glass-card {
+        transform: none;
+        will-change: auto;
+    }
+
+    .dashboard .glass-card:hover {
+        transform: none;
+        box-shadow: none;
+    }
+
+    .header {
+        align-items: flex-start;
+        gap: 12px;
+        padding: 8px 0;
+    }
+
+    .brand {
+        gap: 10px;
+        width: 100%;
+    }
+
+    .brand-name {
+        font-size: clamp(1.1rem, 4.5vw, 1.35rem);
+        line-height: 1.2;
+    }
+
+    .brand-tagline {
+        font-size: 0.68rem;
+        letter-spacing: 0.06em;
+    }
+
+    .header .status-badge {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .hero-card {
+        padding: 22px 14px;
+    }
+
+    .lock-visual {
+        width: 124px;
+        height: 124px;
+        margin-bottom: 14px;
+    }
+
+    .lock-status-label {
+        font-size: clamp(1.5rem, 8vw, 2.1rem);
+        letter-spacing: 0.06em;
+    }
+
+    .lock-status-sub {
+        font-size: 0.85rem;
+    }
+
+    .pin-display {
+        padding: 14px 12px;
+        margin-bottom: 12px;
+    }
+
+    .pin-code {
+        margin: 0.8rem 0;
+        gap: 0.5rem;
+    }
+
+    .pin-digit {
+        width: 2.5rem;
+        height: 3rem;
+        font-size: 1.35rem;
+    }
+
+    .section-header,
+    .section-header-actions {
+        gap: 10px;
+        margin-bottom: 12px;
+    }
+
+    .section-title {
+        font-size: 1rem;
+        line-height: 1.3;
+    }
+
+    .logs-table-wrapper {
+        overflow: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .logs-table {
+        min-width: 560px;
+    }
+
+    .users-grid {
+        grid-template-columns: 1fr !important;
+        gap: 12px;
+    }
+
+    .users-grid .user-card {
+        padding: 1rem;
+        gap: 0.85rem;
+        flex-wrap: nowrap;
+        align-items: flex-start;
+    }
+
+    .users-grid .user-info {
+        min-width: 0;
+    }
+
+    .users-grid .user-name-row {
+        flex-wrap: wrap;
+        gap: 0.45rem;
+    }
+
+    .users-grid .user-name {
+        font-size: 0.98rem;
+    }
+
+    .users-grid .user-meta {
+        gap: 0.45rem;
+        margin-bottom: 0;
+    }
+
+    .users-grid .user-actions {
+        margin-left: auto;
+        gap: 0.5rem;
+        flex-shrink: 0;
+    }
+
+    .users-grid .btn-edit,
+    .users-grid .btn-delete {
+        min-width: 40px;
+        min-height: 40px;
+        padding: 0.55rem;
+    }
+
+    .dashboard-footer {
+        margin-top: 16px;
+        padding: 14px 16px;
+    }
+
+    .footer-text,
+    .footer-brand,
+    .footer-copyright {
+        font-size: 0.8rem;
+    }
+
+    .modal-overlay {
+        padding: 12px;
+        align-items: flex-end;
+        z-index: 1100;
+    }
+
+    .modal {
+        width: 100%;
+        max-width: none;
+        border-radius: 16px;
+        padding: 18px 14px;
+    }
+
+    .modal-actions {
+        flex-direction: column;
+    }
+
+    .modal-actions button {
+        width: 100%;
+    }
+
+    .add-user-dialog,
+    .edit-user-dialog {
+        width: min(100%, 760px);
+        max-width: none;
+        border-radius: 16px;
+        max-height: min(92vh, 92svh);
+    }
+
+    .dialog-content {
+        padding: 16px;
+    }
+
+    .dialog-header {
+        margin-bottom: 1rem;
+    }
+
+    .dialog-title {
+        font-size: 1.12rem;
+    }
+
+    .dialog-form {
+        gap: 1rem;
+    }
+
+    .form-input,
+    .form-select {
+        font-size: 16px; /* prevents iOS zoom on focus */
+    }
+
+    .form-input-group {
+        flex-direction: column;
+    }
+
+    .btn-scan,
+    .btn-replace {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .dialog-actions {
+        margin-top: 1rem;
+        padding-top: 0.8rem;
+        background: rgba(17, 24, 39, 0.96);
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        position: sticky;
+        bottom: 0;
+        z-index: 2;
+        padding-bottom: max(0.8rem, env(safe-area-inset-bottom));
+    }
+}
+
+@media (max-width: 640px) {
+    .dashboard {
+        padding: 12px;
+        gap: 12px;
+    }
+
+    .users-grid .user-card {
+        flex-wrap: wrap;
+        gap: 0.7rem;
+    }
+
+    .users-grid .user-actions {
+        width: 100%;
+        margin-left: 0;
+        justify-content: flex-end;
+    }
+
+    .users-grid .btn-edit,
+    .users-grid .btn-delete {
+        min-width: 42px;
+        min-height: 42px;
+    }
+
+    .modal {
+        border-radius: 14px;
+    }
+
+    .add-user-dialog,
+    .edit-user-dialog {
+        width: calc(100% - 12px);
+    }
+}
+
+/* ========================= TABLET ========================== */
+@media (min-width: 768px) and (max-width: 1023px) {
+    .dashboard {
+        padding: 22px;
+        gap: 18px;
+    }
+
+    .users-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+
+    .guest-section .glass-card,
+    .logs-section .glass-card {
+        height: 100%;
+    }
+
+    .modal-overlay {
+        align-items: center;
+    }
+
+    .modal {
+        max-width: 540px;
+    }
+
+    .add-user-dialog,
+    .edit-user-dialog {
+        width: min(92vw, 700px);
+    }
+
+    .dialog-content {
+        padding: 20px 22px;
+    }
+}
+
+/* ============================================================
+   FINAL RESPONSIVE/PERFORMANCE POLISH LAYER
+   ============================================================ */
+
+/* Centered empty state in User Management */
+.users-empty {
+    color: var(--text-muted);
+    text-align: center;
+    width: 100%;
+    padding: 1.6rem 1rem;
+    margin: 0;
+    line-height: 1.45;
+}
+
+/* Toast supports intentional line breaks (e.g., guest code on new line) */
+.toast-message {
+    white-space: pre-line;
+    line-height: 1.3;
+    text-align: center;
+}
+
+/* Keep cards dynamic while minimizing expensive paints */
+.glass-card,
+.user-card {
+    contain: layout paint;
+}
+
+/* Compact user-management dialogs so actions stay visible with less scrolling */
+.add-user-dialog,
+.edit-user-dialog {
+    width: min(92vw, 640px);
+    max-height: min(90vh, 90svh);
+}
+
+.dialog-content {
+    padding: 14px 16px;
+}
+
+.dialog-form {
+    gap: 0.8rem;
+}
+
+.form-group {
+    gap: 0.38rem;
+}
+
+.form-input,
+.form-select {
+    padding: 0.68rem 0.92rem;
+}
+
+.form-helper {
+    font-size: 0.74rem;
+    line-height: 1.25;
+}
+
+.dialog-actions {
+    margin-top: 0.7rem;
+    gap: 0.65rem;
+}
+
+.btn-dialog-cancel,
+.btn-dialog-submit {
+    min-width: 108px;
+    padding: 0.7rem 1.1rem;
+}
+
+/* Mobile/tablet refinements */
+@media (max-width: 1023px) {
+    /* Emergency override modal centered on mobile/tablet */
+    #modalOverlay.modal-overlay {
+        align-items: center !important;
+        justify-content: center;
+    }
+
+    .dialog-content {
+        padding: 12px 14px;
+    }
+
+    .dialog-title {
+        font-size: 1.02rem;
+    }
+
+    .dialog-actions {
+        position: sticky;
+        bottom: 0;
+        z-index: 2;
+        background: rgba(17, 24, 39, 0.97);
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        padding-top: 0.65rem;
+        padding-bottom: max(0.65rem, env(safe-area-inset-bottom));
+    }
+}
+
+/* Compact logs to one mobile screen width */
+@media (max-width: 640px) {
+    .logs-table-wrapper {
+        overflow-x: hidden;
+    }
+
+    .logs-table {
+        min-width: 0 !important;
+        table-layout: fixed;
+        width: 100%;
+        font-size: 0.72rem;
+    }
+
+    .logs-table th,
+    .logs-table td {
+        padding: 0.42rem 0.32rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .logs-table .col-time {
+        width: 30%;
+    }
+
+    .logs-table .col-user {
+        width: 44%;
+    }
+
+    .logs-table th:last-child,
+    .logs-table td:last-child {
+        width: 26%;
+        text-align: center;
+    }
+
+    .logs-table .status-badge {
+        padding: 0.22rem 0.35rem;
+        font-size: 0.66rem;
+        gap: 0.15rem;
     }
 }

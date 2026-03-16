@@ -18,7 +18,9 @@ WebServer::WebServer(LockManager* lockManager, SecurityManager* securityManager,
       _wifiConnected(false),
       _ipAddress(""),
       _guestCode(""),
-      _guestCodeExpiry(0)
+    _guestCodeExpiry(0),
+    _lastEmergencyUnlockMs(0),
+    _lastGuestCodeRequestMs(0)
 {
 }
 
@@ -349,6 +351,20 @@ void WebServer::_handleAPIStatus(AsyncWebServerRequest* request) {
  */
 void WebServer::_handleAPIUnlock(AsyncWebServerRequest* request) {
     Serial.println("[API] POST /api/unlock - Emergency override");
+
+    const unsigned long retryAfterMs = _remainingCooldownMs(_lastEmergencyUnlockMs, EMERGENCY_COOLDOWN_MS);
+    if (retryAfterMs > 0) {
+        _addLogEntry("Admin (Web)", "Web Emergency Cooldown", "fail");
+
+        JsonDocument doc;
+        doc["success"] = false;
+        doc["message"] = "Emergency override is cooling down";
+        doc["retryAfterMs"] = retryAfterMs;
+        doc["retryAfterSec"] = (retryAfterMs + 999) / 1000;
+        doc["cooldownMs"] = EMERGENCY_COOLDOWN_MS;
+        _sendJSON(request, 429, doc);
+        return;
+    }
     
     // Unlock door
     _lock->unlock();
@@ -357,15 +373,18 @@ void WebServer::_handleAPIUnlock(AsyncWebServerRequest* request) {
     if (_security->isAlarming()) {
         _security->clearAlarm();
     }
+
+    _lastEmergencyUnlockMs = millis();
     
     // Log the event
-    _addLogEntry("Admin (Web)", "Web", "success");
+    _addLogEntry("Admin (Web)", "Web Emergency Override", "success");
     
     // Send response
     JsonDocument doc;
     doc["success"] = true;
     doc["message"] = "Emergency unlock activated";
     doc["timestamp"] = millis();
+    doc["cooldownMs"] = EMERGENCY_COOLDOWN_MS;
     
     _sendJSON(request, 200, doc);
 }
@@ -376,13 +395,31 @@ void WebServer::_handleAPIUnlock(AsyncWebServerRequest* request) {
  */
 void WebServer::_handleAPIGuestCode(AsyncWebServerRequest* request) {
     Serial.println("[API] POST /api/guest-code");
+
+    const unsigned long retryAfterMs = _remainingCooldownMs(_lastGuestCodeRequestMs, GUEST_CODE_COOLDOWN_MS);
+    if (retryAfterMs > 0) {
+        _addLogEntry("Admin (Web)", "Web Guest Cooldown", "fail");
+
+        JsonDocument doc;
+        doc["success"] = false;
+        doc["message"] = "Guest code generation is cooling down";
+        doc["retryAfterMs"] = retryAfterMs;
+        doc["retryAfterSec"] = (retryAfterMs + 999) / 1000;
+        doc["cooldownMs"] = GUEST_CODE_COOLDOWN_MS;
+        _sendJSON(request, 429, doc);
+        return;
+    }
     
     // Generate new guest code
     _guestCode = _generateGuestCode();
     _guestCodeExpiry = millis() + 300000;  // 5 minutes
+    _lastGuestCodeRequestMs = millis();
     
     // Add to AuthHandler (temporary PIN)
     _auth->addUser("GUEST_" + _guestCode, _guestCode, "Guest");
+
+    // Log successful guest code generation
+    _addLogEntry("Admin (Web)", "Web Guest Code", "success");
     
     // Send response
     JsonDocument doc;
@@ -390,6 +427,7 @@ void WebServer::_handleAPIGuestCode(AsyncWebServerRequest* request) {
     doc["code"] = _guestCode;
     doc["expiresIn"] = 300;  // seconds
     doc["timestamp"] = millis();
+    doc["cooldownMs"] = GUEST_CODE_COOLDOWN_MS;
     
     _sendJSON(request, 200, doc);
     
@@ -704,6 +742,19 @@ String WebServer::_generateGuestCode() {
         code += String(random(0, 10));
     }
     return code;
+}
+
+unsigned long WebServer::_remainingCooldownMs(unsigned long lastActionMs, unsigned long cooldownMs) const {
+    if (lastActionMs == 0) {
+        return 0;
+    }
+
+    const unsigned long elapsed = millis() - lastActionMs;
+    if (elapsed >= cooldownMs) {
+        return 0;
+    }
+
+    return cooldownMs - elapsed;
 }
 
 /**

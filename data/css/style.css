@@ -674,6 +674,14 @@ h1, h2, h3, h4, h5, h6 {
     gap: var(--space-md);
 }
 
+.users-empty {
+    grid-column: 1 / -1;
+    text-align: center;
+    color: var(--text-muted);
+    padding: var(--space-xl) var(--space-md);
+    margin: 0;
+}
+
 @media (min-width: 640px) {
     .users-grid {
         grid-template-columns: repeat(2, 1fr);
@@ -1789,11 +1797,18 @@ textarea:focus {
 .col-user {
     font-weight: 500;
     color: var(--text-main);
-    width: 200px;
+    width: 180px;
 }
 
 .col-method {
-    width: 150px;
+    width: 130px;
+}
+
+.logs-table th.col-status,
+.logs-table td.col-status {
+    width: 120px;
+    min-width: 120px;
+    padding-left: 0.75rem;
 }
 
 .method-badge {

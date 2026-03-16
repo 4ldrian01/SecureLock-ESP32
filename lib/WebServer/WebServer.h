@@ -80,6 +80,11 @@ private:
     // Guest code management
     String _guestCode;
     unsigned long _guestCodeExpiry;
+    unsigned long _lastEmergencyUnlockMs;
+    unsigned long _lastGuestCodeRequestMs;
+
+    static constexpr unsigned long EMERGENCY_COOLDOWN_MS = 5000;
+    static constexpr unsigned long GUEST_CODE_COOLDOWN_MS = 300000;
     
     // Initialization helpers
     void _initWiFi(const char* ssid, const char* password);
@@ -111,6 +116,7 @@ private:
     void _sendJSON(AsyncWebServerRequest* request, int code, const JsonDocument& doc);
     void _addCORSHeaders(AsyncWebServerResponse* response);
     String _generateGuestCode();
+    unsigned long _remainingCooldownMs(unsigned long lastActionMs, unsigned long cooldownMs) const;
 };
 
 #endif // WEB_SERVER_H

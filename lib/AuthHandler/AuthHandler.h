@@ -95,6 +95,7 @@ private:
     // Hardware pins
     static const int PIN_RFID_SS = SECURELOCK_PIN_RFID_SS;
     static const int PIN_RFID_RST = SECURELOCK_PIN_RFID_RST;
+    static const int PIN_RFID_RST_FALLBACK = 21;  // Legacy wiring fallback
     static const int PIN_FACTORY = SECURELOCK_PIN_BOOT;
     
     // Keypad configuration
@@ -133,6 +134,7 @@ private:
     // State variables
     String _pinBuffer;
     String _lastRFIDUID;
+    int _activeRfidRstPin;
     unsigned long _factoryPressStart;
     bool _factoryPressed;
     

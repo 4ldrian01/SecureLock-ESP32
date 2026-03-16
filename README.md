@@ -76,8 +76,8 @@ SecureLock is a **production-grade IoT security system** built on ESP32 with a g
 | Component | Model | GPIO | Purpose |
 |-----------|-------|------|---------|
 | **Microcontroller** | ESP32 DevKit V1 | - | Main controller |
-| **Solenoid Lock** | 12V DC | 4 (Relay) | Physical lock |
-| **RFID Reader** | RC522 | SPI (5, 21) | Card authentication |
+| **Solenoid Lock** | 12V DC | 22 (Relay) | Physical lock |
+| **RFID Reader** | RC522 | SPI (SS=5, RST=4) | Card authentication |
 | **Keypad** | 4x4 Matrix | 32-36, 39 | PIN entry |
 | **Vibration Sensor** | SW-420 | 27 | Intrusion detection |
 | **Reed Switch** | - | 13 | Door open/close |
@@ -87,7 +87,7 @@ SecureLock is a **production-grade IoT security system** built on ESP32 with a g
 ### Pin Mapping (ESP32 DevKit V1)
 
 ```
-GPIO 4  → Relay Module (Solenoid Lock) - Active HIGH = Unlocked
+GPIO 22 → Relay Module (Solenoid Lock) - Active HIGH = Unlocked
 GPIO 2  → Onboard LED (Status Indicator)
 GPIO 14 → Active Buzzer (Audio Feedback)
 GPIO 27 → SW-420 Vibration Sensor (Intrusion Detection)
@@ -98,11 +98,11 @@ RFID RC522 (SPI):
   SCK  = GPIO 18
   MOSI = GPIO 23
   MISO = GPIO 19
-  RST  = GPIO 21
+  RST  = GPIO 4
 
 Keypad 4x4 Matrix:
-  Rows    = GPIO 32, 33, 25, 26
-  Columns = GPIO 34, 35, 36, 39
+  Rows    = GPIO 34, 35, 36, 39
+  Columns = GPIO 32, 33, 25, 26
 
 Factory Reset:
   GPIO 0 (BOOT button) - Hold 10 seconds
@@ -173,7 +173,7 @@ Open browser: `http://[ESP32_IP]/`
 SecureLock v2.0
 │
 ├── LockManager          [Hardware Control Layer]
-│   ├── Relay (GPIO 4)        — Solenoid lock, active HIGH
+│   ├── Relay (GPIO 22)       — Solenoid lock, active HIGH
 │   ├── LED (GPIO 2)          — Onboard status indicator
 │   └── Reed Switch (GPIO 13) — Door open/close detection
 │
@@ -532,7 +532,7 @@ pio run
 | Issue | Solution |
 |-------|----------|
 | Upload fails | Close serial monitor, press BOOT button |
-| Door won't unlock | Check relay wiring, verify GPIO 4 |
+| Door won't unlock | Check relay wiring, verify GPIO 22 |
 | RFID not reading | Check SPI connections, verify SS=5 |
 | Keypad not working | Verify row/col GPIOs, check wiring |
 

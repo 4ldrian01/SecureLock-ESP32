@@ -30,6 +30,8 @@
         LOGS_REFRESH_INTERVAL: 15000,
         USERS_REFRESH_INTERVAL: 20000,
         TOAST_DURATION: 3500,       // Toast notification display time
+        EMERGENCY_COOLDOWN: 5,      // Emergency button cooldown in seconds
+        GUEST_GENERATE_COOLDOWN: 300, // Guest code generation cooldown in seconds
         GUEST_CODE_EXPIRY: 300,     // 5 minutes in seconds
         RFID_POLL_INTERVAL: 1000,   // RFID scan poll every 1 second
         API: {
@@ -55,6 +57,12 @@
         guestCode: null,
         guestExpiry: 0,
         guestTimer: null,
+        emergencyCooldown: 0,
+        emergencyCooldownTimer: null,
+        emergencyRequestInFlight: false,
+        guestCooldown: 0,
+        guestCooldownTimer: null,
+        guestRequestInFlight: false,
         rfidPollTimer: null,
         editingUserId: null
     };
@@ -116,6 +124,9 @@
         toastMessage:     document.getElementById('toastMessage')
     };
 
+    const GUEST_BUTTON_ICON =
+        '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>';
+
     // ════════════════════════════════════════════════════════
     //  API COMMUNICATION
     // ════════════════════════════════════════════════════════
@@ -129,10 +140,20 @@
                 headers: { 'Content-Type': 'application/json' },
                 ...options
             });
+
+            const contentType = response.headers.get('content-type') || '';
+            const payload = contentType.includes('application/json')
+                ? await response.json()
+                : { message: await response.text() };
+
             if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
+                const error = new Error(payload.message || `HTTP ${response.status}`);
+                error.status = response.status;
+                error.payload = payload;
+                throw error;
             }
-            return await response.json();
+
+            return payload;
         } catch (error) {
             console.error(`[API] ${options.method || 'GET'} ${url} failed:`, error.message);
             throw error;
@@ -203,27 +224,88 @@
     //  EMERGENCY OVERRIDE
     // ════════════════════════════════════════════════════════
 
+    function updateEmergencyButton() {
+        if (state.emergencyRequestInFlight) {
+            DOM.btnEmergency.disabled = true;
+            DOM.btnEmergency.textContent = 'Unlocking...';
+            return;
+        }
+
+        if (state.emergencyCooldown > 0) {
+            DOM.btnEmergency.disabled = true;
+            DOM.btnEmergency.textContent = `Emergency Override (${state.emergencyCooldown}s)`;
+            return;
+        }
+
+        DOM.btnEmergency.disabled = false;
+        DOM.btnEmergency.textContent = 'Emergency Override';
+    }
+
+    function setEmergencyBusy(isBusy) {
+        state.emergencyRequestInFlight = isBusy;
+        updateEmergencyButton();
+    }
+
+    function startEmergencyCooldown(seconds) {
+        const cooldownSeconds = Math.max(0, Math.ceil(Number(seconds) || 0));
+        state.emergencyCooldown = cooldownSeconds;
+
+        if (state.emergencyCooldownTimer) {
+            clearInterval(state.emergencyCooldownTimer);
+            state.emergencyCooldownTimer = null;
+        }
+
+        updateEmergencyButton();
+
+        if (cooldownSeconds === 0) return;
+
+        state.emergencyCooldownTimer = setInterval(() => {
+            state.emergencyCooldown = Math.max(0, state.emergencyCooldown - 1);
+            updateEmergencyButton();
+
+            if (state.emergencyCooldown === 0 && state.emergencyCooldownTimer) {
+                clearInterval(state.emergencyCooldownTimer);
+                state.emergencyCooldownTimer = null;
+            }
+        }, 1000);
+    }
+
     function handleEmergencyUnlock() {
+        if (state.emergencyCooldown > 0 || state.emergencyRequestInFlight) {
+            showToast(`Please wait ${state.emergencyCooldown || 1}s before emergency override`, 'info');
+            return;
+        }
+
         showModal(
             'Emergency Override',
             'This will immediately unlock the door. Are you sure?',
             'danger',
             async () => {
                 try {
-                    DOM.btnEmergency.disabled = true;
-                    DOM.btnEmergency.textContent = 'Unlocking...';
+                    setEmergencyBusy(true);
+
                     const data = await apiFetch(CONFIG.API.UNLOCK, { method: 'POST' });
+
                     if (data.success) {
                         updateLockUI(false);
                         showToast('Door unlocked via emergency override', 'success');
+                        const cooldownSeconds = Math.ceil((data.cooldownMs || (CONFIG.EMERGENCY_COOLDOWN * 1000)) / 1000);
+                        startEmergencyCooldown(cooldownSeconds);
                     } else {
                         showToast('Unlock failed: ' + (data.message || 'Unknown error'), 'error');
                     }
-                } catch {
-                    showToast('Connection error — could not unlock', 'error');
+                    loadLogs();
+                } catch (error) {
+                    const retryAfter = Number(error?.payload?.retryAfterSec || 0);
+                    if (retryAfter > 0) {
+                        startEmergencyCooldown(retryAfter);
+                        showToast(`Emergency override cooling down (${retryAfter}s remaining)`, 'info');
+                        loadLogs();
+                    } else {
+                        showToast('Connection error — could not unlock', 'error');
+                    }
                 } finally {
-                    DOM.btnEmergency.disabled = false;
-                    DOM.btnEmergency.textContent = 'Emergency Override';
+                    setEmergencyBusy(false);
                 }
             }
         );
@@ -233,25 +315,93 @@
     //  GUEST CODE
     // ════════════════════════════════════════════════════════
 
-    async function handleGenerateGuestCode() {
-        try {
+    function formatCooldownClock(seconds) {
+        const safeSeconds = Math.max(0, Number(seconds) || 0);
+        const min = Math.floor(safeSeconds / 60);
+        const sec = safeSeconds % 60;
+        return `${min}:${sec.toString().padStart(2, '0')}`;
+    }
+
+    function renderGuestGenerateLabel(text) {
+        DOM.btnGenerate.innerHTML = `${GUEST_BUTTON_ICON} ${text}`;
+    }
+
+    function updateGuestGenerateButton() {
+        if (state.guestRequestInFlight) {
             DOM.btnGenerate.disabled = true;
-            DOM.btnGenerate.textContent = 'Generating...';
+            renderGuestGenerateLabel('Generating...');
+            return;
+        }
+
+        if (state.guestCooldown > 0) {
+            DOM.btnGenerate.disabled = true;
+            renderGuestGenerateLabel(`Generate New Code (${formatCooldownClock(state.guestCooldown)})`);
+            return;
+        }
+
+        DOM.btnGenerate.disabled = false;
+        renderGuestGenerateLabel('Generate New Code');
+    }
+
+    function setGuestGenerateBusy(isBusy) {
+        state.guestRequestInFlight = isBusy;
+        updateGuestGenerateButton();
+    }
+
+    function startGuestGenerateCooldown(seconds) {
+        const cooldownSeconds = Math.max(0, Math.ceil(Number(seconds) || 0));
+        state.guestCooldown = cooldownSeconds;
+
+        if (state.guestCooldownTimer) {
+            clearInterval(state.guestCooldownTimer);
+            state.guestCooldownTimer = null;
+        }
+
+        updateGuestGenerateButton();
+
+        if (cooldownSeconds === 0) return;
+
+        state.guestCooldownTimer = setInterval(() => {
+            state.guestCooldown = Math.max(0, state.guestCooldown - 1);
+            updateGuestGenerateButton();
+
+            if (state.guestCooldown === 0 && state.guestCooldownTimer) {
+                clearInterval(state.guestCooldownTimer);
+                state.guestCooldownTimer = null;
+            }
+        }, 1000);
+    }
+
+    async function handleGenerateGuestCode() {
+        if (state.guestCooldown > 0 || state.guestRequestInFlight) {
+            showToast(`Guest code cooldown active (${formatCooldownClock(state.guestCooldown || 1)} left)`, 'info');
+            return;
+        }
+
+        try {
+            setGuestGenerateBusy(true);
 
             const data = await apiFetch(CONFIG.API.GUEST_CODE, { method: 'POST' });
 
             if (data.success && data.code) {
                 displayGuestCode(data.code, data.expiresIn || CONFIG.GUEST_CODE_EXPIRY);
                 showToast(`Guest code generated\n${data.code}`, 'success');
+                startGuestGenerateCooldown(data.expiresIn || CONFIG.GUEST_GENERATE_COOLDOWN);
             } else {
                 showToast('Failed to generate guest code', 'error');
             }
-        } catch {
-            showToast('Connection error — could not generate code', 'error');
+            loadLogs();
+        } catch (error) {
+            const retryAfter = Number(error?.payload?.retryAfterSec || 0);
+            if (retryAfter > 0) {
+                startGuestGenerateCooldown(retryAfter);
+                showToast(`Guest code cooling down (${formatCooldownClock(retryAfter)} remaining)`, 'info');
+                loadLogs();
+            } else {
+                showToast('Connection error — could not generate code', 'error');
+            }
         } finally {
-            DOM.btnGenerate.disabled = false;
-            DOM.btnGenerate.innerHTML =
-                '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg> Generate New Code';
+            setGuestGenerateBusy(false);
         }
     }
 
@@ -349,7 +499,7 @@
                 <td class="col-time">${escapeHtml(displayTime)}</td>
                 <td class="col-user">${escapeHtml(log.user || 'Unknown')}</td>
                 <td class="col-method"><span class="method-badge">${escapeHtml(log.method || '--')}</span></td>
-                <td><span class="status-badge ${statusClass}">${statusLabel}</span></td>
+                <td class="col-status"><span class="status-badge ${statusClass}">${statusLabel}</span></td>
             </tr>`;
         }).join('');
     }
@@ -757,6 +907,8 @@
         console.log('[SecureLock] Dashboard initializing...');
 
         bindEvents();
+        updateEmergencyButton();
+        updateGuestGenerateButton();
 
         // Initial data load
         pollStatus();

@@ -18,6 +18,7 @@ AuthHandler::AuthHandler()
       _keypad(makeKeymap(_keys), _rowPins, _colPins, ROWS, COLS),
       _pinBuffer(""),
       _lastRFIDUID(""),
+    _activeRfidRstPin(PIN_RFID_RST),
       _factoryPressStart(0),
       _factoryPressed(false),
       _userCount(0)
@@ -32,12 +33,6 @@ void AuthHandler::init() {
     pinMode(PIN_RFID_SS, OUTPUT);
     digitalWrite(PIN_RFID_SS, HIGH);
 
-    pinMode(PIN_RFID_RST, OUTPUT);
-    digitalWrite(PIN_RFID_RST, LOW);
-    delay(20);
-    digitalWrite(PIN_RFID_RST, HIGH);
-    delay(50);
-
     // Initialize SPI for RFID
     SPI.begin(
         SECURELOCK_PIN_SPI_SCK,
@@ -46,29 +41,53 @@ void AuthHandler::init() {
         PIN_RFID_SS
     );  // SCK, MISO, MOSI, SS
 
-    _rfid.PCD_Init();
-    _rfid.PCD_AntennaOn();
-    
-    // Check RFID reader
+    const int rstCandidates[2] = {PIN_RFID_RST, PIN_RFID_RST_FALLBACK};
     byte version = 0x00;
-    for (int attempt = 0; attempt < 3; attempt++) {
-        version = _rfid.PCD_ReadRegister(_rfid.VersionReg);
-        if (version != 0x00 && version != 0xFF) {
-            break;
+    bool detected = false;
+
+    for (int i = 0; i < 2; i++) {
+        const int rstPin = rstCandidates[i];
+
+        if (i == 1 && rstPin == rstCandidates[0]) {
+            continue; // Avoid duplicate probe if pins are the same
         }
 
-        _rfid.PCD_Reset();
+        pinMode(rstPin, OUTPUT);
+        digitalWrite(rstPin, LOW);
+        delay(20);
+        digitalWrite(rstPin, HIGH);
         delay(50);
+
+        _rfid.PCD_Init(PIN_RFID_SS, rstPin);
         _rfid.PCD_AntennaOn();
-        delay(50);
+
+        for (int attempt = 0; attempt < 3; attempt++) {
+            version = _rfid.PCD_ReadRegister(_rfid.VersionReg);
+            if (version != 0x00 && version != 0xFF) {
+                _activeRfidRstPin = rstPin;
+                detected = true;
+                break;
+            }
+
+            _rfid.PCD_Reset();
+            delay(50);
+            _rfid.PCD_AntennaOn();
+            delay(50);
+        }
+
+        if (detected) {
+            break;
+        }
     }
 
-    if (version == 0x00 || version == 0xFF) {
+    if (!detected) {
         Serial.println("[AUTH] ⚠️ RFID reader not detected! Check wiring.");
         Serial.print("[AUTH] RFID pins → SS=");
         Serial.print(PIN_RFID_SS);
-        Serial.print(", RST=");
+        Serial.print(", RST(primary)=");
         Serial.print(PIN_RFID_RST);
+        Serial.print(", RST(fallback)=");
+        Serial.print(PIN_RFID_RST_FALLBACK);
         Serial.print(", SCK=");
         Serial.print(SECURELOCK_PIN_SPI_SCK);
         Serial.print(", MOSI=");
@@ -78,7 +97,9 @@ void AuthHandler::init() {
     } else {
         Serial.print("[AUTH] RFID RC522 v");
         Serial.print(version, HEX);
-        Serial.println(" detected");
+        Serial.print(" detected (RST GPIO ");
+        Serial.print(_activeRfidRstPin);
+        Serial.println(")");
     }
     
     // Initialize factory reset button

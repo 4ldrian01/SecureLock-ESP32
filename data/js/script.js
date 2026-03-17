@@ -26,7 +26,7 @@
 
     // ── Configuration ──────────────────────────────────────
     const CONFIG = {
-        POLL_INTERVAL: 3000,        // Status poll every 3 seconds
+        POLL_INTERVAL: 1000,        // Status poll every 1 second (for live lock countdown)
         LOGS_REFRESH_INTERVAL: 15000,
         USERS_REFRESH_INTERVAL: 20000,
         TOAST_DURATION: 3500,       // Toast notification display time
@@ -63,6 +63,9 @@
         guestCooldown: 0,
         guestCooldownTimer: null,
         guestRequestInFlight: false,
+        addUserRequestInFlight: false,
+        lockCountdownSeconds: 0,
+        lockCountdownTimer: null,
         rfidPollTimer: null,
         editingUserId: null
     };
@@ -105,6 +108,7 @@
         userName:         document.getElementById('userName'),
         userPin:          document.getElementById('userPin'),
         userRfid:         document.getElementById('userRfid'),
+        btnSubmitAdd:     document.getElementById('btnSubmitAdd'),
         btnScanCard:      document.getElementById('btnScanCard'),
         btnCloseDialog:   document.getElementById('btnCloseDialog'),
         btnCancelAdd:     document.getElementById('btnCancelAdd'),
@@ -126,6 +130,9 @@
 
     const GUEST_BUTTON_ICON =
         '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>';
+    const ADD_USER_SUBMIT_IDLE_LABEL = DOM.btnSubmitAdd
+        ? DOM.btnSubmitAdd.innerHTML
+        : 'Save User';
 
     // ════════════════════════════════════════════════════════
     //  API COMMUNICATION
@@ -172,16 +179,45 @@
             const data = await apiFetch(CONFIG.API.STATUS);
             setConnectionState(true);
 
-            if (state.locked !== data.locked) {
-                updateLockUI(data.locked);
+            state.locked = Boolean(data.locked);
+            state.alarm = Boolean(data.alarm);
+
+            const emergencyCooldownRemainingMs = Number(data.emergencyCooldownRemainingMs);
+            if (Number.isFinite(emergencyCooldownRemainingMs) && emergencyCooldownRemainingMs > 0) {
+                const emergencySec = Math.ceil(emergencyCooldownRemainingMs / 1000);
+                if (emergencySec > state.emergencyCooldown) {
+                    startEmergencyCooldown(emergencySec);
+                }
             }
 
-            if (state.alarm !== data.alarm) {
-                updateAlarmState(data.alarm);
+            const guestCooldownRemainingMs = Number(data.guestCodeCooldownRemainingMs);
+            if (Number.isFinite(guestCooldownRemainingMs) && guestCooldownRemainingMs > 0) {
+                const guestSec = Math.ceil(guestCooldownRemainingMs / 1000);
+                if (guestSec > state.guestCooldown) {
+                    startGuestGenerateCooldown(guestSec);
+                }
             }
 
-            state.locked = data.locked;
-            state.alarm = data.alarm;
+            if (!state.locked) {
+                const remainingMs = Number(data.unlockRemainingMs);
+                const autoLockDelayMs = Number(data.autoLockDelayMs);
+                const hasServerRemaining = Number.isFinite(remainingMs) && remainingMs > 0;
+                const hasValidDelay = Number.isFinite(autoLockDelayMs) && autoLockDelayMs > 0;
+
+                if (hasServerRemaining) {
+                    // Primary source of truth: backend remaining auto-lock time.
+                    setDoorCountdownFromMs(remainingMs);
+                } else if (!state.lockCountdownTimer && state.lockCountdownSeconds <= 0 && hasValidDelay) {
+                    // Fallback only when countdown is not already running.
+                    // Prevents resetting to 5s on every poll if backend reports 0.
+                    setDoorCountdownFromMs(autoLockDelayMs);
+                }
+            } else {
+                stopDoorCountdown();
+            }
+
+            updateLockUI(state.locked);
+            updateAlarmState(state.alarm);
         } catch {
             setConnectionState(false);
         }
@@ -203,21 +239,92 @@
         const lockState = locked ? 'locked' : 'unlocked';
         DOM.lockVisual.dataset.lockState = lockState;
         DOM.lockStatusLabel.textContent = locked ? 'LOCKED' : 'UNLOCKED';
-        DOM.lockStatusSub.textContent = locked
-            ? 'System Armed \u2022 Secure'
-            : 'Door Open \u2022 Auto-lock in 5s';
+        renderLockStatusSub();
     }
 
     /**
      * Update alarm indication
      */
     function updateAlarmState(alarming) {
-        if (alarming) {
+        state.alarm = Boolean(alarming);
+        renderLockStatusSub();
+    }
+
+    function renderLockStatusSub() {
+        if (state.alarm) {
             DOM.lockStatusSub.textContent = '\u26A0 ALARM ACTIVE';
             DOM.lockStatusSub.style.color = 'var(--danger)';
-        } else {
-            DOM.lockStatusSub.style.color = '';
+            return;
         }
+
+        DOM.lockStatusSub.style.color = '';
+
+        if (state.locked) {
+            DOM.lockStatusSub.textContent = 'System Armed \u2022 Secure';
+            return;
+        }
+
+        if (state.lockCountdownSeconds > 0) {
+            DOM.lockStatusSub.textContent = `Door Open \u2022 Auto-lock in ${state.lockCountdownSeconds}s`;
+            return;
+        }
+
+        DOM.lockStatusSub.textContent = 'Door Open \u2022 Auto-locking...';
+    }
+
+    function stopDoorCountdown() {
+        if (state.lockCountdownTimer) {
+            clearInterval(state.lockCountdownTimer);
+            state.lockCountdownTimer = null;
+        }
+
+        state.lockCountdownSeconds = 0;
+    }
+
+    function setDoorCountdownFromMs(remainingMs) {
+        const safeMs = Math.max(0, Number(remainingMs) || 0);
+        const nextSeconds = Math.max(0, Math.ceil(safeMs / 1000));
+
+        // While timer is active, only allow countdown to move downward.
+        // This avoids 5→4→5 jitter caused by poll/interval timing races.
+        if (state.lockCountdownTimer) {
+            if (nextSeconds > 0 && (state.lockCountdownSeconds <= 0 || nextSeconds < state.lockCountdownSeconds)) {
+                state.lockCountdownSeconds = nextSeconds;
+                renderLockStatusSub();
+            }
+            return;
+        }
+
+        state.lockCountdownSeconds = nextSeconds;
+
+        renderLockStatusSub();
+
+        if (state.lockCountdownSeconds <= 0) {
+            if (state.lockCountdownTimer) {
+                clearInterval(state.lockCountdownTimer);
+                state.lockCountdownTimer = null;
+            }
+            return;
+        }
+
+        if (state.lockCountdownTimer) {
+            return;
+        }
+
+        state.lockCountdownTimer = setInterval(() => {
+            if (state.locked) {
+                stopDoorCountdown();
+                return;
+            }
+
+            state.lockCountdownSeconds = Math.max(0, state.lockCountdownSeconds - 1);
+            renderLockStatusSub();
+
+            if (state.lockCountdownSeconds === 0 && state.lockCountdownTimer) {
+                clearInterval(state.lockCountdownTimer);
+                state.lockCountdownTimer = null;
+            }
+        }, 1000);
     }
 
     // ════════════════════════════════════════════════════════
@@ -281,12 +388,19 @@
             'This will immediately unlock the door. Are you sure?',
             'danger',
             async () => {
+                if (state.emergencyCooldown > 0 || state.emergencyRequestInFlight) {
+                    return;
+                }
+
                 try {
                     setEmergencyBusy(true);
 
                     const data = await apiFetch(CONFIG.API.UNLOCK, { method: 'POST' });
 
                     if (data.success) {
+                        state.locked = false;
+                        const unlockRemainingMs = Number(data.unlockRemainingMs || data.autoLockDelayMs || 5000);
+                        setDoorCountdownFromMs(unlockRemainingMs);
                         updateLockUI(false);
                         showToast('Door unlocked via emergency override', 'success');
                         const cooldownSeconds = Math.ceil((data.cooldownMs || (CONFIG.EMERGENCY_COOLDOWN * 1000)) / 1000);
@@ -386,7 +500,8 @@
             if (data.success && data.code) {
                 displayGuestCode(data.code, data.expiresIn || CONFIG.GUEST_CODE_EXPIRY);
                 showToast(`Guest code generated\n${data.code}`, 'success');
-                startGuestGenerateCooldown(data.expiresIn || CONFIG.GUEST_GENERATE_COOLDOWN);
+                const cooldownSeconds = Math.ceil((Number(data.cooldownMs) || (CONFIG.GUEST_GENERATE_COOLDOWN * 1000)) / 1000);
+                startGuestGenerateCooldown(cooldownSeconds);
             } else {
                 showToast('Failed to generate guest code', 'error');
             }
@@ -621,6 +736,9 @@
             DOM.editUserRfid.value = rfid;
         }
 
+        DOM.editUserRfid.classList.remove('input-error', 'scanned', 'scanning');
+        setFormError('editUserRfidError', '');
+
         DOM.editUserModal.showModal();
     };
 
@@ -629,7 +747,9 @@
     function openAddUserDialog() {
         DOM.addUserForm.reset();
         DOM.userRfid.value = '';
-        DOM.userRfid.classList.remove('scanned', 'scanning');
+        DOM.userRfid.classList.remove('scanned', 'scanning', 'input-error');
+        setFormError('userRfidError', '');
+        setAddUserBusy(false);
         DOM.addUserModal.showModal();
     }
 
@@ -650,7 +770,13 @@
         stopRfidPoll();
         targetInput.value = 'Waiting for card tap...';
         targetInput.classList.add('scanning');
-        targetInput.classList.remove('scanned');
+        targetInput.classList.remove('scanned', 'input-error');
+
+        if (targetInput === DOM.userRfid) {
+            setFormError('userRfidError', '');
+        } else if (targetInput === DOM.editUserRfid) {
+            setFormError('editUserRfidError', '');
+        }
 
         state.rfidPollTimer = setInterval(async () => {
             try {
@@ -658,6 +784,7 @@
                 if (data.uid && data.uid.length > 0) {
                     targetInput.value = data.uid;
                     targetInput.classList.remove('scanning');
+                    targetInput.classList.remove('input-error');
                     targetInput.classList.add('scanned');
                     stopRfidPoll();
                     showToast('RFID card detected: ' + data.uid, 'success');
@@ -675,10 +802,33 @@
         }
     }
 
+    function updateAddUserSubmitButton() {
+        if (!DOM.btnSubmitAdd) return;
+
+        if (state.addUserRequestInFlight) {
+            DOM.btnSubmitAdd.disabled = true;
+            DOM.btnSubmitAdd.textContent = 'Saving...';
+            return;
+        }
+
+        DOM.btnSubmitAdd.disabled = false;
+        DOM.btnSubmitAdd.innerHTML = ADD_USER_SUBMIT_IDLE_LABEL;
+    }
+
+    function setAddUserBusy(isBusy) {
+        state.addUserRequestInFlight = Boolean(isBusy);
+        updateAddUserSubmitButton();
+    }
+
     // ── Form Submission: Add User ──────────────────────────
 
     async function handleAddUser(e) {
         e.preventDefault();
+
+        if (state.addUserRequestInFlight) {
+            return;
+        }
+
         clearFormErrors();
 
         const name = DOM.userName.value.trim();
@@ -697,11 +847,16 @@
         }
         if (!rfid || rfid === 'Waiting for card tap...') {
             setFormError('userRfidError', 'RFID tag is required — tap a card');
+            DOM.userRfid.classList.add('input-error');
             valid = false;
         }
         if (!valid) return;
 
+        DOM.userRfid.classList.remove('input-error');
+
         try {
+            setAddUserBusy(true);
+
             const data = await apiFetch(CONFIG.API.USERS, {
                 method: 'POST',
                 body: JSON.stringify({ name, pin, uid: rfid, type: 'user' })
@@ -714,8 +869,25 @@
             } else {
                 showToast(data.message || 'Failed to add user', 'error');
             }
-        } catch {
+        } catch (error) {
+            const isDuplicateRFID =
+                Number(error?.status) === 409 &&
+                (error?.payload?.errorCode === 'RFID_ALREADY_REGISTERED' || error?.payload?.field === 'uid');
+
+            if (isDuplicateRFID) {
+                DOM.userRfid.classList.add('input-error');
+                setFormError(
+                    'userRfidError',
+                    error?.payload?.message || 'This RFID is already registered. Please scan another card.'
+                );
+                console.warn('[UI] Duplicate RFID enrollment blocked', error?.payload || {});
+                showToast('RFID already registered — please use another card', 'error');
+                return;
+            }
+
             showToast('Connection error — could not add user', 'error');
+        } finally {
+            setAddUserBusy(false);
         }
     }
 
@@ -741,9 +913,12 @@
         }
         if (!rfid) {
             setFormError('editUserRfidError', 'RFID tag is required');
+            DOM.editUserRfid.classList.add('input-error');
             valid = false;
         }
         if (!valid) return;
+
+        DOM.editUserRfid.classList.remove('input-error');
 
         try {
             const body = { uid: state.editingUserId, name, rfid };
@@ -761,7 +936,22 @@
             } else {
                 showToast(data.message || 'Failed to update user', 'error');
             }
-        } catch {
+        } catch (error) {
+            const isDuplicateRFID =
+                Number(error?.status) === 409 &&
+                (error?.payload?.errorCode === 'RFID_ALREADY_REGISTERED' || error?.payload?.field === 'uid');
+
+            if (isDuplicateRFID) {
+                DOM.editUserRfid.classList.add('input-error');
+                setFormError(
+                    'editUserRfidError',
+                    error?.payload?.message || 'This RFID is already registered. Please scan another card.'
+                );
+                console.warn('[UI] Duplicate RFID replacement blocked', error?.payload || {});
+                showToast('RFID already registered — please use another card', 'error');
+                return;
+            }
+
             showToast('Connection error — could not update user', 'error');
         }
     }
@@ -828,6 +1018,14 @@
         document.querySelectorAll('.form-error').forEach(el => {
             el.textContent = '';
         });
+
+        if (DOM.userRfid) {
+            DOM.userRfid.classList.remove('input-error');
+        }
+
+        if (DOM.editUserRfid) {
+            DOM.editUserRfid.classList.remove('input-error');
+        }
     }
 
     function escapeHtml(str) {
@@ -909,6 +1107,7 @@
         bindEvents();
         updateEmergencyButton();
         updateGuestGenerateButton();
+        updateAddUserSubmitButton();
 
         // Initial data load
         pollStatus();

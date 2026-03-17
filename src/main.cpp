@@ -234,6 +234,9 @@ void handleAuthResult(AuthResult result, const char* method) {
             // Unlock door
             lockManager.unlock();
             securityManager.beep(2);
+
+            // Enforce RFID anti-spam cooldown while lock auto-timer is active
+            authHandler.startRFIDCooldown();
             
             // Clear any alarms
             if (securityManager.isAlarming()) {
@@ -258,6 +261,7 @@ void handleAuthResult(AuthResult result, const char* method) {
             // Unlock door normally (appears legitimate)
             lockManager.unlock();
             securityManager.beep(2);  // Normal success beep
+            authHandler.startRFIDCooldown();
             
             // Send SILENT Telegram alert to admin/authorities
             if (bot) {

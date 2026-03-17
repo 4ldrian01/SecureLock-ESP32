@@ -70,6 +70,8 @@ public:
     // RFID authentication
     AuthResult checkRFID();         // Poll RFID reader
     String getLastRFIDUID() const;  // Get last scanned UID
+    void startRFIDCooldown(unsigned long cooldownMs = RFID_COOLDOWN_MS);
+    bool isRFIDCooldownActive() const;
     
     // Keypad input
     char getKeypadKey();            // Get pressed key (or '\0')
@@ -86,6 +88,7 @@ public:
     bool removeUser(const String& uid);
     bool userExists(const String& uid);
     String getUserName(const String& uid);
+    String getUserPIN(const String& uid);
     
     // Factory reset
     bool checkFactoryReset();       // Check if BOOT button held 10s
@@ -125,6 +128,7 @@ private:
     
     // Factory reset timing
     static const unsigned long FACTORY_RESET_TIME = 10000;  // 10 seconds
+    static const unsigned long RFID_COOLDOWN_MS = 5000;     // 5 seconds
     
     // Hardware objects
     MFRC522 _rfid;
@@ -134,6 +138,8 @@ private:
     // State variables
     String _pinBuffer;
     String _lastRFIDUID;
+    unsigned long _rfidCooldownStartMs;
+    unsigned long _rfidCooldownDurationMs;
     int _activeRfidRstPin;
     unsigned long _factoryPressStart;
     bool _factoryPressed;

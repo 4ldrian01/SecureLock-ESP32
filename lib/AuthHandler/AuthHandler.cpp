@@ -18,6 +18,8 @@ AuthHandler::AuthHandler()
       _keypad(makeKeymap(_keys), _rowPins, _colPins, ROWS, COLS),
       _pinBuffer(""),
       _lastRFIDUID(""),
+            _rfidCooldownStartMs(0),
+            _rfidCooldownDurationMs(0),
     _activeRfidRstPin(PIN_RFID_RST),
       _factoryPressStart(0),
       _factoryPressed(false),
@@ -145,6 +147,13 @@ AuthResult AuthHandler::checkRFID() {
     if (!_rfid.PICC_ReadCardSerial()) {
         return AUTH_NONE;
     }
+
+    // Enforce anti-spam cooldown window after successful access
+    if (isRFIDCooldownActive()) {
+        _rfid.PICC_HaltA();
+        _rfid.PCD_StopCrypto1();
+        return AUTH_NONE;
+    }
     
     // Read UID
     String uid = _uidToString(_rfid.uid.uidByte, _rfid.uid.size);
@@ -167,6 +176,25 @@ AuthResult AuthHandler::checkRFID() {
         Serial.println("[AUTH] ❌ Unknown RFID card");
         return AUTH_DENIED;
     }
+}
+
+/**
+ * Start strict RFID cooldown timer
+ */
+void AuthHandler::startRFIDCooldown(unsigned long cooldownMs) {
+    _rfidCooldownStartMs = millis();
+    _rfidCooldownDurationMs = cooldownMs;
+}
+
+/**
+ * Check if RFID cooldown is currently active
+ */
+bool AuthHandler::isRFIDCooldownActive() const {
+    if (_rfidCooldownDurationMs == 0) {
+        return false;
+    }
+
+    return (millis() - _rfidCooldownStartMs) < _rfidCooldownDurationMs;
 }
 
 /**
@@ -355,6 +383,25 @@ String AuthHandler::getUserName(const String& uid) {
     }
     
     return "Unknown";
+}
+
+/**
+ * Get user PIN by UID
+ */
+String AuthHandler::getUserPIN(const String& uid) {
+    String value = _getUserValue(uid);
+
+    if (value.length() == 0) {
+        return "";
+    }
+
+    // Format: "PIN:Name"
+    int colonIndex = value.indexOf(':');
+    if (colonIndex > 0) {
+        return value.substring(0, colonIndex);
+    }
+
+    return "";
 }
 
 /**

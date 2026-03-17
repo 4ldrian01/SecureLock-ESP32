@@ -150,6 +150,29 @@ void LockManager::setAutoLockDelay(unsigned long delayMs) {
 }
 
 /**
+ * Get configured auto-lock delay in milliseconds
+ */
+unsigned long LockManager::getAutoLockDelayMs() const {
+    return _autoLockDelay;
+}
+
+/**
+ * Get remaining time before auto-lock in milliseconds
+ */
+unsigned long LockManager::getRemainingAutoLockMs() const {
+    if (_locked || !_autoLockActive) {
+        return 0;
+    }
+
+    const unsigned long elapsed = millis() - _unlockStartTime;
+    if (elapsed >= _autoLockDelay) {
+        return 0;
+    }
+
+    return _autoLockDelay - elapsed;
+}
+
+/**
  * Private: Set relay state
  */
 void LockManager::_setRelay(bool energized) {

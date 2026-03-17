@@ -57,6 +57,8 @@ public:
     
     // Configuration
     void setAutoLockDelay(unsigned long delayMs);
+    unsigned long getAutoLockDelayMs() const;
+    unsigned long getRemainingAutoLockMs() const;
     
 private:
     // Hardware pins

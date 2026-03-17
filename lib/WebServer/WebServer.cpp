@@ -329,6 +329,10 @@ void WebServer::_handleAPIStatus(AsyncWebServerRequest* request) {
     doc["locked"] = _lock->isLocked();
     doc["doorOpen"] = _lock->isDoorOpen();
     doc["tampered"] = _lock->isDoorTampered();
+    doc["autoLockDelayMs"] = _lock->getAutoLockDelayMs();
+    doc["unlockRemainingMs"] = _lock->getRemainingAutoLockMs();
+    doc["emergencyCooldownRemainingMs"] = _remainingCooldownMs(_lastEmergencyUnlockMs, EMERGENCY_COOLDOWN_MS);
+    doc["guestCodeCooldownRemainingMs"] = _remainingCooldownMs(_lastGuestCodeRequestMs, GUEST_CODE_COOLDOWN_MS);
     
     // Security status
     doc["alarm"] = _security->isAlarming();
@@ -368,11 +372,16 @@ void WebServer::_handleAPIUnlock(AsyncWebServerRequest* request) {
     
     // Unlock door
     _lock->unlock();
+    _auth->startRFIDCooldown();
     
     // Stop alarm if active
     if (_security->isAlarming()) {
         _security->clearAlarm();
     }
+
+    // Audible feedback for admin-triggered emergency override
+    // (same success tone pattern as normal access grant)
+    _security->beep(2);
 
     _lastEmergencyUnlockMs = millis();
     
@@ -385,6 +394,8 @@ void WebServer::_handleAPIUnlock(AsyncWebServerRequest* request) {
     doc["message"] = "Emergency unlock activated";
     doc["timestamp"] = millis();
     doc["cooldownMs"] = EMERGENCY_COOLDOWN_MS;
+    doc["autoLockDelayMs"] = _lock->getAutoLockDelayMs();
+    doc["unlockRemainingMs"] = _lock->getRemainingAutoLockMs();
     
     _sendJSON(request, 200, doc);
 }
@@ -418,8 +429,12 @@ void WebServer::_handleAPIGuestCode(AsyncWebServerRequest* request) {
     // Add to AuthHandler (temporary PIN)
     _auth->addUser("GUEST_" + _guestCode, _guestCode, "Guest");
 
-    // Log successful guest code generation
-    _addLogEntry("Admin (Web)", "Web Guest Code", "success");
+    // Audible feedback for successful guest code generation
+    // (same tone pattern as emergency override success)
+    _security->beep(2);
+
+    // Log successful guest code generation (include active 4-digit code)
+    _addLogEntry("Admin (Web)", "Guest PIN " + _guestCode, "success");
     
     // Send response
     JsonDocument doc;
@@ -479,6 +494,8 @@ void WebServer::_handleAPIDeleteUser(AsyncWebServerRequest* request) {
     }
     
     String uid = request->getParam("uid")->value();
+    uid.trim();
+    uid.toUpperCase();
     Serial.print("[API] DELETE /api/users?uid=");
     Serial.println(uid);
     
@@ -491,37 +508,66 @@ void WebServer::_handleAPIDeleteUser(AsyncWebServerRequest* request) {
         return;
     }
     
-    // Remove from AuthHandler
-    bool removed = _auth->removeUser(uid);
-    
-    // Update users.json on LittleFS
-    if (removed && LittleFS.exists("/users.json")) {
+    // Remove from AuthHandler (NVS credentials)
+    bool removedFromAuth = _auth->removeUser(uid);
+
+    // Remove from users.json (dashboard listing)
+    bool removedFromList = false;
+    if (LittleFS.exists("/users.json")) {
         File file = LittleFS.open("/users.json", "r");
         JsonDocument usersDoc;
-        deserializeJson(usersDoc, file);
+        DeserializationError err = deserializeJson(usersDoc, file);
         file.close();
-        
-        JsonArray users = usersDoc["users"].as<JsonArray>();
-        for (size_t i = 0; i < users.size(); i++) {
-            if (users[i]["uid"].as<String>() == uid) {
-                users.remove(i);
-                break;
+
+        if (!err && usersDoc["users"].is<JsonArray>()) {
+            JsonArray users = usersDoc["users"].as<JsonArray>();
+
+            for (size_t i = users.size(); i > 0; i--) {
+                String listedUid = users[i - 1]["uid"].as<String>();
+                listedUid.trim();
+                listedUid.toUpperCase();
+
+                if (listedUid == uid) {
+                    users.remove(i - 1);
+                    removedFromList = true;
+                    break;
+                }
             }
+
+            File wFile = LittleFS.open("/users.json", "w");
+            serializeJson(usersDoc, wFile);
+            wFile.close();
         }
-        
-        File wFile = LittleFS.open("/users.json", "w");
-        serializeJson(usersDoc, wFile);
-        wFile.close();
     }
-    
-    _addLogEntry(uid, "Web", removed ? "success" : "fail");
-    
+
+    const bool deleted = removedFromAuth || removedFromList;
+
+    if (removedFromList && !removedFromAuth) {
+        Serial.println("[API][WARN] User removed from users.json, but AuthHandler record was not found");
+    }
+
+    _addLogEntry(uid, "Web Delete", deleted ? "success" : "fail");
+
     // Send response
     JsonDocument doc;
-    doc["success"] = removed;
-    doc["message"] = removed ? "User deleted" : "User not found";
-    
-    _sendJSON(request, removed ? 200 : 404, doc);
+    doc["success"] = deleted;
+    doc["removedFromAuth"] = removedFromAuth;
+    doc["removedFromList"] = removedFromList;
+
+    if (deleted) {
+        if (removedFromAuth && removedFromList) {
+            doc["message"] = "User deleted";
+        } else if (removedFromList) {
+            doc["message"] = "User removed from dashboard list";
+        } else {
+            doc["message"] = "User credential removed";
+        }
+        _sendJSON(request, 200, doc);
+        return;
+    }
+
+    doc["message"] = "User not found";
+    _sendJSON(request, 404, doc);
 }
 
 /**
@@ -546,12 +592,54 @@ void WebServer::_handleAPIAddUser(AsyncWebServerRequest* request, uint8_t* data,
     String pin  = body["pin"]  | "";
     String uid  = body["uid"]  | "";
     String type = body["type"] | "user";
+
+    uid.trim();
+    uid.toUpperCase();
     
     if (name.isEmpty() || pin.isEmpty() || uid.isEmpty()) {
         JsonDocument doc;
         doc["success"] = false;
         doc["message"] = "Missing required fields: name, pin, uid";
         _sendJSON(request, 400, doc);
+        return;
+    }
+
+    // Professional duplicate RFID protection
+    bool duplicateRFID = _auth->userExists(uid);
+    if (!duplicateRFID && LittleFS.exists("/users.json")) {
+        JsonDocument usersDoc;
+        File file = LittleFS.open("/users.json", "r");
+        if (file) {
+            DeserializationError fileErr = deserializeJson(usersDoc, file);
+            file.close();
+
+            if (!fileErr && usersDoc["users"].is<JsonArray>()) {
+                JsonArray users = usersDoc["users"].as<JsonArray>();
+                for (size_t i = 0; i < users.size(); i++) {
+                    String existingUID = users[i]["uid"].as<String>();
+                    existingUID.trim();
+                    existingUID.toUpperCase();
+                    if (existingUID == uid) {
+                        duplicateRFID = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    if (duplicateRFID) {
+        Serial.print("[API][WARN] Duplicate RFID enrollment blocked (Add User): ");
+        Serial.println(uid);
+        _security->beep(3);  // Error tone
+        _addLogEntry("Admin (Web)", "Duplicate RFID " + uid, "fail");
+
+        JsonDocument doc;
+        doc["success"] = false;
+        doc["errorCode"] = "RFID_ALREADY_REGISTERED";
+        doc["field"] = "uid";
+        doc["message"] = "This RFID card is already registered. Please scan a different card.";
+        _sendJSON(request, 409, doc);
         return;
     }
     
@@ -580,9 +668,12 @@ void WebServer::_handleAPIAddUser(AsyncWebServerRequest* request, uint8_t* data,
         File wFile = LittleFS.open("/users.json", "w");
         serializeJson(usersDoc, wFile);
         wFile.close();
+
+        // Audible confirmation when admin saves a new user
+        _security->beep(1);
     }
     
-    _addLogEntry(name, "Web", "success");
+    _addLogEntry(name, "Web", added ? "success" : "fail");
     
     JsonDocument doc;
     doc["success"] = added;
@@ -612,6 +703,11 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
     String name = body["name"] | "";
     String pin  = body["pin"]  | "";
     String rfid = body["rfid"] | "";
+
+    uid.trim();
+    uid.toUpperCase();
+    rfid.trim();
+    rfid.toUpperCase();
     
     if (uid.isEmpty() || name.isEmpty()) {
         JsonDocument doc;
@@ -620,11 +716,85 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
         _sendJSON(request, 400, doc);
         return;
     }
+
+    // Duplicate RFID protection for card replacement/edit flow
+    bool duplicateRFID = false;
+    if (!rfid.isEmpty() && rfid != uid) {
+        duplicateRFID = _auth->userExists(rfid);
+
+        if (!duplicateRFID && LittleFS.exists("/users.json")) {
+            JsonDocument usersDoc;
+            File usersFile = LittleFS.open("/users.json", "r");
+            if (usersFile) {
+                DeserializationError usersErr = deserializeJson(usersDoc, usersFile);
+                usersFile.close();
+
+                if (!usersErr && usersDoc["users"].is<JsonArray>()) {
+                    JsonArray users = usersDoc["users"].as<JsonArray>();
+                    for (size_t i = 0; i < users.size(); i++) {
+                        String existingUID = users[i]["uid"].as<String>();
+                        existingUID.trim();
+                        existingUID.toUpperCase();
+
+                        if (existingUID == rfid && existingUID != uid) {
+                            duplicateRFID = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (duplicateRFID) {
+        Serial.print("[API][WARN] Duplicate RFID replacement blocked (Edit User): old=");
+        Serial.print(uid);
+        Serial.print(" new=");
+        Serial.println(rfid);
+
+        _security->beep(3);  // Error tone
+        _addLogEntry("Admin (Web)", "Duplicate RFID " + rfid, "fail");
+
+        JsonDocument doc;
+        doc["success"] = false;
+        doc["errorCode"] = "RFID_ALREADY_REGISTERED";
+        doc["field"] = "uid";
+        doc["message"] = "This RFID card is already registered. Please scan a different card.";
+        _sendJSON(request, 409, doc);
+        return;
+    }
     
-    // Update in AuthHandler (remove and re-add)
-    if (!pin.isEmpty()) {
+    String effectivePin = pin;
+    if (effectivePin.isEmpty()) {
+        effectivePin = _auth->getUserPIN(uid);
+    }
+
+    if (effectivePin.isEmpty()) {
+        JsonDocument doc;
+        doc["success"] = false;
+        doc["message"] = "PIN required to update this user. Please provide a valid 4-digit PIN.";
+        _sendJSON(request, 400, doc);
+        return;
+    }
+
+    const String targetUid = rfid.isEmpty() ? uid : rfid;
+    const bool uidChanged = (targetUid != uid);
+
+    bool authUpdated = false;
+    if (uidChanged) {
         _auth->removeUser(uid);
-        _auth->addUser(uid, pin, name);
+        authUpdated = _auth->addUser(targetUid, effectivePin, name);
+    } else {
+        // Re-add same UID to persist any name/PIN updates.
+        authUpdated = _auth->addUser(uid, effectivePin, name);
+    }
+
+    if (!authUpdated) {
+        JsonDocument doc;
+        doc["success"] = false;
+        doc["message"] = "Failed to update user credentials";
+        _sendJSON(request, 500, doc);
+        return;
     }
     
     // Update users.json on LittleFS
@@ -636,9 +806,13 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
         
         JsonArray users = usersDoc["users"].as<JsonArray>();
         for (size_t i = 0; i < users.size(); i++) {
-            if (users[i]["uid"].as<String>() == uid) {
+            String listedUid = users[i]["uid"].as<String>();
+            listedUid.trim();
+            listedUid.toUpperCase();
+
+            if (listedUid == uid) {
                 users[i]["name"] = name;
-                if (!rfid.isEmpty()) users[i]["uid"] = rfid;
+                users[i]["uid"] = targetUid;
                 break;
             }
         }
@@ -651,6 +825,7 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
     JsonDocument doc;
     doc["success"] = true;
     doc["message"] = "User updated";
+    doc["uid"] = targetUid;
     _sendJSON(request, 200, doc);
 }
 

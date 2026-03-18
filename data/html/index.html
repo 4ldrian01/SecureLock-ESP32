@@ -15,6 +15,10 @@
     
     <!-- Stylesheet -->
     <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="/css/layout.css">
+    <link rel="stylesheet" href="/css/logs.css">
+    <link rel="stylesheet" href="/css/users.css">
+    <link rel="stylesheet" href="/css/pagination.css">
 </head>
 <body>
     <main class="dashboard">
@@ -128,6 +132,9 @@
                         </svg>
                         Activity Logs
                     </h2>
+                    <button type="button" class="btn-clear-logs" id="btnClearLogs" aria-label="Clear all activity logs">
+                        Clear Logs
+                    </button>
                 </header>
                 
                 <!-- Logs Table -->
@@ -146,6 +153,12 @@
                         </tbody>
                     </table>
                 </div>
+
+                <nav class="logs-pagination" id="logsPagination" aria-label="Activity logs pagination">
+                    <button type="button" class="pagination-btn" id="logsPrevPage">Previous</button>
+                    <span class="pagination-info" id="logsPageInfo">Page 1 of 1</span>
+                    <button type="button" class="pagination-btn" id="logsNextPage">Next</button>
+                </nav>
             </article>
         </section>
 
@@ -248,6 +261,9 @@
                         name="editUserName"
                         class="form-input" 
                         placeholder="e.g., John Doe"
+                        pattern="[A-Za-z ]+"
+                        title="Name must contain letters only"
+                        maxlength="48"
                         required
                         autocomplete="name"
                     />
@@ -339,6 +355,9 @@
                         name="userName"
                         class="form-input" 
                         placeholder="e.g., Sarah Johnson"
+                        pattern="[A-Za-z ]+"
+                        title="Name must contain letters only"
+                        maxlength="48"
                         required
                         autocomplete="name"
                     />
@@ -415,6 +434,6 @@
     </output>
 
     <!-- JavaScript -->
-    <script src="/js/script.js"></script>
+    <script type="module" src="/js/main.js"></script>
 </body>
 </html>

@@ -13,6 +13,8 @@ SecurityManager::SecurityManager()
     : _alarming(false),
       _vibrationDetected(false),
       _lastVibeTime(0),
+    _vibeHighSince(0),
+    _lastVibrationTriggerMs(0),
       _lastVibeState(LOW),
       _buzzerActive(false),
       _beepCount(0),
@@ -58,16 +60,27 @@ void SecurityManager::update() {
 bool SecurityManager::isVibrationDetected() {
     unsigned long now = millis();
     bool currentState = digitalRead(PIN_VIBE);
-    
-    // Detect rising edge (vibration detected)
-    if (currentState == HIGH && _lastVibeState == LOW) {
-        if (now - _lastVibeTime >= VIBE_DEBOUNCE) {
+
+    if (currentState == HIGH) {
+        if (_lastVibeState == LOW) {
             _lastVibeTime = now;
-            _vibrationDetected = true;
-            Serial.println("[SECURITY] ⚠️ VIBRATION DETECTED!");
+            _vibeHighSince = now;
         }
+
+        const bool edgeDebounced = (now - _lastVibeTime) >= VIBE_DEBOUNCE;
+        const bool stableHigh = (now - _vibeHighSince) >= VIBE_CONFIRM_HIGH_MS;
+        const bool cooldownElapsed = (now - _lastVibrationTriggerMs) >= VIBE_RETRIGGER_COOLDOWN_MS;
+
+        // Trigger only on confirmed stable vibration level with cooldown to avoid chatter spikes.
+        if (!_vibrationDetected && edgeDebounced && stableHigh && cooldownElapsed) {
+            _vibrationDetected = true;
+            _lastVibrationTriggerMs = now;
+            Serial.println("[SECURITY] ⚠️ VIBRATION DETECTED (filtered)");
+        }
+    } else {
+        _vibeHighSince = 0;
     }
-    
+
     _lastVibeState = currentState;
     return _vibrationDetected;
 }
@@ -77,6 +90,8 @@ bool SecurityManager::isVibrationDetected() {
  */
 void SecurityManager::resetVibration() {
     _vibrationDetected = false;
+    _vibeHighSince = 0;
+    _lastVibeState = digitalRead(PIN_VIBE);
 }
 
 /**

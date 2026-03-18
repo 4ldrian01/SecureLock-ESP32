@@ -1,0 +1,30 @@
+export function createInitialState() {
+    return {
+        connected: false,
+        locked: true,
+        alarm: false,
+        pollTimer: null,
+        logsTimer: null,
+        usersTimer: null,
+        lastUsersHash: '',
+        lastLogsHash: '',
+        allLogs: [],
+        logsPage: 1,
+        logsPageSize: 10,
+        logsClearInFlight: false,
+        guestCode: null,
+        guestExpiry: 0,
+        guestTimer: null,
+        emergencyCooldown: 0,
+        emergencyCooldownTimer: null,
+        emergencyRequestInFlight: false,
+        guestCooldown: 0,
+        guestCooldownTimer: null,
+        guestRequestInFlight: false,
+        addUserRequestInFlight: false,
+        lockCountdownSeconds: 0,
+        lockCountdownTimer: null,
+        rfidPollTimer: null,
+        editingUserId: null
+    };
+}

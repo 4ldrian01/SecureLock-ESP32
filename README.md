@@ -200,8 +200,16 @@ SecureLock v2.0
 SecureLock/
 ├── data/                       # Web Dashboard (uploaded to LittleFS)
 │   ├── html/index.html         #   Dashboard UI
-│   ├── css/style.css           #   Glassmorphism theme
-│   ├── js/script.js            #   Frontend controller (API client)
+│   ├── css/style.css           #   Core theme tokens and shared UI
+│   ├── css/layout.css          #   Dashboard layout rules
+│   ├── css/logs.css            #   Activity logs component styles
+│   ├── css/users.css           #   User management component styles
+│   ├── css/pagination.css      #   Logs pagination component styles
+│   ├── js/main.js              #   Modular frontend entrypoint
+│   ├── js/script.js            #   Legacy compatibility shim
+│   ├── js/core/*               #   Config, state, DOM, API, helpers
+│   ├── js/features/*           #   Status, guest, logs, users features
+│   ├── js/ui/*                 #   Shared UI feedback helpers
 │   ├── users.json              #   User data store
 │   └── logs.json               #   Activity log store
 │
@@ -246,6 +254,7 @@ All endpoints return JSON and include CORS headers for cross-origin access.
 | `PUT` | `/api/users` | Edit existing user |
 | `DELETE` | `/api/users?uid=XX` | Remove user |
 | `GET` | `/api/logs` | Retrieve activity logs |
+| `DELETE` | `/api/logs` | Clear all activity logs |
 | `GET` | `/api/rfid/scan` | Poll RFID reader for card tap |
 
 ---

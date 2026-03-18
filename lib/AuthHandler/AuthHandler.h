@@ -89,6 +89,8 @@ public:
     bool userExists(const String& uid);
     String getUserName(const String& uid);
     String getUserPIN(const String& uid);
+    int getUserCount() const;
+    String getUserUIDAt(int index) const;
     
     // Factory reset
     bool checkFactoryReset();       // Check if BOOT button held 10s
@@ -129,6 +131,10 @@ private:
     // Factory reset timing
     static const unsigned long FACTORY_RESET_TIME = 10000;  // 10 seconds
     static const unsigned long RFID_COOLDOWN_MS = 5000;     // 5 seconds
+    static const unsigned long KEYPAD_MIN_KEY_INTERVAL_MS = 140;
+    static const unsigned long KEYPAD_NOISE_WINDOW_MS = 2000;
+    static const int KEYPAD_NOISE_THRESHOLD = 12;
+    static const unsigned long KEYPAD_MUTE_DURATION_MS = 3000;
     
     // Hardware objects
     MFRC522 _rfid;
@@ -140,6 +146,10 @@ private:
     String _lastRFIDUID;
     unsigned long _rfidCooldownStartMs;
     unsigned long _rfidCooldownDurationMs;
+    unsigned long _lastAcceptedKeyMs;
+    unsigned long _keypadNoiseWindowStartMs;
+    int _keypadNoiseCount;
+    unsigned long _keypadMutedUntilMs;
     int _activeRfidRstPin;
     unsigned long _factoryPressStart;
     bool _factoryPressed;
@@ -148,6 +158,7 @@ private:
     String _readRFIDUID();
     bool _validateStoredPIN(const String& pin);
     String _uidToString(byte* uid, byte size);
+    String _normalizeUID(const String& uid) const;
     String _buildUserKey(const String& uid) const;
     String _buildLegacyUserKey(const String& uid) const;
     String _getUserValue(const String& uid);

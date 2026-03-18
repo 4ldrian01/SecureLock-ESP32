@@ -6,6 +6,44 @@
 
 #include "WebServer.h"
 #include <time.h>
+#include <ctype.h>
+
+namespace {
+String normalizeUID(const String& input) {
+    String uid = input;
+    uid.trim();
+    uid.toUpperCase();
+    uid.replace(" ", "");
+    uid.replace(":", "");
+    uid.replace("-", "");
+    return uid;
+}
+
+bool isAlphabeticName(const String& input) {
+    String name = input;
+    name.trim();
+
+    if (name.length() == 0) {
+        return false;
+    }
+
+    bool hasLetter = false;
+    for (size_t i = 0; i < name.length(); i++) {
+        const char c = name.charAt(i);
+        if (c == ' ') {
+            continue;
+        }
+
+        if (!isalpha(static_cast<unsigned char>(c))) {
+            return false;
+        }
+
+        hasLetter = true;
+    }
+
+    return hasLetter;
+}
+}
 
 /**
  * Constructor - Store component references
@@ -57,6 +95,10 @@ bool WebServer::isConnected() const {
  */
 String WebServer::getIPAddress() const {
     return _ipAddress;
+}
+
+void WebServer::logActivity(const String& user, const String& method, const String& status) {
+    _addLogEntry(user, method, status);
 }
 
 // ============================================================
@@ -169,8 +211,18 @@ void WebServer::_setupRoutes() {
     _server.on("/css/style.css", HTTP_GET, [this](AsyncWebServerRequest* request) {
         _handleCSS(request);
     });
+
+    // Optional pagination styles
+    _server.on("/css/pagination.css", HTTP_GET, [](AsyncWebServerRequest* request) {
+        if (LittleFS.exists("/css/pagination.css")) {
+            request->send(LittleFS, "/css/pagination.css", "text/css");
+            return;
+        }
+
+        request->send(404, "text/plain", "CSS not found");
+    });
     
-    // JavaScript file
+    // Legacy JavaScript file (compatibility shim to modular /js/main.js)
     _server.on("/js/script.js", HTTP_GET, [this](AsyncWebServerRequest* request) {
         _handleJS(request);
     });
@@ -223,6 +275,11 @@ void WebServer::_setupRoutes() {
     // Get activity logs
     _server.on("/api/logs", HTTP_GET, [this](AsyncWebServerRequest* request) {
         _handleAPILogs(request);
+    });
+
+    // Clear activity logs
+    _server.on("/api/logs", HTTP_DELETE, [this](AsyncWebServerRequest* request) {
+        _handleAPIClearLogs(request);
     });
     
     // RFID scan polling
@@ -308,8 +365,17 @@ void WebServer::_handleJS(AsyncWebServerRequest* request) {
  * Handle 404 errors
  */
 void WebServer::_handleNotFound(AsyncWebServerRequest* request) {
+    const String url = request->url();
+
+    if ((url.startsWith("/js/") || url.startsWith("/css/")) && LittleFS.exists(url)) {
+        request->send(LittleFS, url, _getMimeType(url));
+        Serial.print("[WEB] Static fallback served: ");
+        Serial.println(url);
+        return;
+    }
+
     Serial.print("[WEB] 404: ");
-    Serial.println(request->url());
+    Serial.println(url);
     
     request->send(404, "text/plain", "404 - Not Found");
 }
@@ -456,28 +522,101 @@ void WebServer::_handleAPIGuestCode(AsyncWebServerRequest* request) {
  */
 void WebServer::_handleAPIUsers(AsyncWebServerRequest* request) {
     Serial.println("[API] GET /api/users");
-    
-    // Open users.json from LittleFS
-    JsonDocument doc;
-    
+
+    // Read current users.json (if available) so we can preserve non-auth metadata (e.g., settings).
+    JsonDocument currentDoc;
     if (LittleFS.exists("/users.json")) {
         File file = LittleFS.open("/users.json", "r");
-        DeserializationError error = deserializeJson(doc, file);
+        DeserializationError error = deserializeJson(currentDoc, file);
         file.close();
-        
-        if (error) {
-            doc["users"] = JsonArray();
+
+        if (error || !currentDoc.is<JsonObject>()) {
+            currentDoc.clear();
         }
-    } else {
-        // Create default structure
-        JsonArray users = doc["users"].to<JsonArray>();
-        JsonObject admin = users.add<JsonObject>();
-        admin["uid"] = "DEFAULT_ADMIN";
-        admin["name"] = "Admin";
-        admin["type"] = "admin";
     }
-    
-    _sendJSON(request, 200, doc);
+
+    if (!currentDoc["users"].is<JsonArray>()) {
+        currentDoc["users"] = JsonArray();
+    }
+
+    JsonArray existingUsers = currentDoc["users"].as<JsonArray>();
+
+    // Build authoritative users payload from AuthHandler (NVS), not from users.json.
+    JsonDocument responseDoc;
+    JsonArray responseUsers = responseDoc["users"].to<JsonArray>();
+
+    for (int i = 0; i < _auth->getUserCount(); i++) {
+        String uid = normalizeUID(_auth->getUserUIDAt(i));
+        if (uid.isEmpty()) {
+            continue;
+        }
+
+        // Do not expose temporary guest PIN pseudo-users in User Management.
+        if (uid.startsWith("GUEST_")) {
+            continue;
+        }
+
+        String name = _auth->getUserName(uid);
+        if (name == "Unknown" || name.isEmpty()) {
+            name = (uid == "DEFAULT_ADMIN") ? "Admin" : "User";
+        }
+
+        String type = (uid == "DEFAULT_ADMIN") ? "admin" : "user";
+
+        // Preserve explicit role from existing users.json if one exists.
+        for (JsonObject existing : existingUsers) {
+            String existingUid = normalizeUID(existing["uid"] | "");
+            if (existingUid != uid) {
+                continue;
+            }
+
+            String existingType = existing["type"] | "";
+            existingType.trim();
+            existingType.toLowerCase();
+            if (!existingType.isEmpty()) {
+                type = existingType;
+            }
+            break;
+        }
+
+        JsonObject user = responseUsers.add<JsonObject>();
+        user["uid"] = uid;
+        user["name"] = name;
+        user["type"] = type;
+    }
+
+    // Keep optional settings section if present.
+    if (currentDoc["settings"].is<JsonObject>()) {
+        JsonObject currentSettings = currentDoc["settings"].as<JsonObject>();
+        JsonObject responseSettings = responseDoc["settings"].to<JsonObject>();
+        for (JsonPair kv : currentSettings) {
+            responseSettings[kv.key().c_str()] = kv.value();
+        }
+    }
+
+    // Self-heal users.json whenever it diverges from auth storage
+    // (prevents "empty UI but RFID still grants access" drift after uploadfs).
+    bool shouldRewriteUsersFile = !LittleFS.exists("/users.json");
+    String existingUsersSerialized;
+    String responseUsersSerialized;
+    serializeJson(existingUsers, existingUsersSerialized);
+    serializeJson(responseUsers, responseUsersSerialized);
+    if (existingUsersSerialized != responseUsersSerialized) {
+        shouldRewriteUsersFile = true;
+    }
+
+    if (shouldRewriteUsersFile) {
+        File file = LittleFS.open("/users.json", "w");
+        if (file) {
+            serializeJson(responseDoc, file);
+            file.close();
+            Serial.println("[API] users.json synchronized from auth storage");
+        } else {
+            Serial.println("[API][WARN] Failed to rewrite users.json during sync");
+        }
+    }
+
+    _sendJSON(request, 200, responseDoc);
 }
 
 /**
@@ -493,9 +632,7 @@ void WebServer::_handleAPIDeleteUser(AsyncWebServerRequest* request) {
         return;
     }
     
-    String uid = request->getParam("uid")->value();
-    uid.trim();
-    uid.toUpperCase();
+    String uid = normalizeUID(request->getParam("uid")->value());
     Serial.print("[API] DELETE /api/users?uid=");
     Serial.println(uid);
     
@@ -524,8 +661,7 @@ void WebServer::_handleAPIDeleteUser(AsyncWebServerRequest* request) {
 
             for (size_t i = users.size(); i > 0; i--) {
                 String listedUid = users[i - 1]["uid"].as<String>();
-                listedUid.trim();
-                listedUid.toUpperCase();
+                listedUid = normalizeUID(listedUid);
 
                 if (listedUid == uid) {
                     users.remove(i - 1);
@@ -593,13 +729,22 @@ void WebServer::_handleAPIAddUser(AsyncWebServerRequest* request, uint8_t* data,
     String uid  = body["uid"]  | "";
     String type = body["type"] | "user";
 
-    uid.trim();
-    uid.toUpperCase();
+    name.trim();
+    uid = normalizeUID(uid);
     
     if (name.isEmpty() || pin.isEmpty() || uid.isEmpty()) {
         JsonDocument doc;
         doc["success"] = false;
         doc["message"] = "Missing required fields: name, pin, uid";
+        _sendJSON(request, 400, doc);
+        return;
+    }
+
+    if (!isAlphabeticName(name)) {
+        JsonDocument doc;
+        doc["success"] = false;
+        doc["field"] = "name";
+        doc["message"] = "Name must contain alphabetic characters only";
         _sendJSON(request, 400, doc);
         return;
     }
@@ -617,8 +762,7 @@ void WebServer::_handleAPIAddUser(AsyncWebServerRequest* request, uint8_t* data,
                 JsonArray users = usersDoc["users"].as<JsonArray>();
                 for (size_t i = 0; i < users.size(); i++) {
                     String existingUID = users[i]["uid"].as<String>();
-                    existingUID.trim();
-                    existingUID.toUpperCase();
+                    existingUID = normalizeUID(existingUID);
                     if (existingUID == uid) {
                         duplicateRFID = true;
                         break;
@@ -673,7 +817,7 @@ void WebServer::_handleAPIAddUser(AsyncWebServerRequest* request, uint8_t* data,
         _security->beep(1);
     }
     
-    _addLogEntry(name, "Web", added ? "success" : "fail");
+    _addLogEntry(name, "Add New User", added ? "success" : "fail");
     
     JsonDocument doc;
     doc["success"] = added;
@@ -704,15 +848,23 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
     String pin  = body["pin"]  | "";
     String rfid = body["rfid"] | "";
 
-    uid.trim();
-    uid.toUpperCase();
-    rfid.trim();
-    rfid.toUpperCase();
+    name.trim();
+    uid = normalizeUID(uid);
+    rfid = normalizeUID(rfid);
     
     if (uid.isEmpty() || name.isEmpty()) {
         JsonDocument doc;
         doc["success"] = false;
         doc["message"] = "Missing required fields: uid, name";
+        _sendJSON(request, 400, doc);
+        return;
+    }
+
+    if (!isAlphabeticName(name)) {
+        JsonDocument doc;
+        doc["success"] = false;
+        doc["field"] = "name";
+        doc["message"] = "Name must contain alphabetic characters only";
         _sendJSON(request, 400, doc);
         return;
     }
@@ -733,8 +885,7 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
                     JsonArray users = usersDoc["users"].as<JsonArray>();
                     for (size_t i = 0; i < users.size(); i++) {
                         String existingUID = users[i]["uid"].as<String>();
-                        existingUID.trim();
-                        existingUID.toUpperCase();
+                        existingUID = normalizeUID(existingUID);
 
                         if (existingUID == rfid && existingUID != uid) {
                             duplicateRFID = true;
@@ -807,8 +958,7 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
         JsonArray users = usersDoc["users"].as<JsonArray>();
         for (size_t i = 0; i < users.size(); i++) {
             String listedUid = users[i]["uid"].as<String>();
-            listedUid.trim();
-            listedUid.toUpperCase();
+            listedUid = normalizeUID(listedUid);
 
             if (listedUid == uid) {
                 users[i]["name"] = name;
@@ -826,6 +976,9 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
     doc["success"] = true;
     doc["message"] = "User updated";
     doc["uid"] = targetUid;
+
+    _addLogEntry(name, uidChanged ? "Edit User + Replace RFID" : "Edit User", "success");
+
     _sendJSON(request, 200, doc);
 }
 
@@ -849,24 +1002,64 @@ void WebServer::_handleAPIRfidScan(AsyncWebServerRequest* request) {
  */
 void WebServer::_handleAPILogs(AsyncWebServerRequest* request) {
     Serial.println("[API] GET /api/logs");
-    
-    // Open logs.json from LittleFS
-    JsonDocument doc;
-    
+
+    JsonDocument storageDoc;
     if (LittleFS.exists("/logs.json")) {
         File file = LittleFS.open("/logs.json", "r");
-        DeserializationError error = deserializeJson(doc, file);
+        DeserializationError error = deserializeJson(storageDoc, file);
         file.close();
-        
-        if (error) {
-            doc["logs"] = JsonArray();
+
+        if (error || !storageDoc["logs"].is<JsonArray>()) {
+            storageDoc.clear();
+            storageDoc["logs"] = JsonArray();
         }
     } else {
-        // Create empty log structure
-        doc["logs"] = JsonArray();
+        storageDoc["logs"] = JsonArray();
     }
-    
-    _sendJSON(request, 200, doc);
+
+    // Return newest-first for instant top-of-list updates in UI.
+    JsonDocument responseDoc;
+    JsonArray responseLogs = responseDoc["logs"].to<JsonArray>();
+    JsonArray sourceLogs = storageDoc["logs"].as<JsonArray>();
+
+    for (int i = static_cast<int>(sourceLogs.size()) - 1; i >= 0; --i) {
+        if (!sourceLogs[i].is<JsonObject>()) {
+            continue;
+        }
+
+        JsonObject src = sourceLogs[i].as<JsonObject>();
+        JsonObject dst = responseLogs.add<JsonObject>();
+        for (JsonPair kv : src) {
+            dst[kv.key().c_str()] = kv.value();
+        }
+    }
+
+    _sendJSON(request, 200, responseDoc);
+}
+
+/**
+ * API: DELETE /api/logs
+ * Clear all activity logs (fresh start)
+ */
+void WebServer::_handleAPIClearLogs(AsyncWebServerRequest* request) {
+    Serial.println("[API] DELETE /api/logs - Clear all logs");
+
+    JsonDocument logsDoc;
+    logsDoc["logs"] = JsonArray();
+
+    bool cleared = false;
+    File file = LittleFS.open("/logs.json", "w");
+    if (file) {
+        serializeJson(logsDoc, file);
+        file.close();
+        cleared = true;
+    }
+
+    JsonDocument response;
+    response["success"] = cleared;
+    response["message"] = cleared ? "All logs cleared" : "Failed to clear logs";
+
+    _sendJSON(request, cleared ? 200 : 500, response);
 }
 
 // ============================================================

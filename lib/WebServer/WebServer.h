@@ -16,7 +16,8 @@
  * FILE SERVING:
  *   GET /                 → /html/index.html
  *   GET /css/style.css    → /css/style.css
- *   GET /js/script.js     → /js/script.js
+ *   GET /js/main.js       → /js/main.js (modular entrypoint)
+ *   GET /js/script.js     → /js/script.js (legacy compatibility shim)
  * 
  * API ENDPOINTS:
  *   GET    /api/status      → System status JSON
@@ -27,6 +28,7 @@
  *   PUT    /api/users       → Edit existing user (JSON body: uid, name, pin)
  *   DELETE /api/users?uid=X → Delete user by UID (admin protected)
  *   GET    /api/logs        → Get activity logs
+ *   DELETE /api/logs        → Clear all activity logs
  *   GET    /api/rfid/scan   → Poll RFID reader for card enrollment
  * 
  * FEATURES:
@@ -65,6 +67,9 @@ public:
     void init(const char* ssid, const char* password);
     bool isConnected() const;
     String getIPAddress() const;
+
+    // Runtime activity logging hook (used by main authentication flow)
+    void logActivity(const String& user, const String& method, const String& status);
     
 private:
     // Component references
@@ -106,6 +111,7 @@ private:
     void _handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data, size_t len);
     void _handleAPIDeleteUser(AsyncWebServerRequest* request);
     void _handleAPILogs(AsyncWebServerRequest* request);
+    void _handleAPIClearLogs(AsyncWebServerRequest* request);
     void _handleAPIRfidScan(AsyncWebServerRequest* request);
     
     // Activity logging

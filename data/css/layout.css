@@ -1,0 +1,15 @@
+/* ============================================================
+   Layout Module: Dashboard column balancing
+   ============================================================ */
+
+@media (min-width: 1024px) {
+    .dashboard {
+        grid-template-columns: minmax(320px, 0.84fr) minmax(460px, 1.16fr);
+    }
+}
+
+@media (min-width: 1360px) {
+    .dashboard {
+        grid-template-columns: minmax(340px, 0.8fr) minmax(540px, 1.2fr);
+    }
+}

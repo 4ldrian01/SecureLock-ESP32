@@ -1,0 +1,58 @@
+/* ============================================================
+   Logs Pagination UI (Responsive)
+   ============================================================ */
+
+.logs-pagination {
+    margin-top: 0.9rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.pagination-btn {
+    min-width: 96px;
+    padding: 0.5rem 0.9rem;
+    border-radius: 10px;
+    border: 1px solid var(--border-glass-strong);
+    background: rgba(31, 41, 55, 0.65);
+    color: var(--text-main);
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.pagination-btn:hover:not(:disabled) {
+    border-color: rgba(59, 130, 246, 0.6);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.12);
+}
+
+.pagination-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.pagination-info {
+    flex: 1;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    min-width: 170px;
+}
+
+@media (max-width: 640px) {
+    .logs-pagination {
+        justify-content: center;
+    }
+
+    .pagination-info {
+        order: -1;
+        width: 100%;
+    }
+
+    .pagination-btn {
+        flex: 1;
+        min-width: 120px;
+    }
+}

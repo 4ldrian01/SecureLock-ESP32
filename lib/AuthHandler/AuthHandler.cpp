@@ -18,8 +18,12 @@ AuthHandler::AuthHandler()
       _keypad(makeKeymap(_keys), _rowPins, _colPins, ROWS, COLS),
       _pinBuffer(""),
       _lastRFIDUID(""),
-            _rfidCooldownStartMs(0),
-            _rfidCooldownDurationMs(0),
+    _rfidCooldownStartMs(0),
+    _rfidCooldownDurationMs(0),
+    _lastAcceptedKeyMs(0),
+    _keypadNoiseWindowStartMs(0),
+    _keypadNoiseCount(0),
+    _keypadMutedUntilMs(0),
     _activeRfidRstPin(PIN_RFID_RST),
       _factoryPressStart(0),
       _factoryPressed(false),
@@ -156,7 +160,7 @@ AuthResult AuthHandler::checkRFID() {
     }
     
     // Read UID
-    String uid = _uidToString(_rfid.uid.uidByte, _rfid.uid.size);
+    String uid = _normalizeUID(_uidToString(_rfid.uid.uidByte, _rfid.uid.size));
     _lastRFIDUID = uid;
     
     // Halt card
@@ -208,7 +212,47 @@ String AuthHandler::getLastRFIDUID() const {
  * Get keypad key press
  */
 char AuthHandler::getKeypadKey() {
-    return _keypad.getKey();
+    const char rawKey = _keypad.getKey();
+    if (rawKey == NO_KEY) {
+        return '\0';
+    }
+
+    const unsigned long now = millis();
+
+    // Ignore unsupported keypad symbols (A/B/C/D are not used in auth flow).
+    const bool supported = ((rawKey >= '0' && rawKey <= '9') || rawKey == '*' || rawKey == '#');
+    if (!supported) {
+        return '\0';
+    }
+
+    if (_keypadMutedUntilMs > now) {
+        return '\0';
+    }
+
+    // Basic per-key rate limiting to suppress switch bounce and floating-pin noise.
+    if (now - _lastAcceptedKeyMs < KEYPAD_MIN_KEY_INTERVAL_MS) {
+        return '\0';
+    }
+
+    // Detect key storms (common with floating input-only keypad lines) and temporarily mute keypad.
+    if (_keypadNoiseWindowStartMs == 0 || (now - _keypadNoiseWindowStartMs) > KEYPAD_NOISE_WINDOW_MS) {
+        _keypadNoiseWindowStartMs = now;
+        _keypadNoiseCount = 0;
+    }
+
+    _keypadNoiseCount++;
+    if (_keypadNoiseCount > KEYPAD_NOISE_THRESHOLD) {
+        _keypadMutedUntilMs = now + KEYPAD_MUTE_DURATION_MS;
+        _keypadNoiseWindowStartMs = 0;
+        _keypadNoiseCount = 0;
+        clearBuffer();
+
+        Serial.println("[AUTH][WARN] Keypad noise storm detected - temporary input mute enabled");
+        return '\0';
+    }
+
+    _lastAcceptedKeyMs = now;
+    return rawKey;
 }
 
 /**
@@ -277,17 +321,23 @@ AuthResult AuthHandler::validatePIN(const String& pin) {
  * Add new user
  */
 bool AuthHandler::addUser(const String& uid, const String& pin, const String& name) {
-    String key = _buildUserKey(uid);
+    String normalizedUid = _normalizeUID(uid);
+    if (normalizedUid.length() == 0) {
+        Serial.println("[AUTH] ❌ Refusing to add user with empty/invalid UID");
+        return false;
+    }
+
+    String key = _buildUserKey(normalizedUid);
     String value = pin + ":" + name;
     size_t bytesWritten = _prefs.putString(key.c_str(), value);
     if (bytesWritten == 0) {
         Serial.print("[AUTH] ❌ Failed to store user record for UID: ");
-        Serial.println(uid);
+        Serial.println(normalizedUid);
         return false;
     }
 
     // Cleanup legacy key if present
-    String legacyKey = _buildLegacyUserKey(uid);
+    String legacyKey = _buildLegacyUserKey(normalizedUid);
     if (legacyKey != key && _prefs.isKey(legacyKey.c_str())) {
         _prefs.remove(legacyKey.c_str());
     }
@@ -295,20 +345,20 @@ bool AuthHandler::addUser(const String& uid, const String& pin, const String& na
     // Track UID in list (avoid duplicates)
     bool alreadyTracked = false;
     for (int i = 0; i < _userCount; i++) {
-        if (_userUIDs[i] == uid) {
+        if (_normalizeUID(_userUIDs[i]) == normalizedUid) {
             alreadyTracked = true;
             break;
         }
     }
     if (!alreadyTracked && _userCount < MAX_USERS) {
-        _userUIDs[_userCount++] = uid;
+        _userUIDs[_userCount++] = normalizedUid;
         _saveUserList();
     }
     
     Serial.print("[AUTH] User added: ");
     Serial.print(name);
     Serial.print(" (UID: ");
-    Serial.print(uid);
+    Serial.print(normalizedUid);
     Serial.println(")");
     
     return true;
@@ -318,8 +368,13 @@ bool AuthHandler::addUser(const String& uid, const String& pin, const String& na
  * Remove user
  */
 bool AuthHandler::removeUser(const String& uid) {
-    String key = _buildUserKey(uid);
-    String legacyKey = _buildLegacyUserKey(uid);
+    String normalizedUid = _normalizeUID(uid);
+    if (normalizedUid.length() == 0) {
+        return false;
+    }
+
+    String key = _buildUserKey(normalizedUid);
+    String legacyKey = _buildLegacyUserKey(normalizedUid);
 
     bool removedRecord = false;
     if (_prefs.isKey(key.c_str())) {
@@ -331,13 +386,31 @@ bool AuthHandler::removeUser(const String& uid) {
         removedRecord = true;
     }
 
+    // Backward-compat removal for any raw UID key variant
+    String rawUid = uid;
+    rawUid.trim();
+    if (rawUid.length() > 0 && rawUid != normalizedUid) {
+        String rawKey = _buildUserKey(rawUid);
+        String rawLegacyKey = _buildLegacyUserKey(rawUid);
+
+        if (_prefs.isKey(rawKey.c_str())) {
+            _prefs.remove(rawKey.c_str());
+            removedRecord = true;
+        }
+
+        if (rawLegacyKey != rawKey && _prefs.isKey(rawLegacyKey.c_str())) {
+            _prefs.remove(rawLegacyKey.c_str());
+            removedRecord = true;
+        }
+    }
+
     if (!removedRecord) {
         return false;
     }
     
     // Remove from tracked UID list
     for (int i = 0; i < _userCount; i++) {
-        if (_userUIDs[i] == uid) {
+        if (_normalizeUID(_userUIDs[i]) == normalizedUid) {
             // Shift remaining elements
             for (int j = i; j < _userCount - 1; j++) {
                 _userUIDs[j] = _userUIDs[j + 1];
@@ -350,7 +423,7 @@ bool AuthHandler::removeUser(const String& uid) {
     }
     
     Serial.print("[AUTH] User removed: ");
-    Serial.println(uid);
+    Serial.println(normalizedUid);
     
     return true;
 }
@@ -359,20 +432,44 @@ bool AuthHandler::removeUser(const String& uid) {
  * Check if user exists
  */
 bool AuthHandler::userExists(const String& uid) {
-    String key = _buildUserKey(uid);
+    String normalizedUid = _normalizeUID(uid);
+    if (normalizedUid.length() == 0) {
+        return false;
+    }
+
+    String key = _buildUserKey(normalizedUid);
     if (_prefs.isKey(key.c_str())) {
         return true;
     }
 
-    String legacyKey = _buildLegacyUserKey(uid);
-    return legacyKey != key && _prefs.isKey(legacyKey.c_str());
+    String legacyKey = _buildLegacyUserKey(normalizedUid);
+    if (legacyKey != key && _prefs.isKey(legacyKey.c_str())) {
+        return true;
+    }
+
+    // Backward-compatible lookup if caller provided a non-canonical UID
+    String rawUid = uid;
+    rawUid.trim();
+    if (rawUid.length() > 0 && rawUid != normalizedUid) {
+        String rawKey = _buildUserKey(rawUid);
+        if (_prefs.isKey(rawKey.c_str())) {
+            return true;
+        }
+
+        String rawLegacyKey = _buildLegacyUserKey(rawUid);
+        if (rawLegacyKey != rawKey && _prefs.isKey(rawLegacyKey.c_str())) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 /**
  * Get user name by UID
  */
 String AuthHandler::getUserName(const String& uid) {
-    String value = _getUserValue(uid);
+    String value = _getUserValue(_normalizeUID(uid));
     
     if (value.length() == 0) return "Unknown";
     
@@ -389,7 +486,7 @@ String AuthHandler::getUserName(const String& uid) {
  * Get user PIN by UID
  */
 String AuthHandler::getUserPIN(const String& uid) {
-    String value = _getUserValue(uid);
+    String value = _getUserValue(_normalizeUID(uid));
 
     if (value.length() == 0) {
         return "";
@@ -402,6 +499,24 @@ String AuthHandler::getUserPIN(const String& uid) {
     }
 
     return "";
+}
+
+/**
+ * Get number of tracked users in auth storage
+ */
+int AuthHandler::getUserCount() const {
+    return _userCount;
+}
+
+/**
+ * Get tracked UID at index (normalized)
+ */
+String AuthHandler::getUserUIDAt(int index) const {
+    if (index < 0 || index >= _userCount) {
+        return "";
+    }
+
+    return _normalizeUID(_userUIDs[index]);
 }
 
 /**
@@ -510,6 +625,22 @@ String AuthHandler::_uidToString(byte* uid, byte size) {
 }
 
 /**
+ * Private: Normalize UID for stable comparisons/storage
+ */
+String AuthHandler::_normalizeUID(const String& uid) const {
+    String normalized = uid;
+    normalized.trim();
+    normalized.toUpperCase();
+
+    // Accept multiple display formats: "AA BB", "AA:BB", "AA-BB"
+    normalized.replace(" ", "");
+    normalized.replace(":", "");
+    normalized.replace("-", "");
+
+    return normalized;
+}
+
+/**
  * Private: Build compact NVS key (NVS key max length is 15 chars)
  */
 String AuthHandler::_buildUserKey(const String& uid) const {
@@ -537,14 +668,31 @@ String AuthHandler::_buildLegacyUserKey(const String& uid) const {
  * Private: Read user value from compact key, fallback to legacy key
  */
 String AuthHandler::_getUserValue(const String& uid) {
-    String key = _buildUserKey(uid);
+    String normalizedUid = _normalizeUID(uid);
+
+    String key = _buildUserKey(normalizedUid);
     if (_prefs.isKey(key.c_str())) {
         return _prefs.getString(key.c_str(), "");
     }
 
-    String legacyKey = _buildLegacyUserKey(uid);
+    String legacyKey = _buildLegacyUserKey(normalizedUid);
     if (legacyKey != key && _prefs.isKey(legacyKey.c_str())) {
         return _prefs.getString(legacyKey.c_str(), "");
+    }
+
+    // Backward-compatible fallback for any pre-normalization key variant
+    String rawUid = uid;
+    rawUid.trim();
+    if (rawUid.length() > 0 && rawUid != normalizedUid) {
+        String rawKey = _buildUserKey(rawUid);
+        if (_prefs.isKey(rawKey.c_str())) {
+            return _prefs.getString(rawKey.c_str(), "");
+        }
+
+        String rawLegacyKey = _buildLegacyUserKey(rawUid);
+        if (rawLegacyKey != rawKey && _prefs.isKey(rawLegacyKey.c_str())) {
+            return _prefs.getString(rawLegacyKey.c_str(), "");
+        }
     }
 
     return "";
@@ -555,34 +703,103 @@ String AuthHandler::_getUserValue(const String& uid) {
  */
 void AuthHandler::_migrateUserStorageKeys() {
     int migrated = 0;
+    bool listChanged = false;
 
     for (int i = 0; i < _userCount; i++) {
-        String uid = _userUIDs[i];
-        String compactKey = _buildUserKey(uid);
-        String legacyKey = _buildLegacyUserKey(uid);
+        String rawUid = _userUIDs[i];
+        rawUid.trim();
+        String normalizedUid = _normalizeUID(rawUid);
 
-        if (_prefs.isKey(compactKey.c_str())) {
+        if (normalizedUid.length() == 0) {
             continue;
         }
 
-        if (!_prefs.isKey(legacyKey.c_str())) {
-            continue;
+        String normalizedCompactKey = _buildUserKey(normalizedUid);
+        String normalizedLegacyKey = _buildLegacyUserKey(normalizedUid);
+
+        String value = "";
+        if (_prefs.isKey(normalizedCompactKey.c_str())) {
+            value = _prefs.getString(normalizedCompactKey.c_str(), "");
+        } else if (_prefs.isKey(normalizedLegacyKey.c_str())) {
+            value = _prefs.getString(normalizedLegacyKey.c_str(), "");
         }
 
-        String value = _prefs.getString(legacyKey.c_str(), "");
+        String rawCompactKey = _buildUserKey(rawUid);
+        String rawLegacyKey = _buildLegacyUserKey(rawUid);
+
         if (value.length() == 0) {
-            continue;
+            if (_prefs.isKey(rawCompactKey.c_str())) {
+                value = _prefs.getString(rawCompactKey.c_str(), "");
+            } else if (_prefs.isKey(rawLegacyKey.c_str())) {
+                value = _prefs.getString(rawLegacyKey.c_str(), "");
+            }
         }
 
-        if (_prefs.putString(compactKey.c_str(), value) > 0) {
-            _prefs.remove(legacyKey.c_str());
-            migrated++;
+        if (value.length() > 0) {
+            if (!_prefs.isKey(normalizedCompactKey.c_str())) {
+                if (_prefs.putString(normalizedCompactKey.c_str(), value) > 0) {
+                    migrated++;
+                }
+            }
+
+            if (rawCompactKey != normalizedCompactKey && _prefs.isKey(rawCompactKey.c_str())) {
+                _prefs.remove(rawCompactKey.c_str());
+            }
+
+            if (rawLegacyKey != normalizedLegacyKey && _prefs.isKey(rawLegacyKey.c_str())) {
+                _prefs.remove(rawLegacyKey.c_str());
+            }
+
+            if (_prefs.isKey(normalizedLegacyKey.c_str()) && normalizedLegacyKey != normalizedCompactKey) {
+                _prefs.remove(normalizedLegacyKey.c_str());
+            }
+        }
+
+        if (_userUIDs[i] != normalizedUid) {
+            _userUIDs[i] = normalizedUid;
+            listChanged = true;
         }
     }
+
+    // Deduplicate normalized UID list
+    int uniqueCount = 0;
+    String uniqueUIDs[MAX_USERS];
+    for (int i = 0; i < _userCount; i++) {
+        String uid = _normalizeUID(_userUIDs[i]);
+        if (uid.length() == 0) {
+            continue;
+        }
+
+        bool exists = false;
+        for (int j = 0; j < uniqueCount; j++) {
+            if (uniqueUIDs[j] == uid) {
+                exists = true;
+                break;
+            }
+        }
+
+        if (!exists && uniqueCount < MAX_USERS) {
+            uniqueUIDs[uniqueCount++] = uid;
+        }
+    }
+
+    if (uniqueCount != _userCount) {
+        listChanged = true;
+    }
+
+    for (int i = 0; i < MAX_USERS; i++) {
+        _userUIDs[i] = (i < uniqueCount) ? uniqueUIDs[i] : "";
+    }
+    _userCount = uniqueCount;
 
     if (migrated > 0) {
         Serial.print("[AUTH] Migrated legacy user keys: ");
         Serial.println(migrated);
+    }
+
+    if (listChanged) {
+        _saveUserList();
+        Serial.println("[AUTH] Normalized user UID list in NVS");
     }
 }
 

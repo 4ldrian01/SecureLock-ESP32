@@ -62,6 +62,8 @@ UniversalTelegramBot* bot = nullptr;
 
 bool systemArmed = true;        // System armed for intrusion detection
 String currentUser = "";        // Current authenticated user
+bool vibrationAlarmLogged = false;
+bool doorTamperLogged = false;
 
 // ============================================================
 // FORWARD DECLARATIONS
@@ -146,9 +148,14 @@ void loop() {
     // SECURITY: Vibration Detection (while locked)
     // ─────────────────────────────────────────────────────────
     if (systemArmed && lockManager.isLocked()) {
-        if (securityManager.isVibrationDetected()) {
+        const bool vibrationDetected = securityManager.isVibrationDetected();
+
+        if (vibrationDetected && !vibrationAlarmLogged) {
             Serial.println("[SYSTEM] 🚨 INTRUSION DETECTED - Vibration!");
             securityManager.startAlarm();
+            vibrationAlarmLogged = true;
+
+            webServer.logActivity("System", "Vibration Alarm", "alarm");
             
             // Send Telegram alert
             if (bot) {
@@ -161,14 +168,21 @@ void loop() {
                 Serial.println("[TELEGRAM] Alert sent to admin");
             }
         }
+
+        if (!vibrationDetected) {
+            vibrationAlarmLogged = false;
+        }
     }
     
     // ─────────────────────────────────────────────────────────
     // SECURITY: Door Tamper Detection
     // ─────────────────────────────────────────────────────────
-    if (systemArmed && lockManager.isDoorTampered()) {
+    if (systemArmed && lockManager.isDoorTampered() && !doorTamperLogged) {
         Serial.println("[SYSTEM] 🚨 DOOR TAMPERED - Opened while locked!");
         securityManager.startAlarm();
+        doorTamperLogged = true;
+
+        webServer.logActivity("System", "Door Tamper Alarm", "alarm");
         
         // Send Telegram alert
         if (bot) {
@@ -180,6 +194,10 @@ void loop() {
             bot->sendMessage(ADMIN_CHAT_ID, message, "");
             Serial.println("[TELEGRAM] Tamper alert sent");
         }
+    }
+
+    if (!lockManager.isDoorTampered()) {
+        doorTamperLogged = false;
     }
     
     // ─────────────────────────────────────────────────────────
@@ -195,22 +213,33 @@ void loop() {
     // ─────────────────────────────────────────────────────────
     char key = authHandler.getKeypadKey();
     if (key) {
-        securityManager.beep(1);  // Keypress feedback
+        bool processedKey = false;
         
         if (key == '*') {
             // Clear buffer
             authHandler.clearBuffer();
             Serial.println("[SYSTEM] PIN buffer cleared");
+            processedKey = true;
         }
         else if (key == '#') {
             // Submit PIN
             AuthResult pinResult = authHandler.validatePIN();
             handleAuthResult(pinResult, "PIN");
             authHandler.clearBuffer();
+            processedKey = true;
         }
         else if (key >= '0' && key <= '9') {
             // Append to buffer
-            authHandler.appendToBuffer(key);
+            if (authHandler.getBuffer().length() < 8) {
+                authHandler.appendToBuffer(key);
+                processedKey = true;
+            } else {
+                Serial.println("[SYSTEM][WARN] PIN buffer full - ignoring extra keypad digit");
+            }
+        }
+
+        if (processedKey) {
+            securityManager.beep(1);  // Keypress feedback only for accepted input
         }
     }
     
@@ -230,6 +259,15 @@ void handleAuthResult(AuthResult result, const char* method) {
         case AUTH_SUCCESS:
             Serial.print("[SYSTEM] ✅ ACCESS GRANTED via ");
             Serial.println(method);
+
+            if (String(method) == "RFID") {
+                const String uid = authHandler.getLastRFIDUID();
+                const String userName = authHandler.getUserName(uid);
+                const String actor = (userName == "Unknown" || userName.length() == 0) ? "Registered RFID" : userName;
+                webServer.logActivity(actor, "Access Granted (Registered RFID)", "success");
+            } else {
+                webServer.logActivity("Registered User", "Access Granted (PIN)", "success");
+            }
             
             // Unlock door
             lockManager.unlock();
@@ -249,6 +287,16 @@ void handleAuthResult(AuthResult result, const char* method) {
         case AUTH_DENIED:
             Serial.print("[SYSTEM] ❌ ACCESS DENIED via ");
             Serial.println(method);
+
+            if (String(method) == "RFID") {
+                String deniedUid = authHandler.getLastRFIDUID();
+                if (deniedUid.length() == 0) {
+                    deniedUid = "Unknown RFID";
+                }
+                webServer.logActivity(deniedUid, "Access Denied (Unregistered RFID)", "fail");
+            } else {
+                webServer.logActivity("Unknown User", "Access Denied (Invalid PIN)", "fail");
+            }
             
             securityManager.beep(3);
             break;
@@ -257,6 +305,8 @@ void handleAuthResult(AuthResult result, const char* method) {
             Serial.println("[SYSTEM] 🆘 DURESS CODE DETECTED!");
             Serial.println("[SYSTEM] → Unlocking door (normal appearance)");
             Serial.println("[SYSTEM] → SILENT ALARM ACTIVATED");
+
+            webServer.logActivity("Duress User", "Duress Code Entered", "alarm");
             
             // Unlock door normally (appears legitimate)
             lockManager.unlock();

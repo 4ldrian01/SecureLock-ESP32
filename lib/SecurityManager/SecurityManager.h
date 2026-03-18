@@ -71,12 +71,16 @@ private:
     static const unsigned long BEEP_DURATION = 100;      // ms
     static const unsigned long BEEP_PAUSE = 80;          // ms between beeps
     static const unsigned long SIREN_PULSE = 200;        // ms per siren pulse
-    static const unsigned long VIBE_DEBOUNCE = 50;       // ms debounce
+    static const unsigned long VIBE_DEBOUNCE = 50;       // ms edge debounce
+    static const unsigned long VIBE_CONFIRM_HIGH_MS = 120; // ms stable HIGH required
+    static const unsigned long VIBE_RETRIGGER_COOLDOWN_MS = 1500;
     
     // State variables
     bool _alarming;
     bool _vibrationDetected;
     unsigned long _lastVibeTime;
+    unsigned long _vibeHighSince;
+    unsigned long _lastVibrationTriggerMs;
     bool _lastVibeState;
     
     // Buzzer pattern state

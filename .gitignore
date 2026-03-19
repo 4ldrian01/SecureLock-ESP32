@@ -7,6 +7,7 @@
 .pioenvs/
 .piolibdeps/
 build/
+compile_commands.json
 
 # IDE & Editor Files
 .vscode/.browse.c_cpp.db*

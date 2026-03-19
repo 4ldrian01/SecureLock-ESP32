@@ -111,18 +111,43 @@ void WebServer::logActivity(const String& user, const String& method, const Stri
 void WebServer::_initWiFi(const char* ssid, const char* password) {
     Serial.print("[WiFi] Connecting to: ");
     Serial.println(ssid);
-    
+
     WiFi.mode(WIFI_STA);
-    WiFi.begin(ssid, password);
-    
-    // Wait for connection (20 second timeout)
-    int attempts = 0;
-    while (WiFi.status() != WL_CONNECTED && attempts < 40) {
-        delay(500);
-        Serial.print(".");
-        attempts++;
+    WiFi.setAutoReconnect(true);
+    WiFi.persistent(false);
+    WiFi.setSleep(false);
+
+    // Start from a clean station state to avoid stale auth/session issues.
+    WiFi.disconnect(true, true);
+    delay(150);
+
+    static const int kMaxAttempts = 3;
+    for (int attempt = 1; attempt <= kMaxAttempts && WiFi.status() != WL_CONNECTED; ++attempt) {
+        Serial.print("[WiFi] Attempt ");
+        Serial.print(attempt);
+        Serial.print("/");
+        Serial.println(kMaxAttempts);
+
+        WiFi.begin(ssid, password);
+
+        // Wait for connection (20 second timeout per attempt)
+        int ticks = 0;
+        while (WiFi.status() != WL_CONNECTED && ticks < 40) {
+            delay(500);
+            Serial.print(".");
+            ticks++;
+        }
+        Serial.println();
+
+        if (WiFi.status() == WL_CONNECTED) {
+            break;
+        }
+
+        Serial.print("[WiFi] Attempt failed. Status code: ");
+        Serial.println(static_cast<int>(WiFi.status()));
+        WiFi.disconnect(true, true);
+        delay(300);
     }
-    Serial.println();
     
     if (WiFi.status() == WL_CONNECTED) {
         _wifiConnected = true;
@@ -147,13 +172,18 @@ void WebServer::_initWiFi(const char* ssid, const char* password) {
         Serial.print("[WiFi] RSSI: ");
         Serial.print(WiFi.RSSI());
         Serial.println(" dBm");
+        Serial.print("[WiFi] Channel: ");
+        Serial.println(WiFi.channel());
 
         Serial.print("[TIME] NTP sync: ");
         Serial.println(timeReady ? "OK (UTC)" : "PENDING (using fallback until synced)");
     } else {
         _wifiConnected = false;
         Serial.println("[WiFi] ✗ Connection failed");
-        Serial.println("[WiFi] Check credentials in secrets.h");
+        Serial.print("[WiFi] Final status code: ");
+        Serial.println(static_cast<int>(WiFi.status()));
+        Serial.println("[WiFi] Check credentials in secrets.h (exact SSID/password, case-sensitive)");
+        Serial.println("[WiFi] Ensure hotspot/router uses 2.4GHz and WPA2 or WPA2/WPA3 mixed mode");
     }
 }
 
@@ -424,7 +454,7 @@ void WebServer::_handleAPIUnlock(AsyncWebServerRequest* request) {
 
     const unsigned long retryAfterMs = _remainingCooldownMs(_lastEmergencyUnlockMs, EMERGENCY_COOLDOWN_MS);
     if (retryAfterMs > 0) {
-        _addLogEntry("Admin (Web)", "Web Emergency Cooldown", "fail");
+        _addLogEntry("Admin (Web)", "Emergency Override Cooldown", "fail");
 
         JsonDocument doc;
         doc["success"] = false;
@@ -452,7 +482,7 @@ void WebServer::_handleAPIUnlock(AsyncWebServerRequest* request) {
     _lastEmergencyUnlockMs = millis();
     
     // Log the event
-    _addLogEntry("Admin (Web)", "Web Emergency Override", "success");
+    _addLogEntry("Admin (Web)", "Emergency Override", "success");
     
     // Send response
     JsonDocument doc;
@@ -475,7 +505,7 @@ void WebServer::_handleAPIGuestCode(AsyncWebServerRequest* request) {
 
     const unsigned long retryAfterMs = _remainingCooldownMs(_lastGuestCodeRequestMs, GUEST_CODE_COOLDOWN_MS);
     if (retryAfterMs > 0) {
-        _addLogEntry("Admin (Web)", "Web Guest Cooldown", "fail");
+        _addLogEntry("Admin (Web)", "Guest Code Generation Cooldown", "fail");
 
         JsonDocument doc;
         doc["success"] = false;
@@ -500,7 +530,7 @@ void WebServer::_handleAPIGuestCode(AsyncWebServerRequest* request) {
     _security->beep(2);
 
     // Log successful guest code generation (include active 4-digit code)
-    _addLogEntry("Admin (Web)", "Guest PIN " + _guestCode, "success");
+    _addLogEntry("Admin (Web)", "Guest Code Generated (" + _guestCode + ")", "success");
     
     // Send response
     JsonDocument doc;
@@ -817,7 +847,7 @@ void WebServer::_handleAPIAddUser(AsyncWebServerRequest* request, uint8_t* data,
         _security->beep(1);
     }
     
-    _addLogEntry(name, "Add New User", added ? "success" : "fail");
+    _addLogEntry(name, "Add User", added ? "success" : "fail");
     
     JsonDocument doc;
     doc["success"] = added;
@@ -977,7 +1007,7 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
     doc["message"] = "User updated";
     doc["uid"] = targetUid;
 
-    _addLogEntry(name, uidChanged ? "Edit User + Replace RFID" : "Edit User", "success");
+    _addLogEntry(name, uidChanged ? "Edit User (RFID Replaced)" : "Edit User", "success");
 
     _sendJSON(request, 200, doc);
 }

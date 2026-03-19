@@ -264,7 +264,7 @@ void handleAuthResult(AuthResult result, const char* method) {
                 const String uid = authHandler.getLastRFIDUID();
                 const String userName = authHandler.getUserName(uid);
                 const String actor = (userName == "Unknown" || userName.length() == 0) ? "Registered RFID" : userName;
-                webServer.logActivity(actor, "Access Granted (Registered RFID)", "success");
+                webServer.logActivity(actor, "Access Granted (RFID)", "success");
             } else {
                 webServer.logActivity("Registered User", "Access Granted (PIN)", "success");
             }
@@ -293,7 +293,7 @@ void handleAuthResult(AuthResult result, const char* method) {
                 if (deniedUid.length() == 0) {
                     deniedUid = "Unknown RFID";
                 }
-                webServer.logActivity(deniedUid, "Access Denied (Unregistered RFID)", "fail");
+                webServer.logActivity(deniedUid, "RFID Access Denied", "fail");
             } else {
                 webServer.logActivity("Unknown User", "Access Denied (Invalid PIN)", "fail");
             }

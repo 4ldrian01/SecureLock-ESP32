@@ -1,0 +1,106 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "platformio run",
+      "type": "shell",
+      "command": "${env:HOME}/.platformio/penv/bin/pio",
+      "windows": {
+        "command": "${env:USERPROFILE}\\.platformio\\penv\\Scripts\\pio.exe"
+      },
+      "args": [
+        "run"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "platformio run --target upload",
+      "type": "shell",
+      "command": "${env:HOME}/.platformio/penv/bin/pio",
+      "windows": {
+        "command": "${env:USERPROFILE}\\.platformio\\penv\\Scripts\\pio.exe"
+      },
+      "args": [
+        "run",
+        "--target",
+        "upload"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "platformio device monitor",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-lc",
+        "timeout 20 ${env:HOME}/.platformio/penv/bin/pio device monitor -b 115200 -f time -f printable || true"
+      ],
+      "windows": {
+        "command": "${env:USERPROFILE}\\.platformio\\penv\\Scripts\\pio.exe",
+        "args": [
+          "device",
+          "monitor",
+          "-b",
+          "115200",
+          "-f",
+          "time",
+          "-f",
+          "printable"
+        ]
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "PlatformIO: Monitor (Live)",
+      "type": "shell",
+      "command": "${env:HOME}/.platformio/penv/bin/pio",
+      "windows": {
+        "command": "${env:USERPROFILE}\\.platformio\\penv\\Scripts\\pio.exe"
+      },
+      "args": [
+        "device",
+        "monitor",
+        "-b",
+        "115200",
+        "-f",
+        "time",
+        "-f",
+        "printable"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "platformio run --target uploadfs",
+      "type": "shell",
+      "command": "${env:HOME}/.platformio/penv/bin/pio",
+      "windows": {
+        "command": "${env:USERPROFILE}\\.platformio\\penv\\Scripts\\pio.exe"
+      },
+      "args": [
+        "run",
+        "--target",
+        "uploadfs"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    }
+  ]
+}

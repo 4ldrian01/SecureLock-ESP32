@@ -130,6 +130,24 @@ pip install platformio
 pio device list
 ```
 
+If `pio` is not found in VS Code integrated terminals:
+
+```bash
+# Linux fallback
+~/.platformio/penv/bin/pio run
+~/.platformio/penv/bin/pio run --target upload
+~/.platformio/penv/bin/pio device monitor
+```
+
+```powershell
+# Windows fallback
+$env:USERPROFILE\.platformio\penv\Scripts\pio.exe run
+$env:USERPROFILE\.platformio\penv\Scripts\pio.exe run --target upload
+$env:USERPROFILE\.platformio\penv\Scripts\pio.exe device monitor
+```
+
+This workspace also includes `.vscode/tasks.json` with resilient Build/Upload/Monitor tasks for Linux and Windows paths.
+
 ### 1. Configure Credentials
 
 Edit `include/secrets.h`:

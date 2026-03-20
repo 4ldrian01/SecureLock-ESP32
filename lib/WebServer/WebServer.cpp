@@ -8,6 +8,13 @@
 #include <time.h>
 #include <ctype.h>
 
+// Shared guest-code state provided by main authentication loop (Telegram path)
+extern String getActiveGuestCode();
+extern bool isTemporaryGuestCodeActive();
+extern unsigned long getTemporaryGuestCodeRemainingMs();
+extern String getAuthPrompt();
+extern bool isPendingAccessActive();
+
 namespace {
 String normalizeUID(const String& input) {
     String uid = input;
@@ -69,6 +76,7 @@ void WebServer::init(const char* ssid, const char* password) {
     Serial.println("[WEB] Initializing Web Server...");
     
     _initFileSystem();
+    _cleanupGuestUsers();
     _initWiFi(ssid, password);
     _setupRoutes();
     
@@ -81,6 +89,10 @@ void WebServer::init(const char* ssid, const char* password) {
         Serial.print(_ipAddress);
         Serial.println("/");
     }
+}
+
+void WebServer::update() {
+    _expireGuestCodeIfNeeded();
 }
 
 /**
@@ -419,6 +431,8 @@ void WebServer::_handleNotFound(AsyncWebServerRequest* request) {
  * Return system status as JSON
  */
 void WebServer::_handleAPIStatus(AsyncWebServerRequest* request) {
+    _expireGuestCodeIfNeeded();
+
     JsonDocument doc;
     
     // Lock status
@@ -432,7 +446,7 @@ void WebServer::_handleAPIStatus(AsyncWebServerRequest* request) {
     
     // Security status
     doc["alarm"] = _security->isAlarming();
-    doc["vibration"] = _security->isVibrationDetected();
+    doc["vibration"] = _security->isVibrationLatched();
     
     // System info
     doc["uptime"] = millis() / 1000;
@@ -440,6 +454,17 @@ void WebServer::_handleAPIStatus(AsyncWebServerRequest* request) {
     doc["wifiConnected"] = _wifiConnected;
     doc["ipAddress"] = _ipAddress;
     doc["rssi"] = WiFi.RSSI();
+
+    // Temporary guest code status (source of truth: Telegram/main.cpp flow)
+    const bool telegramGuestActive = isTemporaryGuestCodeActive();
+    const String telegramGuestCode = getActiveGuestCode();
+    const unsigned long telegramGuestRemainingMs = getTemporaryGuestCodeRemainingMs();
+
+    doc["guestCodeActive"] = telegramGuestActive;
+    doc["guestCode"] = telegramGuestActive ? telegramGuestCode : "";
+    doc["guestCodeRemainingMs"] = telegramGuestRemainingMs;
+    doc["authPrompt"] = getAuthPrompt();
+    doc["pendingAccess"] = isPendingAccessActive();
     
     _sendJSON(request, 200, doc);
     Serial.println("[API] GET /api/status");
@@ -503,47 +528,12 @@ void WebServer::_handleAPIUnlock(AsyncWebServerRequest* request) {
 void WebServer::_handleAPIGuestCode(AsyncWebServerRequest* request) {
     Serial.println("[API] POST /api/guest-code");
 
-    const unsigned long retryAfterMs = _remainingCooldownMs(_lastGuestCodeRequestMs, GUEST_CODE_COOLDOWN_MS);
-    if (retryAfterMs > 0) {
-        _addLogEntry("Admin (Web)", "Guest Code Generation Cooldown", "fail");
+    _addLogEntry("Admin (Web)", "Guest Code API Disabled", "fail");
 
-        JsonDocument doc;
-        doc["success"] = false;
-        doc["message"] = "Guest code generation is cooling down";
-        doc["retryAfterMs"] = retryAfterMs;
-        doc["retryAfterSec"] = (retryAfterMs + 999) / 1000;
-        doc["cooldownMs"] = GUEST_CODE_COOLDOWN_MS;
-        _sendJSON(request, 429, doc);
-        return;
-    }
-    
-    // Generate new guest code
-    _guestCode = _generateGuestCode();
-    _guestCodeExpiry = millis() + 300000;  // 5 minutes
-    _lastGuestCodeRequestMs = millis();
-    
-    // Add to AuthHandler (temporary PIN)
-    _auth->addUser("GUEST_" + _guestCode, _guestCode, "Guest");
-
-    // Audible feedback for successful guest code generation
-    // (same tone pattern as emergency override success)
-    _security->beep(2);
-
-    // Log successful guest code generation (include active 4-digit code)
-    _addLogEntry("Admin (Web)", "Guest Code Generated (" + _guestCode + ")", "success");
-    
-    // Send response
     JsonDocument doc;
-    doc["success"] = true;
-    doc["code"] = _guestCode;
-    doc["expiresIn"] = 300;  // seconds
-    doc["timestamp"] = millis();
-    doc["cooldownMs"] = GUEST_CODE_COOLDOWN_MS;
-    
-    _sendJSON(request, 200, doc);
-    
-    Serial.print("[API] Guest code generated: ");
-    Serial.println(_guestCode);
+    doc["success"] = false;
+    doc["message"] = "Guest code generation is managed via Telegram command /guest_code";
+    _sendJSON(request, 403, doc);
 }
 
 /**
@@ -574,6 +564,8 @@ void WebServer::_handleAPIUsers(AsyncWebServerRequest* request) {
     // Build authoritative users payload from AuthHandler (NVS), not from users.json.
     JsonDocument responseDoc;
     JsonArray responseUsers = responseDoc["users"].to<JsonArray>();
+
+    bool adminAssigned = false;
 
     for (int i = 0; i < _auth->getUserCount(); i++) {
         String uid = normalizeUID(_auth->getUserUIDAt(i));
@@ -607,6 +599,17 @@ void WebServer::_handleAPIUsers(AsyncWebServerRequest* request) {
                 type = existingType;
             }
             break;
+        }
+
+        // Enforce exactly one admin account in dashboard payload.
+        const bool wantsAdmin = (type == "admin") || (uid == "DEFAULT_ADMIN");
+        if (wantsAdmin) {
+            if (!adminAssigned) {
+                type = "admin";
+                adminAssigned = true;
+            } else {
+                type = "user";
+            }
         }
 
         JsonObject user = responseUsers.add<JsonObject>();
@@ -712,7 +715,11 @@ void WebServer::_handleAPIDeleteUser(AsyncWebServerRequest* request) {
         Serial.println("[API][WARN] User removed from users.json, but AuthHandler record was not found");
     }
 
-    _addLogEntry(uid, "Web Delete", deleted ? "success" : "fail");
+    if (deleted) {
+        _security->beep(1);  // Success tone parity with Add User action
+    }
+
+    _addLogEntry("Admin (Web)", "Delete User (" + uid + ")", deleted ? "success" : "fail");
 
     // Send response
     JsonDocument doc;
@@ -758,9 +765,13 @@ void WebServer::_handleAPIAddUser(AsyncWebServerRequest* request, uint8_t* data,
     String pin  = body["pin"]  | "";
     String uid  = body["uid"]  | "";
     String type = body["type"] | "user";
+    String telegramChatID = body["telegramChatID"] | "";
+    String backupPIN = body["backupPIN"] | "";
 
     name.trim();
     uid = normalizeUID(uid);
+    telegramChatID.trim();
+    backupPIN.trim();
     
     if (name.isEmpty() || pin.isEmpty() || uid.isEmpty()) {
         JsonDocument doc;
@@ -777,6 +788,28 @@ void WebServer::_handleAPIAddUser(AsyncWebServerRequest* request, uint8_t* data,
         doc["message"] = "Name must contain alphabetic characters only";
         _sendJSON(request, 400, doc);
         return;
+    }
+
+    if (!backupPIN.isEmpty()) {
+        if (backupPIN.length() != 4) {
+            JsonDocument doc;
+            doc["success"] = false;
+            doc["field"] = "backupPIN";
+            doc["message"] = "Backup PIN must be exactly 4 digits";
+            _sendJSON(request, 400, doc);
+            return;
+        }
+
+        for (size_t i = 0; i < backupPIN.length(); i++) {
+            if (!isDigit(backupPIN.charAt(i))) {
+                JsonDocument doc;
+                doc["success"] = false;
+                doc["field"] = "backupPIN";
+                doc["message"] = "Backup PIN must contain digits only";
+                _sendJSON(request, 400, doc);
+                return;
+            }
+        }
     }
 
     // Professional duplicate RFID protection
@@ -819,6 +852,16 @@ void WebServer::_handleAPIAddUser(AsyncWebServerRequest* request, uint8_t* data,
     
     // Add to AuthHandler (NVS)
     bool added = _auth->addUser(uid, pin, name);
+
+    if (added) {
+        if (!telegramChatID.isEmpty()) {
+            _auth->setUserTelegramChatId(uid, telegramChatID);
+        }
+
+        if (!backupPIN.isEmpty()) {
+            _auth->setUserBackupPIN(uid, backupPIN);
+        }
+    }
     
     // Also persist to users.json on LittleFS
     if (added) {
@@ -838,6 +881,9 @@ void WebServer::_handleAPIAddUser(AsyncWebServerRequest* request, uint8_t* data,
         newUser["uid"]  = uid;
         newUser["name"] = name;
         newUser["type"] = type;
+        if (!telegramChatID.isEmpty()) {
+            newUser["telegramChatID"] = telegramChatID;
+        }
         
         File wFile = LittleFS.open("/users.json", "w");
         serializeJson(usersDoc, wFile);
@@ -877,10 +923,14 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
     String name = body["name"] | "";
     String pin  = body["pin"]  | "";
     String rfid = body["rfid"] | "";
+    String telegramChatID = body["telegramChatID"] | "";
+    String backupPIN = body["backupPIN"] | "";
 
     name.trim();
     uid = normalizeUID(uid);
     rfid = normalizeUID(rfid);
+    telegramChatID.trim();
+    backupPIN.trim();
     
     if (uid.isEmpty() || name.isEmpty()) {
         JsonDocument doc;
@@ -897,6 +947,28 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
         doc["message"] = "Name must contain alphabetic characters only";
         _sendJSON(request, 400, doc);
         return;
+    }
+
+    if (!backupPIN.isEmpty()) {
+        if (backupPIN.length() != 4) {
+            JsonDocument doc;
+            doc["success"] = false;
+            doc["field"] = "backupPIN";
+            doc["message"] = "Backup PIN must be exactly 4 digits";
+            _sendJSON(request, 400, doc);
+            return;
+        }
+
+        for (size_t i = 0; i < backupPIN.length(); i++) {
+            if (!isDigit(backupPIN.charAt(i))) {
+                JsonDocument doc;
+                doc["success"] = false;
+                doc["field"] = "backupPIN";
+                doc["message"] = "Backup PIN must contain digits only";
+                _sendJSON(request, 400, doc);
+                return;
+            }
+        }
     }
 
     // Duplicate RFID protection for card replacement/edit flow
@@ -961,6 +1033,16 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
     const String targetUid = rfid.isEmpty() ? uid : rfid;
     const bool uidChanged = (targetUid != uid);
 
+    String effectiveTelegramChatId = telegramChatID;
+    if (effectiveTelegramChatId.isEmpty()) {
+        effectiveTelegramChatId = _auth->getUserTelegramChatId(uid);
+    }
+
+    String effectiveBackupPIN = backupPIN;
+    if (effectiveBackupPIN.isEmpty()) {
+        effectiveBackupPIN = _auth->getUserBackupPIN(uid);
+    }
+
     bool authUpdated = false;
     if (uidChanged) {
         _auth->removeUser(uid);
@@ -976,6 +1058,11 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
         doc["message"] = "Failed to update user credentials";
         _sendJSON(request, 500, doc);
         return;
+    }
+
+    _auth->setUserTelegramChatId(targetUid, effectiveTelegramChatId);
+    if (effectiveBackupPIN.length() == 4) {
+        _auth->setUserBackupPIN(targetUid, effectiveBackupPIN);
     }
     
     // Update users.json on LittleFS
@@ -993,6 +1080,9 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
             if (listedUid == uid) {
                 users[i]["name"] = name;
                 users[i]["uid"] = targetUid;
+                if (effectiveTelegramChatId.length() > 0) {
+                    users[i]["telegramChatID"] = effectiveTelegramChatId;
+                }
                 break;
             }
         }
@@ -1153,6 +1243,50 @@ unsigned long WebServer::_remainingCooldownMs(unsigned long lastActionMs, unsign
     }
 
     return cooldownMs - elapsed;
+}
+
+void WebServer::_cleanupGuestUsers() {
+    String guestUids[32];
+    int guestCount = 0;
+
+    const int totalUsers = _auth->getUserCount();
+    for (int i = 0; i < totalUsers && guestCount < 32; i++) {
+        String uid = _auth->getUserUIDAt(i);
+        uid.trim();
+        uid.toUpperCase();
+
+        if (uid.startsWith("GUEST_")) {
+            guestUids[guestCount++] = uid;
+        }
+    }
+
+    for (int i = 0; i < guestCount; i++) {
+        _auth->removeUser(guestUids[i]);
+    }
+
+    if (guestCount > 0) {
+        Serial.print("[WEB] Cleaned stale guest auth entries: ");
+        Serial.println(guestCount);
+    }
+}
+
+void WebServer::_expireGuestCodeIfNeeded() {
+    if (_guestCode.isEmpty() || _guestCodeExpiry == 0) {
+        return;
+    }
+
+    const long remainingMs = static_cast<long>(_guestCodeExpiry - millis());
+    if (remainingMs > 0) {
+        return;
+    }
+
+    const String expiredGuestUid = "GUEST_" + _guestCode;
+    _auth->removeUser(expiredGuestUid);
+    _addLogEntry("System", "Guest Code Expired", "success");
+
+    _guestCode = "";
+    _guestCodeExpiry = 0;
+    Serial.println("[WEB] Guest code expired and was removed from auth storage");
 }
 
 /**

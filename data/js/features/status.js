@@ -12,6 +12,12 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
             return;
         }
 
+        if (state.authPrompt) {
+            DOM.lockStatusSub.textContent = state.authPrompt;
+            DOM.lockStatusSub.style.color = 'var(--accent)';
+            return;
+        }
+
         DOM.lockStatusSub.style.color = '';
 
         if (state.locked) {
@@ -140,6 +146,7 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
 
             state.locked = Boolean(data.locked);
             state.alarm = Boolean(data.alarm);
+            state.authPrompt = String(data.authPrompt || '');
 
             const emergencyCooldownRemainingMs = Number(data.emergencyCooldownRemainingMs);
             if (Number.isFinite(emergencyCooldownRemainingMs) && emergencyCooldownRemainingMs > 0) {

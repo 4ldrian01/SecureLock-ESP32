@@ -85,6 +85,10 @@ bool SecurityManager::isVibrationDetected() {
     return _vibrationDetected;
 }
 
+bool SecurityManager::isVibrationLatched() const {
+    return _vibrationDetected;
+}
+
 /**
  * Reset vibration flag
  */

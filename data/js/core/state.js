@@ -18,6 +18,7 @@ export function createInitialState() {
         emergencyCooldown: 0,
         emergencyCooldownTimer: null,
         emergencyRequestInFlight: false,
+        authPrompt: '',
         guestCooldown: 0,
         guestCooldownTimer: null,
         guestRequestInFlight: false,

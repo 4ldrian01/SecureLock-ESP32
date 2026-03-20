@@ -93,7 +93,6 @@ export function initApp() {
         bindEvents();
 
         statusFeature.updateEmergencyButton();
-        guestFeature.updateGuestGenerateButton();
         usersFeature.updateAddUserSubmitButton();
 
         statusFeature.pollStatus().then((data) => {

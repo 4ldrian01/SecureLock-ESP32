@@ -89,6 +89,10 @@ public:
     bool userExists(const String& uid);
     String getUserName(const String& uid);
     String getUserPIN(const String& uid);
+    bool setUserTelegramChatId(const String& uid, const String& chatId);
+    String getUserTelegramChatId(const String& uid);
+    bool setUserBackupPIN(const String& uid, const String& backupPin);
+    String getUserBackupPIN(const String& uid);
     int getUserCount() const;
     String getUserUIDAt(int index) const;
     
@@ -135,6 +139,7 @@ private:
     static const unsigned long KEYPAD_NOISE_WINDOW_MS = 2000;
     static const int KEYPAD_NOISE_THRESHOLD = 12;
     static const unsigned long KEYPAD_MUTE_DURATION_MS = 3000;
+    static const unsigned long KEYPAD_STARTUP_SETTLE_MS = 2500;
     
     // Hardware objects
     MFRC522 _rfid;
@@ -150,6 +155,8 @@ private:
     unsigned long _keypadNoiseWindowStartMs;
     int _keypadNoiseCount;
     unsigned long _keypadMutedUntilMs;
+    unsigned long _keypadReadyAtMs;
+    bool _keypadRuntimeSettlingStarted;
     int _activeRfidRstPin;
     unsigned long _factoryPressStart;
     bool _factoryPressed;
@@ -160,6 +167,7 @@ private:
     String _uidToString(byte* uid, byte size);
     String _normalizeUID(const String& uid) const;
     String _buildUserKey(const String& uid) const;
+    String _buildMetadataKey(const String& uid, char prefix) const;
     String _buildLegacyUserKey(const String& uid) const;
     String _getUserValue(const String& uid);
     void _migrateUserStorageKeys();

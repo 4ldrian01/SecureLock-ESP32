@@ -24,6 +24,8 @@ AuthHandler::AuthHandler()
     _keypadNoiseWindowStartMs(0),
     _keypadNoiseCount(0),
     _keypadMutedUntilMs(0),
+    _keypadReadyAtMs(0),
+        _keypadRuntimeSettlingStarted(false),
     _activeRfidRstPin(PIN_RFID_RST),
       _factoryPressStart(0),
       _factoryPressed(false),
@@ -117,6 +119,8 @@ void AuthHandler::init() {
     // Load user list from NVS
     _loadUserList();
     _migrateUserStorageKeys();
+    _keypadReadyAtMs = 0;
+    _keypadRuntimeSettlingStarted = false;
     
     Serial.println("[AUTH] Initialized");
     Serial.println("[AUTH] Keypad: 4x4 Matrix");
@@ -212,12 +216,25 @@ String AuthHandler::getLastRFIDUID() const {
  * Get keypad key press
  */
 char AuthHandler::getKeypadKey() {
+    const unsigned long now = millis();
+
+    // Start keypad settle window when runtime polling actually begins (loop phase),
+    // not during init, because setup may take several seconds (WiFi, web server).
+    if (!_keypadRuntimeSettlingStarted) {
+        _keypadRuntimeSettlingStarted = true;
+        _keypadReadyAtMs = now + KEYPAD_STARTUP_SETTLE_MS;
+    }
+
+    // Allow keypad lines to electrically settle after boot to suppress phantom startup keys.
+    if (now < _keypadReadyAtMs) {
+        _keypad.getKey();  // Drain transient matrix reads during settle period.
+        return '\0';
+    }
+
     const char rawKey = _keypad.getKey();
     if (rawKey == NO_KEY) {
         return '\0';
     }
-
-    const unsigned long now = millis();
 
     // Ignore unsupported keypad symbols (A/B/C/D are not used in auth flow).
     const bool supported = ((rawKey >= '0' && rawKey <= '9') || rawKey == '*' || rawKey == '#');
@@ -341,6 +358,13 @@ bool AuthHandler::addUser(const String& uid, const String& pin, const String& na
     if (legacyKey != key && _prefs.isKey(legacyKey.c_str())) {
         _prefs.remove(legacyKey.c_str());
     }
+
+    // Ensure each user has a fallback offline backup PIN metadata record.
+    // Do not overwrite if already explicitly configured.
+    String backupKey = _buildMetadataKey(normalizedUid, 'b');
+    if (!_prefs.isKey(backupKey.c_str())) {
+        setUserBackupPIN(normalizedUid, pin);
+    }
     
     // Track UID in list (avoid duplicates)
     bool alreadyTracked = false;
@@ -375,6 +399,8 @@ bool AuthHandler::removeUser(const String& uid) {
 
     String key = _buildUserKey(normalizedUid);
     String legacyKey = _buildLegacyUserKey(normalizedUid);
+    String chatKey = _buildMetadataKey(normalizedUid, 'c');
+    String backupKey = _buildMetadataKey(normalizedUid, 'b');
 
     bool removedRecord = false;
     if (_prefs.isKey(key.c_str())) {
@@ -386,12 +412,22 @@ bool AuthHandler::removeUser(const String& uid) {
         removedRecord = true;
     }
 
+    if (_prefs.isKey(chatKey.c_str())) {
+        _prefs.remove(chatKey.c_str());
+    }
+
+    if (_prefs.isKey(backupKey.c_str())) {
+        _prefs.remove(backupKey.c_str());
+    }
+
     // Backward-compat removal for any raw UID key variant
     String rawUid = uid;
     rawUid.trim();
     if (rawUid.length() > 0 && rawUid != normalizedUid) {
         String rawKey = _buildUserKey(rawUid);
         String rawLegacyKey = _buildLegacyUserKey(rawUid);
+        String rawChatKey = _buildMetadataKey(rawUid, 'c');
+        String rawBackupKey = _buildMetadataKey(rawUid, 'b');
 
         if (_prefs.isKey(rawKey.c_str())) {
             _prefs.remove(rawKey.c_str());
@@ -401,6 +437,14 @@ bool AuthHandler::removeUser(const String& uid) {
         if (rawLegacyKey != rawKey && _prefs.isKey(rawLegacyKey.c_str())) {
             _prefs.remove(rawLegacyKey.c_str());
             removedRecord = true;
+        }
+
+        if (_prefs.isKey(rawChatKey.c_str())) {
+            _prefs.remove(rawChatKey.c_str());
+        }
+
+        if (_prefs.isKey(rawBackupKey.c_str())) {
+            _prefs.remove(rawBackupKey.c_str());
         }
     }
 
@@ -499,6 +543,93 @@ String AuthHandler::getUserPIN(const String& uid) {
     }
 
     return "";
+}
+
+bool AuthHandler::setUserTelegramChatId(const String& uid, const String& chatId) {
+    String normalizedUid = _normalizeUID(uid);
+    if (normalizedUid.length() == 0) {
+        return false;
+    }
+
+    String normalizedChatId = chatId;
+    normalizedChatId.trim();
+
+    String key = _buildMetadataKey(normalizedUid, 'c');
+    if (normalizedChatId.length() == 0) {
+        if (_prefs.isKey(key.c_str())) {
+            _prefs.remove(key.c_str());
+        }
+        return true;
+    }
+
+    return _prefs.putString(key.c_str(), normalizedChatId) > 0;
+}
+
+String AuthHandler::getUserTelegramChatId(const String& uid) {
+    String normalizedUid = _normalizeUID(uid);
+    if (normalizedUid.length() == 0) {
+        return "";
+    }
+
+    String key = _buildMetadataKey(normalizedUid, 'c');
+    if (_prefs.isKey(key.c_str())) {
+        return _prefs.getString(key.c_str(), "");
+    }
+
+    return "";
+}
+
+bool AuthHandler::setUserBackupPIN(const String& uid, const String& backupPin) {
+    String normalizedUid = _normalizeUID(uid);
+    if (normalizedUid.length() == 0) {
+        return false;
+    }
+
+    String normalizedPin = backupPin;
+    normalizedPin.trim();
+
+    if (normalizedPin.length() != 4) {
+        return false;
+    }
+
+    for (size_t i = 0; i < normalizedPin.length(); i++) {
+        if (!isDigit(normalizedPin.charAt(i))) {
+            return false;
+        }
+    }
+
+    String key = _buildMetadataKey(normalizedUid, 'b');
+    return _prefs.putString(key.c_str(), normalizedPin) > 0;
+}
+
+String AuthHandler::getUserBackupPIN(const String& uid) {
+    String normalizedUid = _normalizeUID(uid);
+    if (normalizedUid.length() == 0) {
+        return "";
+    }
+
+    String key = _buildMetadataKey(normalizedUid, 'b');
+    if (_prefs.isKey(key.c_str())) {
+        String storedPin = _prefs.getString(key.c_str(), "");
+        storedPin.trim();
+
+        if (storedPin.length() == 4) {
+            bool valid = true;
+            for (size_t i = 0; i < storedPin.length(); i++) {
+                if (!isDigit(storedPin.charAt(i))) {
+                    valid = false;
+                    break;
+                }
+            }
+
+            if (valid) {
+                return storedPin;
+            }
+        }
+    }
+
+    // Backward compatibility: fallback to primary keypad PIN if no backup PIN metadata exists.
+    return getUserPIN(normalizedUid);
 }
 
 /**
@@ -644,6 +775,10 @@ String AuthHandler::_normalizeUID(const String& uid) const {
  * Private: Build compact NVS key (NVS key max length is 15 chars)
  */
 String AuthHandler::_buildUserKey(const String& uid) const {
+    return _buildMetadataKey(uid, 'u');
+}
+
+String AuthHandler::_buildMetadataKey(const String& uid, char prefix) const {
     // 64-bit FNV-1a hash, truncated to 52 bits (13 hex chars)
     uint64_t hash = 1469598103934665603ULL;
     for (size_t i = 0; i < uid.length(); i++) {
@@ -653,7 +788,7 @@ String AuthHandler::_buildUserKey(const String& uid) const {
 
     uint64_t compact = (hash & 0x1FFFFFFFFFFFFFULL);
     char key[16];
-    snprintf(key, sizeof(key), "u_%013llX", static_cast<unsigned long long>(compact));
+    snprintf(key, sizeof(key), "%c_%013llX", prefix, static_cast<unsigned long long>(compact));
     return String(key);
 }
 

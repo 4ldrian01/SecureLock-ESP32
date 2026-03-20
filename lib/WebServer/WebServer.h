@@ -65,6 +65,7 @@ public:
     
     // Lifecycle
     void init(const char* ssid, const char* password);
+    void update();
     bool isConnected() const;
     String getIPAddress() const;
 
@@ -123,6 +124,8 @@ private:
     void _addCORSHeaders(AsyncWebServerResponse* response);
     String _generateGuestCode();
     unsigned long _remainingCooldownMs(unsigned long lastActionMs, unsigned long cooldownMs) const;
+    void _cleanupGuestUsers();
+    void _expireGuestCodeIfNeeded();
 };
 
 #endif // WEB_SERVER_H

@@ -10,7 +10,6 @@ export function getDOM() {
 
         pinCode: document.getElementById('pinCode'),
         pinTimer: document.getElementById('pinTimer'),
-        btnGenerate: document.getElementById('btnGenerate'),
 
         logsTableBody: document.getElementById('logsTableBody'),
         logsPagination: document.getElementById('logsPagination'),

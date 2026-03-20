@@ -50,6 +50,7 @@ public:
     
     // Vibration detection
     bool isVibrationDetected();     // Check sensor with debouncing
+    bool isVibrationLatched() const;
     void resetVibration();          // Clear vibration flag
     
     // Buzzer control

@@ -263,15 +263,32 @@
                     />
                     <span class="form-error" id="editUserNameError"></span>
                 </div>
-                
-                <!-- Input 2: PIN -->
+
+                <!-- Input 2: Telegram Chat ID -->
                 <div class="form-group">
-                    <label for="editUserPin" class="form-label">Keypad Access PIN <span class="required">*</span></label>
-                    <input 
-                        type="text" 
-                        id="editUserPin" 
-                        name="editUserPin"
-                        class="form-input form-input-pin" 
+                    <label for="editUserChatId" class="form-label">Telegram Chat ID <span class="required">*</span></label>
+                    <input
+                        type="text"
+                        id="editUserChatId"
+                        name="editUserChatId"
+                        class="form-input"
+                        placeholder="e.g., 123456789"
+                        inputmode="numeric"
+                        autocomplete="off"
+                        required
+                    />
+                    <span class="form-helper">Used to deliver user-specific OTP via Telegram</span>
+                    <span class="form-error" id="editUserChatIdError"></span>
+                </div>
+
+                <!-- Input 3: Offline Backup PIN -->
+                <div class="form-group">
+                    <label for="editUserBackupPin" class="form-label">Offline Backup PIN <span class="required">*</span></label>
+                    <input
+                        type="text"
+                        id="editUserBackupPin"
+                        name="editUserBackupPin"
+                        class="form-input form-input-pin"
                         placeholder="1234"
                         maxlength="4"
                         pattern="[0-9]{4}"
@@ -279,11 +296,11 @@
                         required
                         autocomplete="off"
                     />
-                    <span class="form-helper">4-digit code for manual entry on physical keypad</span>
-                    <span class="form-error" id="editUserPinError"></span>
+                    <span class="form-helper">Used when user enters Offline Mode (#) after RFID scan</span>
+                    <span class="form-error" id="editUserBackupPinError"></span>
                 </div>
                 
-                <!-- Input 3: RFID -->
+                <!-- Input 4: RFID -->
                 <div class="form-group">
                     <label for="editUserRfid" class="form-label">RFID Tag ID <span class="required">*</span></label>
                     <div class="form-input-group">
@@ -357,15 +374,32 @@
                     />
                     <span class="form-error" id="userNameError"></span>
                 </div>
-                
-                <!-- Input 2: PIN -->
+
+                <!-- Input 2: Telegram Chat ID -->
                 <div class="form-group">
-                    <label for="userPin" class="form-label">Keypad Access PIN <span class="required">*</span></label>
-                    <input 
-                        type="text" 
-                        id="userPin" 
-                        name="userPin"
-                        class="form-input form-input-pin" 
+                    <label for="userChatId" class="form-label">Telegram Chat ID <span class="required">*</span></label>
+                    <input
+                        type="text"
+                        id="userChatId"
+                        name="userChatId"
+                        class="form-input"
+                        placeholder="e.g., 123456789"
+                        inputmode="numeric"
+                        autocomplete="off"
+                        required
+                    />
+                    <span class="form-helper">User receives 6-digit OTP on this chat ID</span>
+                    <span class="form-error" id="userChatIdError"></span>
+                </div>
+
+                <!-- Input 3: Offline Backup PIN -->
+                <div class="form-group">
+                    <label for="userBackupPin" class="form-label">Offline Backup PIN <span class="required">*</span></label>
+                    <input
+                        type="text"
+                        id="userBackupPin"
+                        name="userBackupPin"
+                        class="form-input form-input-pin"
                         placeholder="1234"
                         maxlength="4"
                         pattern="[0-9]{4}"
@@ -373,11 +407,11 @@
                         required
                         autocomplete="off"
                     />
-                    <span class="form-helper">4-digit code for manual entry on physical keypad</span>
-                    <span class="form-error" id="userPinError"></span>
+                    <span class="form-helper">Used when user enters Offline Mode (#) after RFID scan</span>
+                    <span class="form-error" id="userBackupPinError"></span>
                 </div>
                 
-                <!-- Input 3: RFID -->
+                <!-- Input 4: RFID -->
                 <div class="form-group">
                     <label for="userRfid" class="form-label">RFID Tag ID <span class="required">*</span></label>
                     <div class="form-input-group">

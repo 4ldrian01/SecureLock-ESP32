@@ -43,7 +43,7 @@
       "command": "bash",
       "args": [
         "-lc",
-        "timeout 20 ${env:HOME}/.platformio/penv/bin/pio device monitor -b 115200 -f time -f printable || true"
+        "timeout 20 ${env:HOME}/.platformio/penv/bin/pio device monitor -b 115200 -f direct || true"
       ],
       "windows": {
         "command": "${env:USERPROFILE}\\.platformio\\penv\\Scripts\\pio.exe",
@@ -53,9 +53,7 @@
           "-b",
           "115200",
           "-f",
-          "time",
-          "-f",
-          "printable"
+          "direct"
         ]
       },
       "options": {
@@ -76,9 +74,7 @@
         "-b",
         "115200",
         "-f",
-        "time",
-        "-f",
-        "printable"
+        "direct"
       ],
       "options": {
         "cwd": "${workspaceFolder}"

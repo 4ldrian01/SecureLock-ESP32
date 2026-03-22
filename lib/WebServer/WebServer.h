@@ -68,6 +68,7 @@ public:
     void update();
     bool isConnected() const;
     String getIPAddress() const;
+    void markEmergencyOverride();
 
     // Runtime activity logging hook (used by main authentication flow)
     void logActivity(const String& user, const String& method, const String& status);
@@ -88,6 +89,7 @@ private:
     unsigned long _guestCodeExpiry;
     unsigned long _lastEmergencyUnlockMs;
     unsigned long _lastGuestCodeRequestMs;
+    unsigned long _lastRfidScanServedMs;
 
     static constexpr unsigned long EMERGENCY_COOLDOWN_MS = 5000;
     static constexpr unsigned long GUEST_CODE_COOLDOWN_MS = 300000;

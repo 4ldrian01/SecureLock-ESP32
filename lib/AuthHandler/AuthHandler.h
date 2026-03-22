@@ -6,16 +6,16 @@
  * PURPOSE: Handles multi-factor authentication (RFID + Keypad + Duress)
  * 
  * HARDWARE:
- *   - RFID RC522 (SPI): SS=5, SCK=18, MOSI=23, MISO=19, RST=4
- *   - Keypad 4x4 (safe scan): Rows[34,35,36,39], Cols[32,33,25,26]
+ *   - RFID RC522 (SPI): SS=32, SCK=33, MOSI=25, MISO=26, RST=4
+ *   - Keypad 4x3 (safe scan): Rows[34,35,39,17], Cols[23,5,16]
  *   - Factory Reset: GPIO 0 (BOOT button - long press)
  * 
  * FEATURES:
  *   - RFID UID authentication
  *   - Keypad PIN entry with buffer
- *   - Duress code detection (9999)
+ *   - Duress code detection (2580)
  *   - Factory reset (GPIO 0 held 10 seconds)
- *   - User database (Preferences library)
+ *   - User database (LittleFS users.json)
  * 
  * AUTHENTICATION RESULTS:
  *   - AUTH_SUCCESS: Valid credentials
@@ -47,7 +47,7 @@
 #include <Arduino.h>
 #include <MFRC522.h>
 #include <Keypad.h>
-#include <Preferences.h>
+#include <ArduinoJson.h>
 #include "hardware_pins.h"
 
 // Authentication result codes
@@ -70,6 +70,7 @@ public:
     // RFID authentication
     AuthResult checkRFID();         // Poll RFID reader
     String getLastRFIDUID() const;  // Get last scanned UID
+    unsigned long getLastRFIDScanMs() const;
     void startRFIDCooldown(unsigned long cooldownMs = RFID_COOLDOWN_MS);
     bool isRFIDCooldownActive() const;
     
@@ -91,6 +92,7 @@ public:
     String getUserPIN(const String& uid);
     bool setUserTelegramChatId(const String& uid, const String& chatId);
     String getUserTelegramChatId(const String& uid);
+    bool isKnownTelegramChatId(const String& chatId);
     bool setUserBackupPIN(const String& uid, const String& backupPin);
     String getUserBackupPIN(const String& uid);
     int getUserCount() const;
@@ -109,7 +111,7 @@ private:
     
     // Keypad configuration
     static const byte ROWS = 4;
-    static const byte COLS = 4;
+    static const byte COLS = 3;
     byte _rowPins[ROWS] = {
         SECURELOCK_PIN_KEYPAD_R1,
         SECURELOCK_PIN_KEYPAD_R2,
@@ -119,14 +121,13 @@ private:
     byte _colPins[COLS] = {
         SECURELOCK_PIN_KEYPAD_C1,
         SECURELOCK_PIN_KEYPAD_C2,
-        SECURELOCK_PIN_KEYPAD_C3,
-        SECURELOCK_PIN_KEYPAD_C4
+        SECURELOCK_PIN_KEYPAD_C3
     };
     char _keys[ROWS][COLS] = {
-        {'1', '2', '3', 'A'},
-        {'4', '5', '6', 'B'},
-        {'7', '8', '9', 'C'},
-        {'*', '0', '#', 'D'}
+        {'1', '2', '3'},
+        {'4', '5', '6'},
+        {'7', '8', '9'},
+        {'*', '0', '#'}
     };
     
     // Duress code
@@ -144,11 +145,12 @@ private:
     // Hardware objects
     MFRC522 _rfid;
     Keypad _keypad;
-    Preferences _prefs;
+    JsonDocument _usersDoc;
     
     // State variables
     String _pinBuffer;
     String _lastRFIDUID;
+    unsigned long _lastRFIDScanMs;
     unsigned long _rfidCooldownStartMs;
     unsigned long _rfidCooldownDurationMs;
     unsigned long _lastAcceptedKeyMs;
@@ -166,13 +168,10 @@ private:
     bool _validateStoredPIN(const String& pin);
     String _uidToString(byte* uid, byte size);
     String _normalizeUID(const String& uid) const;
-    String _buildUserKey(const String& uid) const;
-    String _buildMetadataKey(const String& uid, char prefix) const;
-    String _buildLegacyUserKey(const String& uid) const;
-    String _getUserValue(const String& uid);
-    void _migrateUserStorageKeys();
-    void _saveUserList();
-    void _loadUserList();
+    bool _loadUsersFromFS();
+    bool _saveUsersToFS();
+    JsonArray _usersArray();
+    JsonObject _findUserByUID(const String& uid);
     
     // User tracking (UIDs of registered users for iteration)
     static const int MAX_USERS = 20;

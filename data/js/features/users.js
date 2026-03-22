@@ -26,6 +26,11 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         return cleaned;
     }
 
+    function isValidChatId(value) {
+        const v = String(value || '').trim();
+        return /^-?\d+$/.test(v);
+    }
+
     function bindNameInputRestrictions() {
         const fields = [DOM.userName, DOM.editUserName].filter(Boolean);
 
@@ -61,6 +66,14 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         try {
             const data = await apiFetch(CONFIG.API.USERS);
             const users = data.users || data || [];
+
+            state.usersByUid = {};
+            users.forEach((user) => {
+                const key = String(user.cardUID || user.uid || '').trim().toUpperCase();
+                if (key) {
+                    state.usersByUid[key] = user;
+                }
+            });
 
             const usersHash = JSON.stringify(users);
             if (usersHash === state.lastUsersHash) {
@@ -117,17 +130,17 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
                         <span class="user-badge ${badgeClass}">${escapeHtml(role.toUpperCase())}</span>
                     </div>
                     <div class="user-meta">
-                        <span class="user-uid">${escapeHtml(user.uid || '--')}</span>
+                        <span class="user-uid">${escapeHtml(user.cardUID || user.uid || '--')}</span>
                     </div>
                 </div>
                 <div class="user-actions">
-                    <button class="btn-edit" title="Edit user" data-uid="${escapeHtml(user.uid || '')}"
-                            onclick="window.__editUser('${escapeHtml(user.uid || '')}')">
+                    <button class="btn-edit" title="Edit user" data-uid="${escapeHtml(user.cardUID || user.uid || '')}"
+                            onclick="window.__editUser('${escapeHtml(user.cardUID || user.uid || '')}')">
                         <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
                     </button>
                     ${isAdmin ? '' : `<button class="btn-delete" title="Delete user"
-                            data-uid="${escapeHtml(user.uid || '')}"
-                            onclick="window.__deleteUser('${escapeHtml(user.uid || '')}')">
+                            data-uid="${escapeHtml(user.cardUID || user.uid || '')}"
+                            onclick="window.__deleteUser('${escapeHtml(user.cardUID || user.uid || '')}')">
                         <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
                     </button>`}
                 </div>
@@ -147,6 +160,7 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         targetInput.value = 'Waiting for card tap...';
         targetInput.classList.add('scanning');
         targetInput.classList.remove('scanned', 'input-error');
+        let lastScanTimestamp = 0;
 
         if (targetInput === DOM.userRfid) {
             setFormError('userRfidError', '');
@@ -157,13 +171,18 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         state.rfidPollTimer = setInterval(async () => {
             try {
                 const data = await apiFetch(CONFIG.API.RFID_SCAN);
-                if (data.uid && data.uid.length > 0) {
-                    targetInput.value = data.uid;
+                const uid = String(data?.uid || '').trim();
+                const scanTs = Number(data?.scanTimestamp || data?.timestamp || 0);
+                const hasFreshScan = Boolean(data?.scanned) && uid.length > 0 && scanTs > lastScanTimestamp;
+
+                if (hasFreshScan) {
+                    lastScanTimestamp = scanTs;
+                    targetInput.value = uid;
                     targetInput.classList.remove('scanning');
                     targetInput.classList.remove('input-error');
                     targetInput.classList.add('scanned');
                     stopRfidPoll();
-                    feedback.showToast('RFID card detected: ' + data.uid, 'success');
+                    feedback.showToast('RFID card detected: ' + uid, 'success');
                 }
             } catch {
                 // Keep polling silently
@@ -201,7 +220,8 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         clearFormErrors(DOM);
 
         const name = DOM.userName.value.trim();
-        const pin = DOM.userPin.value.trim();
+        const chatId = DOM.userChatId.value.trim();
+        const backupPin = DOM.userBackupPin.value.trim();
         const rfid = DOM.userRfid.value.trim();
 
         let valid = true;
@@ -212,8 +232,15 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             setFormError('userNameError', 'Name must contain letters only');
             valid = false;
         }
-        if (!pin || !/^\d{4}$/.test(pin)) {
-            setFormError('userPinError', 'PIN must be exactly 4 digits');
+        if (!chatId) {
+            setFormError('userChatIdError', 'Telegram Chat ID is required');
+            valid = false;
+        } else if (!isValidChatId(chatId)) {
+            setFormError('userChatIdError', 'Telegram Chat ID must be numeric');
+            valid = false;
+        }
+        if (!backupPin || !/^\d{4}$/.test(backupPin)) {
+            setFormError('userBackupPinError', 'Backup PIN must be exactly 4 digits');
             valid = false;
         }
         if (!rfid || rfid === 'Waiting for card tap...') {
@@ -230,7 +257,16 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
 
             const data = await apiFetch(CONFIG.API.USERS, {
                 method: 'POST',
-                body: JSON.stringify({ name, pin, uid: rfid, type: 'user' })
+                body: JSON.stringify({
+                    name,
+                    cardUID: rfid,
+                    uid: rfid,
+                    telegramChatID: chatId,
+                    chat_id: chatId,
+                    backupPIN: backupPin,
+                    backup_pin: backupPin,
+                    type: 'user'
+                })
             });
 
             if (data.success) {
@@ -273,7 +309,8 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         clearFormErrors(DOM);
 
         const name = DOM.editUserName.value.trim();
-        const pin = DOM.editUserPin.value.trim();
+        const chatId = DOM.editUserChatId.value.trim();
+        const backupPin = DOM.editUserBackupPin.value.trim();
         const rfid = DOM.editUserRfid.value.trim();
 
         let valid = true;
@@ -284,8 +321,15 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             setFormError('editUserNameError', 'Name must contain letters only');
             valid = false;
         }
-        if (pin && !/^\d{4}$/.test(pin)) {
-            setFormError('editUserPinError', 'PIN must be exactly 4 digits');
+        if (!chatId) {
+            setFormError('editUserChatIdError', 'Telegram Chat ID is required');
+            valid = false;
+        } else if (!isValidChatId(chatId)) {
+            setFormError('editUserChatIdError', 'Telegram Chat ID must be numeric');
+            valid = false;
+        }
+        if (!backupPin || !/^\d{4}$/.test(backupPin)) {
+            setFormError('editUserBackupPinError', 'Backup PIN must be exactly 4 digits');
             valid = false;
         }
         if (!rfid) {
@@ -298,8 +342,13 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         DOM.editUserRfid.classList.remove('input-error');
 
         try {
-            const body = { uid: state.editingUserId, name, rfid };
-            if (pin) body.pin = pin;
+            const body = {
+                uid: state.editingUserId,
+                name,
+                rfid,
+                telegramChatID: chatId,
+                backupPIN: backupPin
+            };
 
             const data = await apiFetch(CONFIG.API.USERS, {
                 method: 'PUT',
@@ -366,14 +415,13 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
 
         window.__editUser = function (uid) {
             state.editingUserId = uid;
-            const card = document.querySelector(`.user-card[data-uid="${uid}"]`);
-            if (card) {
-                const name = card.querySelector('.user-name')?.textContent || '';
-                const rfid = card.querySelector('.user-uid')?.textContent || '';
-                DOM.editUserName.value = name;
-                DOM.editUserPin.value = '';
-                DOM.editUserRfid.value = rfid;
-            }
+            const key = String(uid || '').trim().toUpperCase();
+            const user = state.usersByUid?.[key];
+
+            DOM.editUserName.value = user?.name || '';
+            DOM.editUserChatId.value = user?.telegramChatID || '';
+            DOM.editUserBackupPin.value = user?.backupPIN || '';
+            DOM.editUserRfid.value = user?.cardUID || user?.uid || uid || '';
 
             DOM.editUserRfid.classList.remove('input-error', 'scanned', 'scanning');
             setFormError('editUserRfidError', '');

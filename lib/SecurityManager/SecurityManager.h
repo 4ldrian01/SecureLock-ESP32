@@ -49,7 +49,8 @@ public:
     void update();                  // Update buzzer patterns (call in loop)
     
     // Vibration detection
-    bool isVibrationDetected();     // Check sensor with debouncing
+    bool isVibrationDetected();     // Latched event indicator
+    bool pollVibrationStrike();     // Rising-edge strike event (debounced)
     bool isVibrationLatched() const;
     void resetVibration();          // Clear vibration flag
     
@@ -72,17 +73,14 @@ private:
     static const unsigned long BEEP_DURATION = 100;      // ms
     static const unsigned long BEEP_PAUSE = 80;          // ms between beeps
     static const unsigned long SIREN_PULSE = 200;        // ms per siren pulse
-    static const unsigned long VIBE_DEBOUNCE = 50;       // ms edge debounce
-    static const unsigned long VIBE_CONFIRM_HIGH_MS = 120; // ms stable HIGH required
-    static const unsigned long VIBE_RETRIGGER_COOLDOWN_MS = 1500;
+    static const unsigned long VIBE_DEBOUNCE = 35;       // ms edge debounce
     
     // State variables
     bool _alarming;
     bool _vibrationDetected;
     unsigned long _lastVibeTime;
-    unsigned long _vibeHighSince;
-    unsigned long _lastVibrationTriggerMs;
     bool _lastVibeState;
+    bool _stableVibeState;
     
     // Buzzer pattern state
     bool _buzzerActive;

@@ -13,9 +13,8 @@ SecurityManager::SecurityManager()
     : _alarming(false),
       _vibrationDetected(false),
       _lastVibeTime(0),
-    _vibeHighSince(0),
-    _lastVibrationTriggerMs(0),
       _lastVibeState(LOW),
+            _stableVibeState(LOW),
       _buzzerActive(false),
       _beepCount(0),
       _currentBeep(0),
@@ -58,31 +57,34 @@ void SecurityManager::update() {
  * Check vibration sensor with debouncing
  */
 bool SecurityManager::isVibrationDetected() {
-    unsigned long now = millis();
-    bool currentState = digitalRead(PIN_VIBE);
+    pollVibrationStrike();
+    return _vibrationDetected;
+}
 
-    if (currentState == HIGH) {
-        if (_lastVibeState == LOW) {
-            _lastVibeTime = now;
-            _vibeHighSince = now;
-        }
+bool SecurityManager::pollVibrationStrike() {
+    const unsigned long now = millis();
+    const bool rawState = (digitalRead(PIN_VIBE) == HIGH);
 
-        const bool edgeDebounced = (now - _lastVibeTime) >= VIBE_DEBOUNCE;
-        const bool stableHigh = (now - _vibeHighSince) >= VIBE_CONFIRM_HIGH_MS;
-        const bool cooldownElapsed = (now - _lastVibrationTriggerMs) >= VIBE_RETRIGGER_COOLDOWN_MS;
-
-        // Trigger only on confirmed stable vibration level with cooldown to avoid chatter spikes.
-        if (!_vibrationDetected && edgeDebounced && stableHigh && cooldownElapsed) {
-            _vibrationDetected = true;
-            _lastVibrationTriggerMs = now;
-            Serial.println("[SECURITY] ⚠️ VIBRATION DETECTED (filtered)");
-        }
-    } else {
-        _vibeHighSince = 0;
+    if (rawState != _lastVibeState) {
+        _lastVibeTime = now;
+        _lastVibeState = rawState;
     }
 
-    _lastVibeState = currentState;
-    return _vibrationDetected;
+    if ((now - _lastVibeTime) < VIBE_DEBOUNCE) {
+        return false;
+    }
+
+    if (_stableVibeState == _lastVibeState) {
+        return false;
+    }
+
+    _stableVibeState = _lastVibeState;
+    if (_stableVibeState) {
+        _vibrationDetected = true;
+        return true;
+    }
+
+    return false;
 }
 
 bool SecurityManager::isVibrationLatched() const {
@@ -94,8 +96,8 @@ bool SecurityManager::isVibrationLatched() const {
  */
 void SecurityManager::resetVibration() {
     _vibrationDetected = false;
-    _vibeHighSince = 0;
-    _lastVibeState = digitalRead(PIN_VIBE);
+    _lastVibeState = (digitalRead(PIN_VIBE) == HIGH);
+    _stableVibeState = _lastVibeState;
 }
 
 /**

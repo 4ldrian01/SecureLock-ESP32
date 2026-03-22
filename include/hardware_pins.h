@@ -12,8 +12,7 @@
  *   that is actively driven HIGH/LOW by software.
  *
  * NOTE ON RELAY VS RFID RST:
- * RFID reset is fixed to GPIO4 (per your wiring), so relay defaults to
- * GPIO22 to avoid pin conflict.
+ * RFID reset uses GPIO4 while relay stays on GPIO22 (no overlap).
  * ============================================================
  */
 
@@ -35,25 +34,26 @@
 #define SECURELOCK_PIN_RFID_SS         32
 #define SECURELOCK_PIN_RFID_RST        4
 #define SECURELOCK_PIN_SPI_SCK         33
-// Safety guard: GPIO35 cannot be MOSI (input-only). Use GPIO25 for MOSI.
 #define SECURELOCK_PIN_SPI_MOSI        25
 #define SECURELOCK_PIN_SPI_MISO        26
 
 // ------------------------------------------------------------
 // Keypad 4x4
 // ------------------------------------------------------------
-// Safe scan mapping (columns are output-capable GPIOs).
-// This avoids: "gpio_set_level(...): GPIO output gpio_num error"
-// caused by driving input-only pins.
+// Safe scan mapping: keep columns on output-capable NON-STRAPPING GPIOs.
+// Rows use input-capable ADC pins (34/35/39/36) and are never driven.
+// Board silkscreen equivalents: GPIO39 = VN, GPIO36 = VP.
+// This avoids: "gpio_set_level(...): GPIO output gpio_num error".
 #define SECURELOCK_PIN_KEYPAD_R1       34
 #define SECURELOCK_PIN_KEYPAD_R2       35
 #define SECURELOCK_PIN_KEYPAD_R3       39
-#define SECURELOCK_PIN_KEYPAD_R4       17
+#define SECURELOCK_PIN_KEYPAD_R4       36
 
-#define SECURELOCK_PIN_KEYPAD_C1       23
-#define SECURELOCK_PIN_KEYPAD_C2       5
-#define SECURELOCK_PIN_KEYPAD_C3       16
-#define SECURELOCK_PIN_KEYPAD_C4       19
+// Many ESP32 dev boards label GPIO16/17 as RX2/TX2.
+#define SECURELOCK_PIN_KEYPAD_C1       16
+#define SECURELOCK_PIN_KEYPAD_C2       17
+#define SECURELOCK_PIN_KEYPAD_C3       21
+#define SECURELOCK_PIN_KEYPAD_C4       23
 
 // ------------------------------------------------------------
 // Buzzer configuration (can be overridden from secrets.h)

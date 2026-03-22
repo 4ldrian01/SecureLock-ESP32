@@ -17,7 +17,8 @@ export const CONFIG = {
         USERS: '/api/users',
         LOGS: '/api/logs',
         LOGS_CLEAR: '/api/logs',
-        RFID_SCAN: '/api/rfid/scan'
+        RFID_SCAN: '/api/rfid/scan',
+        DIAGNOSTICS: '/api/diagnostics'
     }
 };
 

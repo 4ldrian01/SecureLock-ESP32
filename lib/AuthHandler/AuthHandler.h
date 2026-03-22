@@ -7,7 +7,7 @@
  * 
  * HARDWARE:
  *   - RFID RC522 (SPI): SS=32, SCK=33, MOSI=25, MISO=26, RST=4
- *   - Keypad 4x3 (safe scan): Rows[34,35,39,17], Cols[23,5,16]
+ *   - Keypad 4x4 (safe scan): Rows[34,35,39,36], Cols[16,17,21,23] (16=RX2, 17=TX2)
  *   - Factory Reset: GPIO 0 (BOOT button - long press)
  * 
  * FEATURES:
@@ -55,7 +55,7 @@ enum AuthResult {
     AUTH_NONE,       // No authentication attempt
     AUTH_SUCCESS,    // Valid credentials
     AUTH_DENIED,     // Invalid credentials
-    AUTH_DURESS      // Duress code entered (9999)
+    AUTH_DURESS      // Duress code entered (2580)
 };
 
 class AuthHandler {
@@ -71,6 +71,11 @@ public:
     AuthResult checkRFID();         // Poll RFID reader
     String getLastRFIDUID() const;  // Get last scanned UID
     unsigned long getLastRFIDScanMs() const;
+    bool isRFIDReady() const;
+    int getActiveRFIDRstPin() const;
+    bool isKeypadReady() const;
+    bool isKeypadMuted() const;
+    unsigned long getKeypadMuteRemainingMs() const;
     void startRFIDCooldown(unsigned long cooldownMs = RFID_COOLDOWN_MS);
     bool isRFIDCooldownActive() const;
     
@@ -111,7 +116,7 @@ private:
     
     // Keypad configuration
     static const byte ROWS = 4;
-    static const byte COLS = 3;
+    static const byte COLS = 4;
     byte _rowPins[ROWS] = {
         SECURELOCK_PIN_KEYPAD_R1,
         SECURELOCK_PIN_KEYPAD_R2,
@@ -121,13 +126,14 @@ private:
     byte _colPins[COLS] = {
         SECURELOCK_PIN_KEYPAD_C1,
         SECURELOCK_PIN_KEYPAD_C2,
-        SECURELOCK_PIN_KEYPAD_C3
+        SECURELOCK_PIN_KEYPAD_C3,
+        SECURELOCK_PIN_KEYPAD_C4
     };
     char _keys[ROWS][COLS] = {
-        {'1', '2', '3'},
-        {'4', '5', '6'},
-        {'7', '8', '9'},
-        {'*', '0', '#'}
+        {'1', '2', '3', 'A'},
+        {'4', '5', '6', 'B'},
+        {'7', '8', '9', 'C'},
+        {'*', '0', '#', 'D'}
     };
     
     // Duress code
@@ -160,6 +166,7 @@ private:
     unsigned long _keypadReadyAtMs;
     bool _keypadRuntimeSettlingStarted;
     int _activeRfidRstPin;
+    bool _rfidReady;
     unsigned long _factoryPressStart;
     bool _factoryPressed;
     
@@ -168,6 +175,7 @@ private:
     bool _validateStoredPIN(const String& pin);
     String _uidToString(byte* uid, byte size);
     String _normalizeUID(const String& uid) const;
+    String _extractUserUID(JsonObjectConst user) const;
     bool _loadUsersFromFS();
     bool _saveUsersToFS();
     JsonArray _usersArray();

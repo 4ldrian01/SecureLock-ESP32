@@ -19,6 +19,20 @@ const char* USERS_NAME_KEY = "name";
 const char* USERS_PIN_KEY = "pin";
 const char* USERS_BACKUP_PIN_KEY = "backupPIN";
 const char* USERS_CHAT_ID_KEY = "telegramChatID";
+
+bool isFourDigitCode(const String& value) {
+    if (value.length() != 4) {
+        return false;
+    }
+
+    for (size_t i = 0; i < value.length(); i++) {
+        if (!isDigit(value.charAt(i))) {
+            return false;
+        }
+    }
+
+    return true;
+}
 }
 
 AuthHandler::AuthHandler()
@@ -36,6 +50,7 @@ AuthHandler::AuthHandler()
       _keypadReadyAtMs(0),
       _keypadRuntimeSettlingStarted(false),
       _activeRfidRstPin(PIN_RFID_RST),
+    _rfidReady(false),
       _factoryPressStart(0),
       _factoryPressed(false),
       _userCount(0)
@@ -53,18 +68,34 @@ void AuthHandler::init() {
         PIN_RFID_SS
     );
 
-    pinMode(PIN_RFID_RST, OUTPUT);
-    digitalWrite(PIN_RFID_RST, HIGH);
+    _activeRfidRstPin = PIN_RFID_RST;
 
-    _rfid.PCD_Init(PIN_RFID_SS, PIN_RFID_RST);
-    _rfid.PCD_AntennaOn();
+    auto initReader = [this](int rstPin) -> byte {
+        pinMode(rstPin, OUTPUT);
+        digitalWrite(rstPin, HIGH);
+        _rfid.PCD_Init(PIN_RFID_SS, rstPin);
+        _rfid.PCD_AntennaOn();
+        return _rfid.PCD_ReadRegister(_rfid.VersionReg);
+    };
 
-    const byte version = _rfid.PCD_ReadRegister(_rfid.VersionReg);
+    byte version = initReader(PIN_RFID_RST);
+    if ((version == 0x00 || version == 0xFF) && PIN_RFID_RST_FALLBACK != PIN_RFID_RST) {
+        Serial.println("[AUTH] RFID not detected on primary RST pin, trying fallback...");
+        version = initReader(PIN_RFID_RST_FALLBACK);
+        if (version != 0x00 && version != 0xFF) {
+            _activeRfidRstPin = PIN_RFID_RST_FALLBACK;
+        }
+    }
+
     if (version == 0x00 || version == 0xFF) {
+        _rfidReady = false;
         Serial.println("[AUTH] RFID reader not detected");
     } else {
+        _rfidReady = true;
         Serial.print("[AUTH] RFID RC522 version 0x");
         Serial.println(version, HEX);
+        Serial.print("[AUTH] RFID RST pin active: ");
+        Serial.println(_activeRfidRstPin);
     }
 
     pinMode(PIN_FACTORY, INPUT_PULLUP);
@@ -73,6 +104,45 @@ void AuthHandler::init() {
     _keypadRuntimeSettlingStarted = false;
 
     _loadUsersFromFS();
+
+    Serial.print("[AUTH] Keypad rows: ");
+    for (byte i = 0; i < ROWS; i++) {
+        Serial.print(_rowPins[i]);
+        if (i + 1 < ROWS) {
+            Serial.print(',');
+        }
+    }
+    Serial.println();
+
+    Serial.print("[AUTH] Keypad cols: ");
+    for (byte i = 0; i < COLS; i++) {
+        Serial.print(_colPins[i]);
+        if (i + 1 < COLS) {
+            Serial.print(',');
+        }
+    }
+    Serial.println();
+
+    Serial.println("[AUTH] Keypad startup diagnostics:");
+    for (byte i = 0; i < ROWS; i++) {
+        pinMode(_rowPins[i], INPUT_PULLUP);
+        Serial.print("  - Row R");
+        Serial.print(i + 1);
+        Serial.print(" GPIO");
+        Serial.print(_rowPins[i]);
+        Serial.print(" idle=");
+        Serial.println(digitalRead(_rowPins[i]));
+    }
+
+    for (byte i = 0; i < COLS; i++) {
+        pinMode(_colPins[i], OUTPUT);
+        digitalWrite(_colPins[i], HIGH);
+        Serial.print("  - Col C");
+        Serial.print(i + 1);
+        Serial.print(" GPIO");
+        Serial.print(_colPins[i]);
+        Serial.println(" drive=HIGH OK");
+    }
 
     Serial.println("[AUTH] Initialized");
     Serial.print("[AUTH] Users loaded: ");
@@ -84,6 +154,10 @@ void AuthHandler::update() {
 }
 
 AuthResult AuthHandler::checkRFID() {
+    if (!_rfidReady) {
+        return AUTH_NONE;
+    }
+
     if (!_rfid.PICC_IsNewCardPresent()) {
         return AUTH_NONE;
     }
@@ -137,6 +211,35 @@ unsigned long AuthHandler::getLastRFIDScanMs() const {
     return _lastRFIDScanMs;
 }
 
+bool AuthHandler::isRFIDReady() const {
+    return _rfidReady;
+}
+
+int AuthHandler::getActiveRFIDRstPin() const {
+    return _activeRfidRstPin;
+}
+
+bool AuthHandler::isKeypadReady() const {
+    if (!_keypadRuntimeSettlingStarted) {
+        return false;
+    }
+
+    return millis() >= _keypadReadyAtMs;
+}
+
+bool AuthHandler::isKeypadMuted() const {
+    return _keypadMutedUntilMs > millis();
+}
+
+unsigned long AuthHandler::getKeypadMuteRemainingMs() const {
+    const unsigned long now = millis();
+    if (_keypadMutedUntilMs <= now) {
+        return 0;
+    }
+
+    return _keypadMutedUntilMs - now;
+}
+
 char AuthHandler::getKeypadKey() {
     const unsigned long now = millis();
 
@@ -155,7 +258,8 @@ char AuthHandler::getKeypadKey() {
         return '\0';
     }
 
-    const bool supported = ((rawKey >= '0' && rawKey <= '9') || rawKey == '*' || rawKey == '#');
+    const bool supported = ((rawKey >= '0' && rawKey <= '9') || rawKey == '*' || rawKey == '#'
+        || rawKey == 'A' || rawKey == 'B' || rawKey == 'C' || rawKey == 'D');
     if (!supported) {
         return '\0';
     }
@@ -226,6 +330,10 @@ bool AuthHandler::addUser(const String& uid, const String& pin, const String& na
         return false;
     }
 
+    if (!isFourDigitCode(pin)) {
+        return false;
+    }
+
     JsonObject existing = _findUserByUID(normalizedUid);
     if (!existing.isNull()) {
         existing[USERS_CARD_UID_KEY] = normalizedUid;
@@ -266,7 +374,7 @@ bool AuthHandler::removeUser(const String& uid) {
 
     bool removed = false;
     for (size_t i = users.size(); i > 0; i--) {
-        String listedUid = _normalizeUID(users[i - 1]["uid"].as<String>());
+        String listedUid = _extractUserUID(users[i - 1].as<JsonObjectConst>());
         if (listedUid == normalizedUid) {
             users.remove(i - 1);
             removed = true;
@@ -468,6 +576,36 @@ String AuthHandler::_normalizeUID(const String& uid) const {
     return normalized;
 }
 
+String AuthHandler::_extractUserUID(JsonObjectConst user) const {
+    if (user.isNull()) {
+        return "";
+    }
+
+    String uid = _normalizeUID(user[USERS_CARD_UID_KEY] | "");
+    if (uid.length() > 0) {
+        return uid;
+    }
+
+    uid = _normalizeUID(user[USERS_UID_FALLBACK_KEY] | "");
+    if (uid.length() > 0) {
+        return uid;
+    }
+
+    // Backward compatibility with older schema variants used by legacy UI builds.
+    uid = _normalizeUID(user["cardUid"] | "");
+    if (uid.length() > 0) {
+        return uid;
+    }
+
+    uid = _normalizeUID(user["rfid"] | "");
+    if (uid.length() > 0) {
+        return uid;
+    }
+
+    uid = _normalizeUID(user["rfidUID"] | "");
+    return uid;
+}
+
 bool AuthHandler::_loadUsersFromFS() {
     _usersDoc.clear();
 
@@ -502,16 +640,15 @@ bool AuthHandler::_loadUsersFromFS() {
             break;
         }
 
-        String uid = _normalizeUID(u[USERS_CARD_UID_KEY] | "");
-        if (uid.length() == 0) {
-            uid = _normalizeUID(u[USERS_UID_FALLBACK_KEY] | "");
-            if (uid.length() > 0) {
-                u[USERS_CARD_UID_KEY] = uid;
-            }
-        }
+        JsonObjectConst userConst = u;
+        String uid = _extractUserUID(userConst);
         if (uid.length() == 0) {
             continue;
         }
+
+        // Normalize persisted schema so lookups are deterministic.
+        u[USERS_CARD_UID_KEY] = uid;
+        u[USERS_UID_FALLBACK_KEY] = uid;
 
         bool dup = false;
         for (int i = 0; i < _userCount; i++) {
@@ -556,11 +693,12 @@ JsonArray AuthHandler::_usersArray() {
 JsonObject AuthHandler::_findUserByUID(const String& uid) {
     JsonArray users = _usersArray();
     for (JsonObject u : users) {
-        String listed = _normalizeUID(u[USERS_CARD_UID_KEY] | "");
-        if (listed.length() == 0) {
-            listed = _normalizeUID(u[USERS_UID_FALLBACK_KEY] | "");
-        }
+        JsonObjectConst userConst = u;
+        String listed = _extractUserUID(userConst);
         if (listed == uid) {
+            // Self-heal key aliases on first successful lookup.
+            u[USERS_CARD_UID_KEY] = listed;
+            u[USERS_UID_FALLBACK_KEY] = listed;
             return u;
         }
     }

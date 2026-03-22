@@ -63,6 +63,8 @@ public:
     // Alarm management
     void startAlarm();              // Trigger full alarm (siren + flag)
     void clearAlarm();              // Clear alarm state
+    bool isBuzzerActive() const;
+    bool isSirenActive() const;
     
 private:
     // Hardware pins
@@ -70,10 +72,9 @@ private:
     static const int PIN_VIBE = SECURELOCK_PIN_VIBRATION;
     
     // Timing constants
-    static const unsigned long BEEP_DURATION = 100;      // ms
-    static const unsigned long BEEP_PAUSE = 80;          // ms between beeps
-    static const unsigned long SIREN_PULSE = 200;        // ms per siren pulse
+    static const unsigned long SIREN_PULSE = 180;        // ms per siren pulse
     static const unsigned long VIBE_DEBOUNCE = 35;       // ms edge debounce
+    static const unsigned long FEEDBACK_BEEP_COOLDOWN_MS = 90;
     
     // State variables
     bool _alarming;
@@ -89,6 +90,9 @@ private:
     unsigned long _buzzerStartTime;
     bool _buzzerState;
     bool _sirenMode;
+    unsigned long _beepOnDuration;
+    unsigned long _beepOffDuration;
+    unsigned long _lastFeedbackBeepMs;
     
     // Private methods
     void _updateBuzzer();

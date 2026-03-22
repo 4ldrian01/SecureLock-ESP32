@@ -6,6 +6,7 @@ export function getDOM() {
         lockVisual: document.getElementById('lockVisual'),
         lockStatusLabel: document.getElementById('lockStatusLabel'),
         lockStatusSub: document.getElementById('lockStatusSub'),
+        diagStatus: document.getElementById('diagStatus'),
         btnEmergency: document.getElementById('btnEmergency'),
 
         pinCode: document.getElementById('pinCode'),

@@ -9,7 +9,7 @@ The codebase follows a **4-component modular architecture** where each component
 
 ### Core Components (Read headers first to understand interfaces)
 1. **LockManager** (`lib/LockManager/`) - Hardware control layer
-   - Controls relay (GPIO 4), LED (GPIO 2), reed switch (GPIO 13)
+   - Controls relay (GPIO 22), LED (GPIO 2), reed switch (GPIO 13)
    - Non-blocking auto-lock timer (5 seconds default)
    - Door tamper detection via reed switch
 
@@ -19,8 +19,8 @@ The codebase follows a **4-component modular architecture** where each component
    - Alarm state management
 
 3. **AuthHandler** (`lib/AuthHandler/`) - Multi-factor authentication
-   - RFID RC522 (SPI: SS=5, RST=21)
-   - 4x4 Matrix Keypad (Cols[34,35,36,39] Rows[32,33,25,26])
+   - RFID RC522 (SPI: SS=32, RST=4, SCK=33, MOSI=25, MISO=26)
+   - 4x4 Matrix Keypad (Rows[34,35,39,36], Cols[16,17,21,23], where 16=RX2 and 17=TX2 on many boards)
    - Duress code detection (9999 = silent alarm)
    - Factory reset via GPIO 0 (BOOT button held 10s)
 
@@ -82,13 +82,13 @@ pio run --target uploadfs && pio run --target upload && pio device monitor
 ### Hardware Pin Mapping (Critical - Don't change without hardware modification)
 ```cpp
 // Defined in each component's .h file as static const int
-RELAY_PIN = 4      // Solenoid lock (Active HIGH = unlocked)
+RELAY_PIN = 22     // Solenoid lock (Active HIGH = unlocked)
 LED_PIN = 2        // Onboard LED
 DOOR_PIN = 13      // Reed switch (INPUT_PULLUP, HIGH = door open)
 BUZZER_PIN = 14    // Active buzzer
 VIBE_PIN = 27      // Vibration sensor (SW-420)
-RFID_SS = 5        // RFID chip select
-RFID_RST = 21      // RFID reset
+RFID_SS = 32       // RFID chip select
+RFID_RST = 4       // RFID reset
 BOOT_PIN = 0       // Factory reset button (builtin)
 ```
 

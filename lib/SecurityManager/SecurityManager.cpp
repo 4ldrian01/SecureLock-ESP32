@@ -20,7 +20,10 @@ SecurityManager::SecurityManager()
       _currentBeep(0),
       _buzzerStartTime(0),
       _buzzerState(false),
-      _sirenMode(false)
+    _sirenMode(false),
+    _beepOnDuration(60),
+    _beepOffDuration(100),
+    _lastFeedbackBeepMs(0)
 {
 }
 
@@ -105,13 +108,49 @@ void SecurityManager::resetVibration() {
  */
 void SecurityManager::beep(int count) {
     if (_sirenMode) return;  // Don't interrupt siren
+
+    if (count <= 0) {
+        return;
+    }
+
+    if (count > 3) {
+        count = 3;
+    }
+
+    const unsigned long now = millis();
+    if (count == 1) {
+        if ((now - _lastFeedbackBeepMs) < FEEDBACK_BEEP_COOLDOWN_MS) {
+            return;
+        }
+
+        // Keep stronger tones (success/error) intact.
+        if (_buzzerActive && _beepCount > 1) {
+            return;
+        }
+    }
+
+    if (_buzzerActive && !_sirenMode && count <= _beepCount && _currentBeep < _beepCount) {
+        return;
+    }
+
+    if (count == 1) {
+        _beepOnDuration = 45;
+        _beepOffDuration = 70;
+    } else if (count == 2) {
+        _beepOnDuration = 70;
+        _beepOffDuration = 100;
+    } else {
+        _beepOnDuration = 95;
+        _beepOffDuration = 130;
+    }
     
     _beepCount = count;
     _currentBeep = 0;
     _buzzerActive = true;
-    _buzzerStartTime = millis();
+    _buzzerStartTime = now;
     _buzzerState = true;
     _setBuzzer(true);
+    _lastFeedbackBeepMs = now;
     
     Serial.print("[SECURITY] Beep x");
     Serial.println(count);
@@ -169,6 +208,14 @@ void SecurityManager::clearAlarm() {
     Serial.println("[SECURITY] Alarm cleared");
 }
 
+bool SecurityManager::isBuzzerActive() const {
+    return _buzzerActive;
+}
+
+bool SecurityManager::isSirenActive() const {
+    return _sirenMode;
+}
+
 /**
  * Private: Update buzzer patterns (non-blocking)
  */
@@ -191,14 +238,14 @@ void SecurityManager::_updateBuzzer() {
     // Beep pattern
     if (_currentBeep < _beepCount) {
         // ON phase
-        if (_buzzerState && elapsed >= BEEP_DURATION) {
+        if (_buzzerState && elapsed >= _beepOnDuration) {
             _setBuzzer(false);
             _buzzerState = false;
             _buzzerStartTime = now;
             _currentBeep++;
         }
         // OFF phase (pause between beeps)
-        else if (!_buzzerState && elapsed >= BEEP_PAUSE) {
+        else if (!_buzzerState && elapsed >= _beepOffDuration) {
             if (_currentBeep < _beepCount) {
                 _setBuzzer(true);
                 _buzzerState = true;

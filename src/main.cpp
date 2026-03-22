@@ -42,14 +42,28 @@ String pendingOtp = "";
 unsigned long pendingOtpIssuedAtMs = 0;
 String keypadBuffer = "";
 String authPrompt = "";
+char lastKeypadKey = '\0';
+unsigned long lastKeypadKeyMs = 0;
 
-static const size_t OTP_LENGTH = 6;
+static const size_t OTP_LENGTH = 4;
 static const size_t BACKUP_PIN_LENGTH = 4;
 static const char* DURESS_CODE = "2580";
 static const unsigned long OTP_TTL_MS = 30000;
 
 unsigned long lastTelegramPollMs = 0;
-static const unsigned long TELEGRAM_POLL_INTERVAL_MS = 1000;
+static const unsigned long TELEGRAM_POLL_FAST_MS = 120;
+static const unsigned long TELEGRAM_POLL_IDLE_MS = 350;
+static const unsigned long TELEGRAM_POLL_ERROR_MS = 900;
+static const int TELEGRAM_MAX_PROCESS_PER_CYCLE = 10;
+unsigned long telegramPollIntervalMs = TELEGRAM_POLL_FAST_MS;
+unsigned long telegramLastPollDurationMs = 0;
+unsigned long telegramLastSuccessMs = 0;
+unsigned long telegramLastErrorMs = 0;
+unsigned long telegramLastCommandMs = 0;
+unsigned long telegramLastCommandLatencyMs = 0;
+unsigned long telegramCommandsHandled = 0;
+unsigned long telegramPollErrors = 0;
+int telegramPendingApprox = 0;
 static const unsigned long EMERGENCY_LOCKOUT_MS = 5000;
 int lastHandledTelegramUpdateId = 0;
 
@@ -85,6 +99,17 @@ bool isTemporaryGuestCodeActive();
 unsigned long getTemporaryGuestCodeRemainingMs();
 String getAuthPrompt();
 bool isPendingAccessActive();
+String getLastKeypadKeyLabel();
+unsigned long getLastKeypadKeyMs();
+unsigned long getTelegramPollIntervalMs();
+unsigned long getTelegramLastPollDurationMs();
+unsigned long getTelegramLastSuccessMs();
+unsigned long getTelegramLastErrorMs();
+unsigned long getTelegramLastCommandMs();
+unsigned long getTelegramLastCommandLatencyMs();
+unsigned long getTelegramCommandsHandled();
+unsigned long getTelegramPollErrors();
+int getTelegramPendingApprox();
 
 void setup() {
     Serial.begin(115200);
@@ -96,7 +121,9 @@ void setup() {
 
     if (webServer.isConnected()) {
         telegramClient.setInsecure();
+        telegramClient.setTimeout(3000);
         bot = new UniversalTelegramBot(BOT_TOKEN, telegramClient);
+        bot->longPoll = 0;
         Serial.println("[TELEGRAM] Bot initialized");
     }
 
@@ -196,6 +223,9 @@ void processKeypad() {
         return;
     }
 
+    lastKeypadKey = key;
+    lastKeypadKeyMs = millis();
+
     if (key == '*') {
         keypadBuffer = "";
         authHandler.clearBuffer();
@@ -233,6 +263,7 @@ void processKeypad() {
     }
 
     if (key < '0' || key > '9') {
+        securityManager.beep(1);
         return;
     }
 
@@ -317,13 +348,13 @@ void enterAwaiting2FAForUser(const String& uid) {
     keypadState = STATE_AWAITING_2FA;
     awaitingOfflineBackupMode = false;
 
-    if (bot && pendingUserChatId.length() > 0) {
+    if (bot) {
         pendingOtp = generateNumericCode(OTP_LENGTH);
         pendingOtpIssuedAtMs = millis();
 
-        sendOTP(pendingUserChatId, pendingOtp);
+        sendOTP(String(ADMIN_CHAT_ID), pendingOtp);
         webServer.logActivity(pendingUserName, "OTP Sent", "success");
-        authPrompt = "Enter 6-digit OTP (press # for Offline Mode)";
+        authPrompt = "Enter 4-digit OTP (press # for Offline Mode)";
     } else {
         awaitingOfflineBackupMode = true;
         authPrompt = "Offline Mode: Enter Backup PIN";
@@ -378,14 +409,29 @@ void handleTelegramCommands() {
     }
 
     const unsigned long now = millis();
-    if ((now - lastTelegramPollMs) < TELEGRAM_POLL_INTERVAL_MS) {
+    if ((now - lastTelegramPollMs) < telegramPollIntervalMs) {
         return;
     }
     lastTelegramPollMs = now;
 
+    const unsigned long pollStartMs = millis();
+    int processedInCycle = 0;
+
     int numNewMessages = bot->getUpdates(bot->last_message_received + 1);
-    while (numNewMessages > 0) {
-        for (int i = 0; i < numNewMessages; i++) {
+    if (numNewMessages < 0) {
+        telegramPollErrors++;
+        telegramLastErrorMs = millis();
+        telegramPollIntervalMs = TELEGRAM_POLL_ERROR_MS;
+        telegramLastPollDurationMs = millis() - pollStartMs;
+        return;
+    }
+
+    if (numNewMessages > 0) {
+        const int processLimit = (numNewMessages < TELEGRAM_MAX_PROCESS_PER_CYCLE)
+            ? numNewMessages
+            : TELEGRAM_MAX_PROCESS_PER_CYCLE;
+
+        for (int i = 0; i < processLimit; i++) {
             const int updateId = bot->messages[i].update_id;
             if (updateId <= lastHandledTelegramUpdateId) {
                 continue;
@@ -411,9 +457,28 @@ void handleTelegramCommands() {
             } else if (role == ROLE_USER) {
                 handleUserCommand(chatId, text);
             }
+
+            processedInCycle++;
         }
 
-        numNewMessages = bot->getUpdates(bot->last_message_received + 1);
+        telegramPendingApprox = numNewMessages - processedInCycle;
+        if (telegramPendingApprox < 0) {
+            telegramPendingApprox = 0;
+        }
+    } else {
+        telegramPendingApprox = 0;
+    }
+
+    telegramLastPollDurationMs = millis() - pollStartMs;
+    if (processedInCycle > 0) {
+        telegramCommandsHandled += static_cast<unsigned long>(processedInCycle);
+        telegramLastSuccessMs = millis();
+        telegramLastCommandMs = telegramLastSuccessMs;
+        telegramLastCommandLatencyMs = telegramLastPollDurationMs;
+        telegramPollIntervalMs = TELEGRAM_POLL_FAST_MS;
+    } else {
+        // Idle cycles back off slightly to reduce API churn while staying responsive.
+        telegramPollIntervalMs = TELEGRAM_POLL_IDLE_MS;
     }
 }
 
@@ -435,6 +500,7 @@ String normalizeTelegramCommand(const String& rawText) {
     }
 
     command.trim();
+    command.toLowerCase();
     return command;
 }
 
@@ -452,6 +518,15 @@ TelegramRole resolveTelegramRole(const String& chatId) {
 }
 
 void handleAdminCommand(const String& chatId, const String& text) {
+    if (text == "/help") {
+        bot->sendMessage(
+            chatId,
+            "Commands: /status, /admin_open, /guest_code, /buzzer_test, /keypad_echo, /lockdown, /unlockdown",
+            ""
+        );
+        return;
+    }
+
     if (text == "/start") {
         bot->sendMessage(chatId, "🚪 System Armed & Ready. Admin recognized.", "");
         return;
@@ -482,8 +557,30 @@ void handleAdminCommand(const String& chatId, const String& text) {
         const String doorState = lockManager.isDoorOpen() ? "Open" : "Closed";
         const String systemState = isLockdown ? "Lockdown" : "Armed";
         const String wifiState = String(WiFi.RSSI()) + " dBm";
-        const String statusMsg = "Door: " + doorState + ", System: " + systemState + ", WiFi: " + wifiState;
+        const String buzzerState = securityManager.isSirenActive()
+            ? "SIREN"
+            : (securityManager.isBuzzerActive() ? "BEEPING" : "IDLE");
+        const String statusMsg = "Door: " + doorState + ", System: " + systemState + ", Buzzer: " + buzzerState + ", WiFi: " + wifiState;
         bot->sendMessage(chatId, statusMsg, "");
+        return;
+    }
+
+    if (text == "/buzzer_test") {
+        securityManager.beep(3);
+        bot->sendMessage(chatId, "🔊 Buzzer test triggered (triple tone).", "");
+        webServer.logActivity("Admin (Telegram)", "Buzzer Test", "success");
+        return;
+    }
+
+    if (text == "/keypad_echo") {
+        const String keyLabel = getLastKeypadKeyLabel();
+        if (keyLabel.length() == 0) {
+            bot->sendMessage(chatId, "⌨️ No keypad key recorded yet.", "");
+            return;
+        }
+
+        const unsigned long ageMs = millis() - getLastKeypadKeyMs();
+        bot->sendMessage(chatId, "⌨️ Last keypad key: " + keyLabel + " (" + String(ageMs) + " ms ago)", "");
         return;
     }
 
@@ -504,6 +601,11 @@ void handleAdminCommand(const String& chatId, const String& text) {
 }
 
 void handleUserCommand(const String& chatId, const String& text) {
+    if (text == "/help") {
+        bot->sendMessage(chatId, "Commands: /start", "");
+        return;
+    }
+
     if (text == "/start") {
         bot->sendMessage(chatId, "✅ Welcome! Your Telegram is linked. You will receive 2FA OTPs here.", "");
         return;
@@ -581,4 +683,52 @@ String getAuthPrompt() {
 
 bool isPendingAccessActive() {
     return keypadState == STATE_AWAITING_2FA;
+}
+
+String getLastKeypadKeyLabel() {
+    if (!lastKeypadKey) {
+        return "";
+    }
+
+    return String(lastKeypadKey);
+}
+
+unsigned long getLastKeypadKeyMs() {
+    return lastKeypadKeyMs;
+}
+
+unsigned long getTelegramPollIntervalMs() {
+    return telegramPollIntervalMs;
+}
+
+unsigned long getTelegramLastPollDurationMs() {
+    return telegramLastPollDurationMs;
+}
+
+unsigned long getTelegramLastSuccessMs() {
+    return telegramLastSuccessMs;
+}
+
+unsigned long getTelegramLastErrorMs() {
+    return telegramLastErrorMs;
+}
+
+unsigned long getTelegramLastCommandMs() {
+    return telegramLastCommandMs;
+}
+
+unsigned long getTelegramLastCommandLatencyMs() {
+    return telegramLastCommandLatencyMs;
+}
+
+unsigned long getTelegramCommandsHandled() {
+    return telegramCommandsHandled;
+}
+
+unsigned long getTelegramPollErrors() {
+    return telegramPollErrors;
+}
+
+int getTelegramPendingApprox() {
+    return telegramPendingApprox;
 }

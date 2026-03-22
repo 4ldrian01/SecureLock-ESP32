@@ -12,6 +12,12 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
             return;
         }
 
+        if (state.buzzerActive) {
+            DOM.lockStatusSub.textContent = state.sirenActive ? 'Siren Pulse Active' : 'Buzzer Feedback Active';
+            DOM.lockStatusSub.style.color = 'var(--warning, #f59e0b)';
+            return;
+        }
+
         if (state.authPrompt) {
             DOM.lockStatusSub.textContent = state.authPrompt;
             DOM.lockStatusSub.style.color = 'var(--accent)';
@@ -146,7 +152,15 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
 
             state.locked = Boolean(data.locked);
             state.alarm = Boolean(data.alarm);
+            state.buzzerActive = Boolean(data.buzzerActive);
+            state.sirenActive = Boolean(data.sirenActive);
             state.authPrompt = String(data.authPrompt || '');
+            state.telegramPollIntervalMs = Number(data.telegramPollIntervalMs || 0);
+            state.telegramLastPollDurationMs = Number(data.telegramLastPollDurationMs || 0);
+            state.telegramLastCommandAgeMs = Number(data.telegramLastCommandAgeMs ?? -1);
+            state.telegramLastCommandLatencyMs = Number(data.telegramLastCommandLatencyMs || 0);
+            state.telegramPendingApprox = Number(data.telegramPendingApprox || 0);
+            state.telegramPollErrors = Number(data.telegramPollErrors || 0);
 
             const emergencyCooldownRemainingMs = Number(data.emergencyCooldownRemainingMs);
             if (Number.isFinite(emergencyCooldownRemainingMs) && emergencyCooldownRemainingMs > 0) {
@@ -173,6 +187,25 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
 
             updateLockUI(state.locked);
             updateAlarmState(state.alarm);
+
+            if (DOM.diagStatus) {
+                try {
+                    const diag = await apiFetch(CONFIG.API.DIAGNOSTICS);
+                    const rfidText = diag.rfidReady ? 'RFID OK' : 'RFID WAIT';
+                    const keypadText = diag.keypadReady
+                        ? (diag.keypadMuted ? `KEYPAD MUTED ${Math.ceil((Number(diag.keypadMuteRemainingMs) || 0) / 1000)}s` : 'KEYPAD OK')
+                        : 'KEYPAD INIT';
+                    const keyText = diag.keypadLastKey ? `Last key: ${diag.keypadLastKey}` : 'Last key: -';
+                    const tgAge = state.telegramLastCommandAgeMs >= 0
+                        ? `${Math.ceil(state.telegramLastCommandAgeMs / 1000)}s`
+                        : '-';
+                    const tgText = `TG ${state.telegramLastPollDurationMs}ms@${state.telegramPollIntervalMs}ms, cmd ${tgAge}, q${state.telegramPendingApprox}, e${state.telegramPollErrors}`;
+                    DOM.diagStatus.textContent = `Diagnostics: ${rfidText} • ${keypadText} • ${keyText} • ${tgText}`;
+                } catch {
+                    DOM.diagStatus.textContent = 'Diagnostics: unavailable';
+                }
+            }
+
             return data;
         } catch {
             setConnectionState(false);

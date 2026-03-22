@@ -24,10 +24,11 @@
  *   POST   /api/unlock      → Remote unlock (emergency override)
  *   POST   /api/guest-code  → Generate temporary guest PIN (5-min)
  *   GET    /api/users       → List all registered users
- *   POST   /api/users       → Add new user (JSON body: name, pin, uid)
- *   PUT    /api/users       → Edit existing user (JSON body: uid, name, pin)
+ *   POST   /api/users       → Add new user (JSON body: name, pin(4-digit), uid)
+ *   PUT    /api/users       → Edit existing user (JSON body: uid, name, pin(4-digit))
  *   DELETE /api/users?uid=X → Delete user by UID (admin protected)
  *   GET    /api/logs        → Get activity logs
+ *   GET    /api/diagnostics → Hardware diagnostics (RFID/keypad/buzzer)
  *   DELETE /api/logs        → Clear all activity logs
  *   GET    /api/rfid/scan   → Poll RFID reader for card enrollment
  * 
@@ -116,6 +117,7 @@ private:
     void _handleAPILogs(AsyncWebServerRequest* request);
     void _handleAPIClearLogs(AsyncWebServerRequest* request);
     void _handleAPIRfidScan(AsyncWebServerRequest* request);
+    void _handleAPIDiagnostics(AsyncWebServerRequest* request);
     
     // Activity logging
     void _addLogEntry(const String& user, const String& method, const String& status);

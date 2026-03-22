@@ -14,6 +14,17 @@ extern bool isTemporaryGuestCodeActive();
 extern unsigned long getTemporaryGuestCodeRemainingMs();
 extern String getAuthPrompt();
 extern bool isPendingAccessActive();
+extern String getLastKeypadKeyLabel();
+extern unsigned long getLastKeypadKeyMs();
+extern unsigned long getTelegramPollIntervalMs();
+extern unsigned long getTelegramLastPollDurationMs();
+extern unsigned long getTelegramLastSuccessMs();
+extern unsigned long getTelegramLastErrorMs();
+extern unsigned long getTelegramLastCommandMs();
+extern unsigned long getTelegramLastCommandLatencyMs();
+extern unsigned long getTelegramCommandsHandled();
+extern unsigned long getTelegramPollErrors();
+extern int getTelegramPendingApprox();
 
 namespace {
 String normalizeUID(const String& input) {
@@ -49,6 +60,20 @@ bool isAlphabeticName(const String& input) {
     }
 
     return hasLetter;
+}
+
+bool isFourDigitCode(const String& code) {
+    if (code.length() != 4) {
+        return false;
+    }
+
+    for (size_t i = 0; i < code.length(); i++) {
+        if (!isDigit(code.charAt(i))) {
+            return false;
+        }
+    }
+
+    return true;
 }
 }
 
@@ -353,6 +378,10 @@ void WebServer::_setupRoutes() {
     _server.on("/api/rfid/scan", HTTP_GET, [this](AsyncWebServerRequest* request) {
         _handleAPIRfidScan(request);
     });
+
+    _server.on("/api/diagnostics", HTTP_GET, [this](AsyncWebServerRequest* request) {
+        _handleAPIDiagnostics(request);
+    });
     
     // 404 handler
     _server.onNotFound([this](AsyncWebServerRequest* request) {
@@ -472,6 +501,8 @@ void WebServer::_handleAPIStatus(AsyncWebServerRequest* request) {
     // Security status
     doc["alarm"] = _security->isAlarming();
     doc["vibration"] = _security->isVibrationLatched();
+    doc["buzzerActive"] = _security->isBuzzerActive();
+    doc["sirenActive"] = _security->isSirenActive();
     
     // System info
     doc["uptime"] = millis() / 1000;
@@ -490,6 +521,22 @@ void WebServer::_handleAPIStatus(AsyncWebServerRequest* request) {
     doc["guestCodeRemainingMs"] = telegramGuestRemainingMs;
     doc["authPrompt"] = getAuthPrompt();
     doc["pendingAccess"] = isPendingAccessActive();
+    doc["timestampMs"] = millis();
+
+    const unsigned long nowMs = millis();
+    const unsigned long lastTgCommandMs = getTelegramLastCommandMs();
+    const unsigned long lastTgErrorMs = getTelegramLastErrorMs();
+    doc["telegramPollIntervalMs"] = getTelegramPollIntervalMs();
+    doc["telegramLastPollDurationMs"] = getTelegramLastPollDurationMs();
+    doc["telegramLastSuccessMs"] = getTelegramLastSuccessMs();
+    doc["telegramLastErrorMs"] = lastTgErrorMs;
+    doc["telegramLastCommandMs"] = lastTgCommandMs;
+    doc["telegramLastCommandLatencyMs"] = getTelegramLastCommandLatencyMs();
+    doc["telegramCommandsHandled"] = getTelegramCommandsHandled();
+    doc["telegramPollErrors"] = getTelegramPollErrors();
+    doc["telegramPendingApprox"] = getTelegramPendingApprox();
+    doc["telegramLastCommandAgeMs"] = (lastTgCommandMs > 0) ? (nowMs - lastTgCommandMs) : -1;
+    doc["telegramLastErrorAgeMs"] = (lastTgErrorMs > 0) ? (nowMs - lastTgErrorMs) : -1;
     
     _sendJSON(request, 200, doc);
 }
@@ -759,6 +806,15 @@ void WebServer::_handleAPIAddUser(AsyncWebServerRequest* request, uint8_t* data,
         return;
     }
 
+    if (!isFourDigitCode(pin)) {
+        JsonDocument doc;
+        doc["success"] = false;
+        doc["field"] = "pin";
+        doc["message"] = "PIN must be exactly 4 digits";
+        _sendJSON(request, 400, doc);
+        return;
+    }
+
     if (!isAlphabeticName(name)) {
         JsonDocument doc;
         doc["success"] = false;
@@ -769,24 +825,13 @@ void WebServer::_handleAPIAddUser(AsyncWebServerRequest* request, uint8_t* data,
     }
 
     if (!backupPIN.isEmpty()) {
-        if (backupPIN.length() != 4) {
+        if (!isFourDigitCode(backupPIN)) {
             JsonDocument doc;
             doc["success"] = false;
             doc["field"] = "backupPIN";
             doc["message"] = "Backup PIN must be exactly 4 digits";
             _sendJSON(request, 400, doc);
             return;
-        }
-
-        for (size_t i = 0; i < backupPIN.length(); i++) {
-            if (!isDigit(backupPIN.charAt(i))) {
-                JsonDocument doc;
-                doc["success"] = false;
-                doc["field"] = "backupPIN";
-                doc["message"] = "Backup PIN must contain digits only";
-                _sendJSON(request, 400, doc);
-                return;
-            }
         }
     }
 
@@ -893,6 +938,15 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
         return;
     }
 
+    if (!pin.isEmpty() && !isFourDigitCode(pin)) {
+        JsonDocument doc;
+        doc["success"] = false;
+        doc["field"] = "pin";
+        doc["message"] = "PIN must be exactly 4 digits";
+        _sendJSON(request, 400, doc);
+        return;
+    }
+
     if (!isAlphabeticName(name)) {
         JsonDocument doc;
         doc["success"] = false;
@@ -903,24 +957,13 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
     }
 
     if (!backupPIN.isEmpty()) {
-        if (backupPIN.length() != 4) {
+        if (!isFourDigitCode(backupPIN)) {
             JsonDocument doc;
             doc["success"] = false;
             doc["field"] = "backupPIN";
             doc["message"] = "Backup PIN must be exactly 4 digits";
             _sendJSON(request, 400, doc);
             return;
-        }
-
-        for (size_t i = 0; i < backupPIN.length(); i++) {
-            if (!isDigit(backupPIN.charAt(i))) {
-                JsonDocument doc;
-                doc["success"] = false;
-                doc["field"] = "backupPIN";
-                doc["message"] = "Backup PIN must contain digits only";
-                _sendJSON(request, 400, doc);
-                return;
-            }
         }
     }
 
@@ -979,6 +1022,14 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
         JsonDocument doc;
         doc["success"] = false;
         doc["message"] = "PIN required to update this user. Please provide a valid 4-digit PIN.";
+        _sendJSON(request, 400, doc);
+        return;
+    }
+
+    if (!isFourDigitCode(effectivePin)) {
+        JsonDocument doc;
+        doc["success"] = false;
+        doc["message"] = "PIN must be exactly 4 digits";
         _sendJSON(request, 400, doc);
         return;
     }
@@ -1050,6 +1101,25 @@ void WebServer::_handleAPIRfidScan(AsyncWebServerRequest* request) {
     }
     doc["timestamp"] = millis();
     
+    _sendJSON(request, 200, doc);
+}
+
+void WebServer::_handleAPIDiagnostics(AsyncWebServerRequest* request) {
+    JsonDocument doc;
+    doc["rfidReady"] = _auth->isRFIDReady();
+    doc["rfidRstActivePin"] = _auth->getActiveRFIDRstPin();
+    doc["rfidCooldownActive"] = _auth->isRFIDCooldownActive();
+    doc["lastRfidUid"] = _auth->getLastRFIDUID();
+    doc["lastRfidScanMs"] = _auth->getLastRFIDScanMs();
+    doc["keypadReady"] = _auth->isKeypadReady();
+    doc["keypadMuted"] = _auth->isKeypadMuted();
+    doc["keypadMuteRemainingMs"] = _auth->getKeypadMuteRemainingMs();
+    doc["keypadLastKey"] = getLastKeypadKeyLabel();
+    doc["keypadLastKeyMs"] = getLastKeypadKeyMs();
+    doc["buzzerActive"] = _security->isBuzzerActive();
+    doc["sirenActive"] = _security->isSirenActive();
+    doc["vibrationLatched"] = _security->isVibrationLatched();
+    doc["timestamp"] = millis();
     _sendJSON(request, 200, doc);
 }
 

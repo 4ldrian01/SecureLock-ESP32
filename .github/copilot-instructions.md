@@ -19,7 +19,7 @@ The codebase follows a **4-component modular architecture** where each component
    - Alarm state management
 
 3. **AuthHandler** (`lib/AuthHandler/`) - Multi-factor authentication
-   - RFID RC522 (SPI: SS=32, RST=4, SCK=33, MOSI=25, MISO=26)
+   - RFID RC522 (SPI: SS=5, RST=4, SCK=18, MOSI=25, MISO=19)
    - 4x4 Matrix Keypad (Rows[34,35,39,36], Cols[16,17,21,23], where 16=RX2 and 17=TX2 on many boards)
    - Duress code detection (9999 = silent alarm)
    - Factory reset via GPIO 0 (BOOT button held 10s)
@@ -87,7 +87,7 @@ LED_PIN = 2        // Onboard LED
 DOOR_PIN = 13      // Reed switch (INPUT_PULLUP, HIGH = door open)
 BUZZER_PIN = 14    // Active buzzer
 VIBE_PIN = 27      // Vibration sensor (SW-420)
-RFID_SS = 32       // RFID chip select
+RFID_SS = 5        // RFID chip select
 RFID_RST = 4       // RFID reset
 BOOT_PIN = 0       // Factory reset button (builtin)
 ```

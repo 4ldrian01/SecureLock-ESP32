@@ -62,7 +62,7 @@ export function createLogsFeature({ CONFIG, state, DOM, apiFetch, feedback }) {
                     : log.status === 'alarm' ? '\uD83D\uDEA8 Alarm'
                         : '\u274C Denied');
 
-            const displayTime = formatLogTime(log.time, isCompactMobile);
+            const displayTime = formatLogTime(log, isCompactMobile);
 
             return `<tr>
                 <td class="col-time">${escapeHtml(displayTime)}</td>

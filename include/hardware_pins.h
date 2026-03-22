@@ -5,9 +5,7 @@
  *
  * IMPORTANT:
  * - This file is the single source of truth for GPIO mapping.
- * - MFRC522 is configured for: SS=32, RST=4, SCK=33, MOSI=25, MISO=26.
- * - Requested MOSI=GPIO35 is not electrically valid on ESP32 because
- *   GPIO35 is input-only. MOSI must be output-capable.
+ * - MFRC522 is configured for: SS=5, RST=4, SCK=18, MOSI=25, MISO=19.
  * - ESP32 GPIO34-39 are input-only. Never assign them to any signal
  *   that is actively driven HIGH/LOW by software.
  *
@@ -31,11 +29,11 @@
 // ------------------------------------------------------------
 // RFID RC522 (SPI)
 // ------------------------------------------------------------
-#define SECURELOCK_PIN_RFID_SS         32
+#define SECURELOCK_PIN_RFID_SS         5
 #define SECURELOCK_PIN_RFID_RST        4
-#define SECURELOCK_PIN_SPI_SCK         33
+#define SECURELOCK_PIN_SPI_SCK         18
 #define SECURELOCK_PIN_SPI_MOSI        25
-#define SECURELOCK_PIN_SPI_MISO        26
+#define SECURELOCK_PIN_SPI_MISO        19
 
 // ------------------------------------------------------------
 // Keypad 4x4

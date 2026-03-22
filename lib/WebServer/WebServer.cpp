@@ -25,6 +25,9 @@ extern unsigned long getTelegramLastCommandLatencyMs();
 extern unsigned long getTelegramCommandsHandled();
 extern unsigned long getTelegramPollErrors();
 extern int getTelegramPendingApprox();
+extern String getTelegramLastCommandText();
+extern String getTelegramLastCommandRole();
+extern String getTelegramLastCommandResult();
 
 namespace {
 String normalizeUID(const String& input) {
@@ -75,6 +78,30 @@ bool isFourDigitCode(const String& code) {
 
     return true;
 }
+
+bool isValidTelegramChatId(const String& chatId) {
+    String value = chatId;
+    value.trim();
+    if (value.length() == 0) {
+        return false;
+    }
+
+    size_t start = 0;
+    if (value.charAt(0) == '-') {
+        if (value.length() == 1) {
+            return false;
+        }
+        start = 1;
+    }
+
+    for (size_t i = start; i < value.length(); i++) {
+        if (!isDigit(value.charAt(i))) {
+            return false;
+        }
+    }
+
+    return true;
+}
 }
 
 /**
@@ -90,8 +117,7 @@ WebServer::WebServer(LockManager* lockManager, SecurityManager* securityManager,
       _guestCode(""),
             _guestCodeExpiry(0),
             _lastEmergencyUnlockMs(0),
-            _lastGuestCodeRequestMs(0),
-            _lastRfidScanServedMs(0)
+        _lastGuestCodeRequestMs(0)
 {
 }
 
@@ -535,6 +561,9 @@ void WebServer::_handleAPIStatus(AsyncWebServerRequest* request) {
     doc["telegramCommandsHandled"] = getTelegramCommandsHandled();
     doc["telegramPollErrors"] = getTelegramPollErrors();
     doc["telegramPendingApprox"] = getTelegramPendingApprox();
+    doc["telegramLastCommandText"] = getTelegramLastCommandText();
+    doc["telegramLastCommandRole"] = getTelegramLastCommandRole();
+    doc["telegramLastCommandResult"] = getTelegramLastCommandResult();
     doc["telegramLastCommandAgeMs"] = (lastTgCommandMs > 0) ? (nowMs - lastTgCommandMs) : -1;
     doc["telegramLastErrorAgeMs"] = (lastTgErrorMs > 0) ? (nowMs - lastTgErrorMs) : -1;
     
@@ -571,9 +600,8 @@ void WebServer::_handleAPIUnlock(AsyncWebServerRequest* request) {
         _security->clearAlarm();
     }
 
-    // Audible feedback for admin-triggered emergency override
-    // (same success tone pattern as normal access grant)
-    _security->beep(2);
+    // Single confirmation beep for emergency override.
+    _security->beep(1);
 
     _lastEmergencyUnlockMs = millis();
     
@@ -806,6 +834,15 @@ void WebServer::_handleAPIAddUser(AsyncWebServerRequest* request, uint8_t* data,
         return;
     }
 
+    if (!isValidTelegramChatId(telegramChatID)) {
+        JsonDocument doc;
+        doc["success"] = false;
+        doc["field"] = "telegramChatID";
+        doc["message"] = "A valid Telegram Chat ID is required for OTP delivery";
+        _sendJSON(request, 400, doc);
+        return;
+    }
+
     if (!isFourDigitCode(pin)) {
         JsonDocument doc;
         doc["success"] = false;
@@ -877,12 +914,18 @@ void WebServer::_handleAPIAddUser(AsyncWebServerRequest* request, uint8_t* data,
     bool added = _auth->addUser(uid, pin, name);
 
     if (added) {
-        if (!telegramChatID.isEmpty()) {
-            _auth->setUserTelegramChatId(uid, telegramChatID);
+        const bool chatSaved = _auth->setUserTelegramChatId(uid, telegramChatID);
+        if (!chatSaved) {
+            _auth->removeUser(uid);
+            added = false;
         }
 
-        if (!backupPIN.isEmpty()) {
-            _auth->setUserBackupPIN(uid, backupPIN);
+        if (added && !backupPIN.isEmpty()) {
+            const bool backupSaved = _auth->setUserBackupPIN(uid, backupPIN);
+            if (!backupSaved) {
+                _auth->removeUser(uid);
+                added = false;
+            }
         }
     }
     
@@ -934,6 +977,15 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
         JsonDocument doc;
         doc["success"] = false;
         doc["message"] = "Missing required fields: uid, name";
+        _sendJSON(request, 400, doc);
+        return;
+    }
+
+    if (!isValidTelegramChatId(telegramChatID)) {
+        JsonDocument doc;
+        doc["success"] = false;
+        doc["field"] = "telegramChatID";
+        doc["message"] = "A valid Telegram Chat ID is required for OTP delivery";
         _sendJSON(request, 400, doc);
         return;
     }
@@ -1064,7 +1116,13 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
         return;
     }
 
-    _auth->setUserTelegramChatId(targetUid, effectiveTelegramChatId);
+    if (!_auth->setUserTelegramChatId(targetUid, effectiveTelegramChatId)) {
+        JsonDocument doc;
+        doc["success"] = false;
+        doc["message"] = "Failed to persist Telegram Chat ID";
+        _sendJSON(request, 500, doc);
+        return;
+    }
     if (effectiveBackupPIN.length() == 4) {
         _auth->setUserBackupPIN(targetUid, effectiveBackupPIN);
     }
@@ -1086,19 +1144,21 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
 void WebServer::_handleAPIRfidScan(AsyncWebServerRequest* request) {
     const unsigned long scanMs = _auth->getLastRFIDScanMs();
     const String lastUID = _auth->getLastRFIDUID();
-    bool scanned = false;
-
-    if (scanMs > _lastRfidScanServedMs && lastUID.length() > 0) {
-        scanned = true;
-        _lastRfidScanServedMs = scanMs;
-    }
+    const bool scanned = (scanMs > 0 && lastUID.length() > 0);
+    const bool known = scanned ? _auth->userExists(lastUID) : false;
+    const String knownUserName = known ? _auth->getUserName(lastUID) : "";
 
     JsonDocument doc;
     doc["scanned"] = scanned;
+    doc["known"] = known;
+    doc["status"] = known ? "registered" : "unregistered";
     if (scanned) {
         doc["uid"] = lastUID;
         doc["scanTimestamp"] = scanMs;
+        doc["userName"] = knownUserName;
     }
+    doc["lastUid"] = lastUID;
+    doc["lastScanTimestamp"] = scanMs;
     doc["timestamp"] = millis();
     
     _sendJSON(request, 200, doc);
@@ -1323,13 +1383,15 @@ void WebServer::_addLogEntry(const String& user, const String& method, const Str
     }
     
     // Build accurate world time (UTC) when NTP is available.
-    // Fallback to uptime-style time if sync is not ready yet.
-    char timeStr[32];
+    // Store both display text and machine-readable timestamps.
+    char timeStr[40];
+    unsigned long long epochMs = 0;
     time_t now = time(nullptr);
     if (now > 1700000000) {
         struct tm utcTime;
         gmtime_r(&now, &utcTime);
-        strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M:%S UTC", &utcTime);
+        strftime(timeStr, sizeof(timeStr), "%Y-%m-%dT%H:%M:%SZ", &utcTime);
+        epochMs = static_cast<unsigned long long>(now) * 1000ULL;
     } else {
         unsigned long sec = millis() / 1000;
         unsigned long m = (sec / 60) % 60;
@@ -1339,6 +1401,7 @@ void WebServer::_addLogEntry(const String& user, const String& method, const Str
     
     JsonObject entry = logs.add<JsonObject>();
     entry["time"]   = String(timeStr);
+    entry["epochMs"] = epochMs;
     entry["user"]   = user;
     entry["method"] = method;
     entry["status"] = status;

@@ -159,6 +159,9 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
             state.telegramLastPollDurationMs = Number(data.telegramLastPollDurationMs || 0);
             state.telegramLastCommandAgeMs = Number(data.telegramLastCommandAgeMs ?? -1);
             state.telegramLastCommandLatencyMs = Number(data.telegramLastCommandLatencyMs || 0);
+            state.telegramLastCommandText = String(data.telegramLastCommandText || '');
+            state.telegramLastCommandRole = String(data.telegramLastCommandRole || '');
+            state.telegramLastCommandResult = String(data.telegramLastCommandResult || '');
             state.telegramPendingApprox = Number(data.telegramPendingApprox || 0);
             state.telegramPollErrors = Number(data.telegramPollErrors || 0);
 
@@ -199,7 +202,10 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
                     const tgAge = state.telegramLastCommandAgeMs >= 0
                         ? `${Math.ceil(state.telegramLastCommandAgeMs / 1000)}s`
                         : '-';
-                    const tgText = `TG ${state.telegramLastPollDurationMs}ms@${state.telegramPollIntervalMs}ms, cmd ${tgAge}, q${state.telegramPendingApprox}, e${state.telegramPollErrors}`;
+                    const tgCmd = state.telegramLastCommandText
+                        ? `${state.telegramLastCommandRole || 'user'}:${state.telegramLastCommandText}(${state.telegramLastCommandResult || 'ok'})`
+                        : 'none';
+                    const tgText = `TG ${state.telegramLastPollDurationMs}ms@${state.telegramPollIntervalMs}ms, cmd ${tgAge}, q${state.telegramPendingApprox}, e${state.telegramPollErrors}, last ${tgCmd}`;
                     DOM.diagStatus.textContent = `Diagnostics: ${rfidText} • ${keypadText} • ${keyText} • ${tgText}`;
                 } catch {
                     DOM.diagStatus.textContent = 'Diagnostics: unavailable';

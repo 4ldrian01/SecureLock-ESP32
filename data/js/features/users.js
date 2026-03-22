@@ -161,6 +161,10 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         targetInput.classList.add('scanning');
         targetInput.classList.remove('scanned', 'input-error');
         let lastScanTimestamp = 0;
+        const sessionStartedAtMs = Date.now();
+
+        const isEditFlow = targetInput === DOM.editUserRfid;
+        const editingUid = String(state.editingUserId || '').trim().toUpperCase();
 
         if (targetInput === DOM.userRfid) {
             setFormError('userRfidError', '');
@@ -168,26 +172,85 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             setFormError('editUserRfidError', '');
         }
 
-        state.rfidPollTimer = setInterval(async () => {
+        const pollRfidOnce = async () => {
             try {
                 const data = await apiFetch(CONFIG.API.RFID_SCAN);
                 const uid = String(data?.uid || '').trim();
-                const scanTs = Number(data?.scanTimestamp || data?.timestamp || 0);
-                const hasFreshScan = Boolean(data?.scanned) && uid.length > 0 && scanTs > lastScanTimestamp;
+                const scanTs = Number(data?.scanTimestamp || data?.lastScanTimestamp || data?.timestamp || 0);
+                const nowTs = Number(data?.timestamp || 0);
+                const scanAgeMs = Number.isFinite(nowTs) && Number.isFinite(scanTs) && nowTs >= scanTs
+                    ? (nowTs - scanTs)
+                    : Number.POSITIVE_INFINITY;
+                const sessionElapsedMs = Date.now() - sessionStartedAtMs;
+                const inCurrentSession = scanAgeMs <= (sessionElapsedMs + 1200);
+                const hasFreshScan = Boolean(data?.scanned)
+                    && uid.length > 0
+                    && scanTs > lastScanTimestamp
+                    && inCurrentSession;
 
                 if (hasFreshScan) {
                     lastScanTimestamp = scanTs;
-                    targetInput.value = uid;
+                    const normalizedUid = uid.toUpperCase();
+                    const knownFromApi = Boolean(data?.known);
+                    const statusFromApi = String(data?.status || '').toLowerCase();
+                    const known = knownFromApi || statusFromApi === 'registered';
+                    const ownerName = String(data?.userName || '').trim();
+
+                    if (!isEditFlow && known) {
+                        targetInput.value = 'Waiting for card tap...';
+                        targetInput.classList.add('scanning');
+                        targetInput.classList.add('input-error');
+                        targetInput.classList.remove('scanned');
+                        setFormError(
+                            'userRfidError',
+                            ownerName
+                                ? `RFID already registered to ${ownerName}. Scan a different card.`
+                                : 'RFID already registered. Scan a different card.'
+                        );
+                        feedback.showToast('Registered RFID detected. Please scan an unregistered card.', 'error');
+                        return;
+                    }
+
+                    if (isEditFlow && known && normalizedUid !== editingUid) {
+                        targetInput.value = 'Waiting for card tap...';
+                        targetInput.classList.add('scanning');
+                        targetInput.classList.add('input-error');
+                        targetInput.classList.remove('scanned');
+                        setFormError(
+                            'editUserRfidError',
+                            ownerName
+                                ? `RFID already belongs to ${ownerName}. Scan another card.`
+                                : 'RFID already belongs to another user. Scan another card.'
+                        );
+                        feedback.showToast('Card is already assigned to another user.', 'error');
+                        return;
+                    }
+
+                    targetInput.value = normalizedUid;
                     targetInput.classList.remove('scanning');
                     targetInput.classList.remove('input-error');
                     targetInput.classList.add('scanned');
                     stopRfidPoll();
-                    feedback.showToast('RFID card detected: ' + uid, 'success');
+
+                    if (known) {
+                        feedback.showToast(
+                            ownerName
+                                ? `Registered card recognized (${ownerName})`
+                                : 'Registered card recognized',
+                            'info'
+                        );
+                    } else {
+                        feedback.showToast('Unregistered RFID detected: ' + normalizedUid, 'success');
+                    }
                 }
             } catch {
                 // Keep polling silently
             }
-        }, CONFIG.RFID_POLL_INTERVAL);
+        };
+
+        // Run once immediately so first tap is captured without waiting for interval tick.
+        pollRfidOnce();
+        state.rfidPollTimer = setInterval(pollRfidOnce, CONFIG.RFID_POLL_INTERVAL);
     }
 
     function openAddUserDialog() {
@@ -197,6 +260,7 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         setFormError('userRfidError', '');
         setAddUserBusy(false);
         DOM.addUserModal.showModal();
+        startRfidPoll(DOM.userRfid);
     }
 
     function closeAddUserDialog() {

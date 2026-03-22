@@ -75,16 +75,55 @@ void AuthHandler::init() {
         digitalWrite(rstPin, HIGH);
         _rfid.PCD_Init(PIN_RFID_SS, rstPin);
         _rfid.PCD_AntennaOn();
+        _rfid.PCD_SetAntennaGain(MFRC522::RxGain_max);
         return _rfid.PCD_ReadRegister(_rfid.VersionReg);
     };
 
+    auto isReservedOrConflictingPin = [this](int pin) -> bool {
+        if (pin < 0) {
+            return true;
+        }
+
+        if (pin == PIN_RFID_SS
+            || pin == SECURELOCK_PIN_SPI_SCK
+            || pin == SECURELOCK_PIN_SPI_MISO
+            || pin == SECURELOCK_PIN_SPI_MOSI
+            || pin == PIN_FACTORY) {
+            return true;
+        }
+
+        for (byte i = 0; i < ROWS; i++) {
+            if (pin == _rowPins[i]) {
+                return true;
+            }
+        }
+
+        for (byte i = 0; i < COLS; i++) {
+            if (pin == _colPins[i]) {
+                return true;
+            }
+        }
+
+        return false;
+    };
+
     byte version = initReader(PIN_RFID_RST);
-    if ((version == 0x00 || version == 0xFF) && PIN_RFID_RST_FALLBACK != PIN_RFID_RST) {
+    const bool canTryFallback = (PIN_RFID_RST_FALLBACK >= 0)
+        && (PIN_RFID_RST_FALLBACK != PIN_RFID_RST)
+        && !isReservedOrConflictingPin(PIN_RFID_RST_FALLBACK);
+
+    if ((version == 0x00 || version == 0xFF) && canTryFallback) {
         Serial.println("[AUTH] RFID not detected on primary RST pin, trying fallback...");
         version = initReader(PIN_RFID_RST_FALLBACK);
         if (version != 0x00 && version != 0xFF) {
             _activeRfidRstPin = PIN_RFID_RST_FALLBACK;
         }
+    } else if ((version == 0x00 || version == 0xFF)
+        && (PIN_RFID_RST_FALLBACK >= 0)
+        && (PIN_RFID_RST_FALLBACK != PIN_RFID_RST)
+        && isReservedOrConflictingPin(PIN_RFID_RST_FALLBACK)) {
+        Serial.print("[AUTH][WARN] RFID fallback RST pin conflicts with existing mapping: GPIO");
+        Serial.println(PIN_RFID_RST_FALLBACK);
     }
 
     if (version == 0x00 || version == 0xFF) {
@@ -96,6 +135,7 @@ void AuthHandler::init() {
         Serial.println(version, HEX);
         Serial.print("[AUTH] RFID RST pin active: ");
         Serial.println(_activeRfidRstPin);
+        Serial.println("[AUTH] RFID antenna gain set to MAX");
     }
 
     pinMode(PIN_FACTORY, INPUT_PULLUP);

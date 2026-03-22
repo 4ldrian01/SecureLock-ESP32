@@ -6,7 +6,7 @@
  * PURPOSE: Handles multi-factor authentication (RFID + Keypad + Duress)
  * 
  * HARDWARE:
- *   - RFID RC522 (SPI): SS=32, SCK=33, MOSI=25, MISO=26, RST=4
+ *   - RFID RC522 (SPI): SS=5, SCK=18, MOSI=25, MISO=19, RST=4
  *   - Keypad 4x4 (safe scan): Rows[34,35,39,36], Cols[16,17,21,23] (16=RX2, 17=TX2)
  *   - Factory Reset: GPIO 0 (BOOT button - long press)
  * 
@@ -111,7 +111,11 @@ private:
     // Hardware pins
     static const int PIN_RFID_SS = SECURELOCK_PIN_RFID_SS;
     static const int PIN_RFID_RST = SECURELOCK_PIN_RFID_RST;
-    static const int PIN_RFID_RST_FALLBACK = 21;  // Legacy wiring fallback
+#ifdef SECURELOCK_PIN_RFID_RST_FALLBACK
+    static const int PIN_RFID_RST_FALLBACK = SECURELOCK_PIN_RFID_RST_FALLBACK;
+#else
+    static const int PIN_RFID_RST_FALLBACK = -1;  // Disabled unless explicitly configured
+#endif
     static const int PIN_FACTORY = SECURELOCK_PIN_BOOT;
     
     // Keypad configuration
@@ -141,7 +145,7 @@ private:
     
     // Factory reset timing
     static const unsigned long FACTORY_RESET_TIME = 10000;  // 10 seconds
-    static const unsigned long RFID_COOLDOWN_MS = 5000;     // 5 seconds
+    static const unsigned long RFID_COOLDOWN_MS = 1200;     // 1.2 seconds
     static const unsigned long KEYPAD_MIN_KEY_INTERVAL_MS = 140;
     static const unsigned long KEYPAD_NOISE_WINDOW_MS = 2000;
     static const int KEYPAD_NOISE_THRESHOLD = 12;

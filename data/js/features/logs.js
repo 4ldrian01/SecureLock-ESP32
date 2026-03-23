@@ -76,6 +76,11 @@ export function createLogsFeature({ CONFIG, state, DOM, apiFetch, feedback }) {
     }
 
     async function loadLogs() {
+        if (state.logsRequestInFlight) {
+            return;
+        }
+
+        state.logsRequestInFlight = true;
         try {
             const data = await apiFetch(CONFIG.API.LOGS);
             const logs = Array.isArray(data.logs)
@@ -96,6 +101,8 @@ export function createLogsFeature({ CONFIG, state, DOM, apiFetch, feedback }) {
             if (DOM.logsPagination) {
                 DOM.logsPagination.hidden = true;
             }
+        } finally {
+            state.logsRequestInFlight = false;
         }
     }
 

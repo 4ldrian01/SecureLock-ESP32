@@ -11,7 +11,7 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             return false;
         }
 
-        if (!/^[A-Za-z ]+$/.test(trimmed)) {
+        if (!/^[A-Za-z .'-]+$/.test(trimmed)) {
             return false;
         }
 
@@ -20,15 +20,46 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
 
     function sanitizeAlphabeticName(value) {
         const cleaned = String(value || '')
-            .replace(/[^A-Za-z ]+/g, '')
+            .replace(/[^A-Za-z .'-]+/g, '')
             .replace(/\s{2,}/g, ' ')
             .replace(/^\s+/, '');
         return cleaned;
     }
 
+    function sanitizeUID(value) {
+        return String(value || '')
+            .toUpperCase()
+            .replace(/[^0-9A-F]/g, '');
+    }
+
+    function isValidUid(uid) {
+        return /^[0-9A-F]{8,20}$/.test(uid) && uid.length % 2 === 0;
+    }
+
+    function isWaitingScanText(value) {
+        return /waiting|tap|scan|card/i.test(String(value || ''));
+    }
+
     function isValidChatId(value) {
         const v = String(value || '').trim();
         return /^-?\d+$/.test(v);
+    }
+    function isDuplicateChatId(chatId, excludeUid = '') {
+        const normalizedChatId = String(chatId || '').trim();
+        if (!normalizedChatId) {
+            return false;
+        }
+
+        const normalizedExcludeUid = String(excludeUid || '').trim().toUpperCase();
+        return Object.entries(state.usersByUid || {}).some(([uid, user]) => {
+            const normalizedUid = String(uid || '').trim().toUpperCase();
+            if (normalizedUid && normalizedUid === normalizedExcludeUid) {
+                return false;
+            }
+
+            const userChatId = String(user?.telegramChatID || user?.chat_id || '').trim();
+            return userChatId && userChatId === normalizedChatId;
+        });
     }
 
     function bindNameInputRestrictions() {
@@ -42,6 +73,44 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
                 }
             });
         });
+
+        if (DOM.userRfid) {
+            DOM.userRfid.readOnly = true;
+
+            DOM.userRfid.addEventListener('keydown', (event) => {
+                event.preventDefault();
+            });
+
+            DOM.userRfid.addEventListener('paste', (event) => {
+                event.preventDefault();
+            });
+
+            DOM.userRfid.addEventListener('input', () => {
+                const sanitized = sanitizeUID(DOM.userRfid.value);
+                if (DOM.userRfid.value !== sanitized) {
+                    DOM.userRfid.value = sanitized;
+                }
+
+                if (sanitized.length > 0) {
+                    DOM.userRfid.classList.remove('input-error');
+                    setFormError('userRfidError', '');
+                }
+            });
+        }
+
+        if (DOM.editUserRfid) {
+            DOM.editUserRfid.addEventListener('input', () => {
+                const sanitized = sanitizeUID(DOM.editUserRfid.value);
+                if (DOM.editUserRfid.value !== sanitized) {
+                    DOM.editUserRfid.value = sanitized;
+                }
+
+                if (sanitized.length > 0) {
+                    DOM.editUserRfid.classList.remove('input-error');
+                    setFormError('editUserRfidError', '');
+                }
+            });
+        }
     }
 
     function updateAddUserSubmitButton() {
@@ -62,9 +131,14 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         updateAddUserSubmitButton();
     }
 
+    function getUsersEndpointNoCache() {
+        const separator = CONFIG.API.USERS.includes('?') ? '&' : '?';
+        return `${CONFIG.API.USERS}${separator}_ts=${Date.now()}`;
+    }
+
     async function loadUsers() {
         try {
-            const data = await apiFetch(CONFIG.API.USERS);
+            const data = await apiFetch(getUsersEndpointNoCache());
             const users = data.users || data || [];
 
             state.usersByUid = {};
@@ -161,7 +235,6 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         targetInput.classList.add('scanning');
         targetInput.classList.remove('scanned', 'input-error');
         let lastScanTimestamp = 0;
-        const sessionStartedAtMs = Date.now();
 
         const isEditFlow = targetInput === DOM.editUserRfid;
         const editingUid = String(state.editingUserId || '').trim().toUpperCase();
@@ -175,18 +248,11 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         const pollRfidOnce = async () => {
             try {
                 const data = await apiFetch(CONFIG.API.RFID_SCAN);
-                const uid = String(data?.uid || '').trim();
+                const uid = String(data?.uid || data?.lastUid || '').trim();
                 const scanTs = Number(data?.scanTimestamp || data?.lastScanTimestamp || data?.timestamp || 0);
-                const nowTs = Number(data?.timestamp || 0);
-                const scanAgeMs = Number.isFinite(nowTs) && Number.isFinite(scanTs) && nowTs >= scanTs
-                    ? (nowTs - scanTs)
-                    : Number.POSITIVE_INFINITY;
-                const sessionElapsedMs = Date.now() - sessionStartedAtMs;
-                const inCurrentSession = scanAgeMs <= (sessionElapsedMs + 1200);
                 const hasFreshScan = Boolean(data?.scanned)
                     && uid.length > 0
-                    && scanTs > lastScanTimestamp
-                    && inCurrentSession;
+                    && scanTs > lastScanTimestamp;
 
                 if (hasFreshScan) {
                     lastScanTimestamp = scanTs;
@@ -248,6 +314,20 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             }
         };
 
+        // Baseline from current scan state so we only accept scans that happen
+        // after this polling session starts.
+        (async () => {
+            try {
+                const baseline = await apiFetch(CONFIG.API.RFID_SCAN);
+                const baselineTs = Number(baseline?.scanTimestamp || baseline?.lastScanTimestamp || 0);
+                if (Number.isFinite(baselineTs) && baselineTs > 0) {
+                    lastScanTimestamp = baselineTs;
+                }
+            } catch {
+                // If baseline read fails, immediate polling below will still recover.
+            }
+        })();
+
         // Run once immediately so first tap is captured without waiting for interval tick.
         pollRfidOnce();
         state.rfidPollTimer = setInterval(pollRfidOnce, CONFIG.RFID_POLL_INTERVAL);
@@ -256,6 +336,8 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
     function openAddUserDialog() {
         DOM.addUserForm.reset();
         DOM.userRfid.value = '';
+        DOM.userRfid.readOnly = true;
+        DOM.userRfid.placeholder = 'Tap card on reader, then press Scan Card';
         DOM.userRfid.classList.remove('scanned', 'scanning', 'input-error');
         setFormError('userRfidError', '');
         setAddUserBusy(false);
@@ -274,6 +356,38 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         state.editingUserId = null;
     }
 
+    function handleResetUsers() {
+        feedback.showModal(
+            'Reset All Users',
+            'This will remove all users from device storage. Continue?',
+            'danger',
+            async () => {
+                try {
+                    const result = await apiFetch(CONFIG.API.USERS_RESET, {
+                        method: 'POST',
+                        body: JSON.stringify({ confirm: 'RESET_ALL_USERS' })
+                    });
+
+                    if (result?.success) {
+                        feedback.showToast('All users were reset successfully', 'success');
+                        await loadUsers();
+                        if (typeof onLogsUpdated === 'function') {
+                            onLogsUpdated();
+                        }
+                        return;
+                    }
+
+                    feedback.showToast(result?.message || 'Failed to reset users', 'error');
+                } catch (error) {
+                    feedback.showToast(
+                        error?.payload?.message || error?.message || 'Connection error - could not reset users',
+                        'error'
+                    );
+                }
+            }
+        );
+    }
+
     async function handleAddUser(e) {
         e.preventDefault();
 
@@ -286,7 +400,24 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         const name = DOM.userName.value.trim();
         const chatId = DOM.userChatId.value.trim();
         const backupPin = DOM.userBackupPin.value.trim();
-        const rfid = DOM.userRfid.value.trim();
+        const rawRfidInput = String(DOM.userRfid.value || '').trim();
+        let rfid = sanitizeUID(rawRfidInput);
+
+        // If polling missed a valid tap, recover from latest scan once before blocking submit.
+        if (!rfid || isWaitingScanText(rawRfidInput)) {
+            try {
+                const scan = await apiFetch(CONFIG.API.RFID_SCAN);
+                const scannedUid = sanitizeUID(scan?.uid || scan?.lastUid || '');
+                if (scan?.scanned && scannedUid.length > 0) {
+                    rfid = scannedUid;
+                    DOM.userRfid.value = scannedUid;
+                    DOM.userRfid.classList.remove('scanning', 'input-error');
+                    DOM.userRfid.classList.add('scanned');
+                }
+            } catch {
+                // Continue to normal validation and show user-facing form errors below.
+            }
+        }
 
         let valid = true;
         if (!name) {
@@ -302,14 +433,23 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         } else if (!isValidChatId(chatId)) {
             setFormError('userChatIdError', 'Telegram Chat ID must be numeric');
             valid = false;
+        } else if (isDuplicateChatId(chatId)) {
+            setFormError('userChatIdError', 'Telegram Chat ID already linked to another user');
+            valid = false;
         }
         if (!backupPin || !/^\d{4}$/.test(backupPin)) {
             setFormError('userBackupPinError', 'Backup PIN must be exactly 4 digits');
             valid = false;
         }
-        if (!rfid || rfid === 'Waiting for card tap...') {
-            setFormError('userRfidError', 'RFID tag is required — tap a card');
+        if (!rfid) {
+            setFormError('userRfidError', 'RFID tag is required - tap a card');
             DOM.userRfid.classList.add('input-error');
+            feedback.showToast('Scan an RFID card first.', 'error');
+            valid = false;
+        } else if (!isValidUid(rfid)) {
+            setFormError('userRfidError', 'RFID UID must be 8-20 hex characters (A-F, 0-9)');
+            DOM.userRfid.classList.add('input-error');
+            feedback.showToast('Invalid RFID format. Scan again or enter a valid UID.', 'error');
             valid = false;
         }
         if (!valid) return;
@@ -323,6 +463,7 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
                 method: 'POST',
                 body: JSON.stringify({
                     name,
+                    pin: backupPin,
                     cardUID: rfid,
                     uid: rfid,
                     telegramChatID: chatId,
@@ -336,7 +477,7 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             if (data.success) {
                 feedback.showToast('User added successfully', 'success');
                 closeAddUserDialog();
-                loadUsers();
+                await loadUsers();
                 if (typeof onLogsUpdated === 'function') onLogsUpdated();
             } else {
                 feedback.showToast(data.message || 'Failed to add user', 'error');
@@ -345,6 +486,15 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             if (Number(error?.status) === 400 && error?.payload?.field === 'name') {
                 setFormError('userNameError', error?.payload?.message || 'Name must contain letters only');
                 feedback.showToast(error?.payload?.message || 'Invalid name format', 'error');
+                return;
+            }
+
+            if (Number(error?.status) === 409 && error?.payload?.field === 'telegramChatID') {
+                setFormError(
+                    'userChatIdError',
+                    error?.payload?.message || 'Telegram Chat ID already linked to another user'
+                );
+                feedback.showToast('Telegram Chat ID already registered — use a different account', 'error');
                 return;
             }
 
@@ -362,7 +512,10 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
                 return;
             }
 
-            feedback.showToast('Connection error — could not add user', 'error');
+            feedback.showToast(
+                error?.payload?.message || error?.message || 'Connection error — could not add user',
+                'error'
+            );
         } finally {
             setAddUserBusy(false);
         }
@@ -375,7 +528,11 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         const name = DOM.editUserName.value.trim();
         const chatId = DOM.editUserChatId.value.trim();
         const backupPin = DOM.editUserBackupPin.value.trim();
-        const rfid = DOM.editUserRfid.value.trim();
+        const rfid = sanitizeUID(DOM.editUserRfid.value);
+
+        if (DOM.editUserRfid.value !== rfid) {
+            DOM.editUserRfid.value = rfid;
+        }
 
         let valid = true;
         if (!name) {
@@ -385,19 +542,26 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             setFormError('editUserNameError', 'Name must contain letters only');
             valid = false;
         }
-        if (!chatId) {
-            setFormError('editUserChatIdError', 'Telegram Chat ID is required');
-            valid = false;
-        } else if (!isValidChatId(chatId)) {
+        if (chatId && !isValidChatId(chatId)) {
             setFormError('editUserChatIdError', 'Telegram Chat ID must be numeric');
             valid = false;
+        } else if (chatId && isDuplicateChatId(chatId, state.editingUserId)) {
+            setFormError('editUserChatIdError', 'Telegram Chat ID already linked to another user');
+            valid = false;
         }
-        if (!backupPin || !/^\d{4}$/.test(backupPin)) {
+        if (backupPin && !/^\d{4}$/.test(backupPin)) {
             setFormError('editUserBackupPinError', 'Backup PIN must be exactly 4 digits');
+            valid = false;
+        } else if (!backupPin) {
+            setFormError('editUserBackupPinError', 'Backup PIN is required');
             valid = false;
         }
         if (!rfid) {
             setFormError('editUserRfidError', 'RFID tag is required');
+            DOM.editUserRfid.classList.add('input-error');
+            valid = false;
+        } else if (!isValidUid(rfid)) {
+            setFormError('editUserRfidError', 'RFID UID must be 8-20 hex characters (A-F, 0-9)');
             DOM.editUserRfid.classList.add('input-error');
             valid = false;
         }
@@ -409,8 +573,11 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             const body = {
                 uid: state.editingUserId,
                 name,
+                pin: backupPin,
                 rfid,
+                cardUID: rfid,
                 telegramChatID: chatId,
+                chat_id: chatId,
                 backupPIN: backupPin
             };
 
@@ -422,7 +589,7 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             if (data.success) {
                 feedback.showToast('User updated successfully', 'success');
                 closeEditUserDialog();
-                loadUsers();
+                await loadUsers();
                 if (typeof onLogsUpdated === 'function') onLogsUpdated();
             } else {
                 feedback.showToast(data.message || 'Failed to update user', 'error');
@@ -431,6 +598,15 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             if (Number(error?.status) === 400 && error?.payload?.field === 'name') {
                 setFormError('editUserNameError', error?.payload?.message || 'Name must contain letters only');
                 feedback.showToast(error?.payload?.message || 'Invalid name format', 'error');
+                return;
+            }
+
+            if (Number(error?.status) === 409 && error?.payload?.field === 'telegramChatID') {
+                setFormError(
+                    'editUserChatIdError',
+                    error?.payload?.message || 'Telegram Chat ID already linked to another user'
+                );
+                feedback.showToast('Telegram Chat ID already registered — use a different account', 'error');
                 return;
             }
 
@@ -448,7 +624,10 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
                 return;
             }
 
-            feedback.showToast('Connection error — could not update user', 'error');
+            feedback.showToast(
+                error?.payload?.message || error?.message || 'Connection error — could not update user',
+                'error'
+            );
         }
     }
 
@@ -498,6 +677,9 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         bindNameInputRestrictions();
 
         DOM.btnAddUser.addEventListener('click', openAddUserDialog);
+        if (DOM.btnResetUsers) {
+            DOM.btnResetUsers.addEventListener('click', handleResetUsers);
+        }
         DOM.btnCloseDialog.addEventListener('click', closeAddUserDialog);
         DOM.btnCancelAdd.addEventListener('click', closeAddUserDialog);
         DOM.addUserForm.addEventListener('submit', handleAddUser);

@@ -37,18 +37,19 @@ bool isFourDigitCode(const String& value) {
 
 AuthHandler::AuthHandler()
     : _rfid(PIN_RFID_SS, PIN_RFID_RST),
-      _keypad(makeKeymap(_keys), _rowPins, _colPins, ROWS, COLS),
       _pinBuffer(""),
       _lastRFIDUID(""),
     _lastRFIDScanMs(0),
       _rfidCooldownStartMs(0),
       _rfidCooldownDurationMs(0),
+            _lastRFIDRecoverAttemptMs(0),
       _lastAcceptedKeyMs(0),
       _keypadNoiseWindowStartMs(0),
       _keypadNoiseCount(0),
       _keypadMutedUntilMs(0),
       _keypadReadyAtMs(0),
       _keypadRuntimeSettlingStarted(false),
+            _heldKey('\0'),
       _activeRfidRstPin(PIN_RFID_RST),
     _rfidReady(false),
       _factoryPressStart(0),
@@ -165,7 +166,8 @@ void AuthHandler::init() {
 
     Serial.println("[AUTH] Keypad startup diagnostics:");
     for (byte i = 0; i < ROWS; i++) {
-        pinMode(_rowPins[i], INPUT_PULLUP);
+        // GPIO34-39 are input-only and do not support internal pull-up.
+        pinMode(_rowPins[i], (_rowPins[i] >= 34) ? INPUT : INPUT_PULLUP);
         Serial.print("  - Row R");
         Serial.print(i + 1);
         Serial.print(" GPIO");
@@ -194,7 +196,7 @@ void AuthHandler::update() {
 }
 
 AuthResult AuthHandler::checkRFID() {
-    if (!_rfidReady) {
+    if (!_rfidReady && !_attemptRFIDRecovery()) {
         return AUTH_NONE;
     }
 
@@ -228,6 +230,35 @@ AuthResult AuthHandler::checkRFID() {
     Serial.print("[AUTH] RFID denied: ");
     Serial.println(uid);
     return AUTH_DENIED;
+}
+
+bool AuthHandler::_attemptRFIDRecovery() {
+    const unsigned long now = millis();
+    if (_rfidReady) {
+        return true;
+    }
+
+    if (_lastRFIDRecoverAttemptMs > 0 && (now - _lastRFIDRecoverAttemptMs) < RFID_RECOVERY_INTERVAL_MS) {
+        return false;
+    }
+
+    _lastRFIDRecoverAttemptMs = now;
+
+    pinMode(_activeRfidRstPin, OUTPUT);
+    digitalWrite(_activeRfidRstPin, HIGH);
+    _rfid.PCD_Init(PIN_RFID_SS, _activeRfidRstPin);
+    _rfid.PCD_AntennaOn();
+    _rfid.PCD_SetAntennaGain(MFRC522::RxGain_max);
+
+    const byte version = _rfid.PCD_ReadRegister(_rfid.VersionReg);
+    if (version == 0x00 || version == 0xFF) {
+        return false;
+    }
+
+    _rfidReady = true;
+    Serial.print("[AUTH] RFID recovered on GPIO");
+    Serial.println(_activeRfidRstPin);
+    return true;
 }
 
 void AuthHandler::startRFIDCooldown(unsigned long cooldownMs) {
@@ -289,12 +320,23 @@ char AuthHandler::getKeypadKey() {
     }
 
     if (now < _keypadReadyAtMs) {
-        _keypad.getKey();
+        _scanKeypadRaw();
         return '\0';
     }
 
-    const char rawKey = _keypad.getKey();
-    if (rawKey == NO_KEY) {
+    const char rawKey = _scanKeypadRaw();
+    if (rawKey == '\0') {
+        _heldKey = '\0';
+        return '\0';
+    }
+
+    // Emit one key event per physical press; ignore repeats while held.
+    if (_heldKey == rawKey) {
+        return '\0';
+    }
+    _heldKey = rawKey;
+
+    if (rawKey == '\0') {
         return '\0';
     }
 
@@ -328,6 +370,53 @@ char AuthHandler::getKeypadKey() {
 
     _lastAcceptedKeyMs = now;
     return rawKey;
+}
+
+char AuthHandler::_scanKeypadRaw() {
+    // Drive one column LOW at a time and read rows.
+    // On some ESP32 boards row pins may be input-only without internal pull-ups,
+    // so we require a stable single-key detection across two scans.
+    auto scanOnce = [this]() -> char {
+        for (byte c = 0; c < COLS; c++) {
+            digitalWrite(_colPins[c], HIGH);
+        }
+
+        char detected = '\0';
+        int hits = 0;
+
+        for (byte c = 0; c < COLS; c++) {
+            digitalWrite(_colPins[c], LOW);
+            delayMicroseconds(25);
+
+            for (byte r = 0; r < ROWS; r++) {
+                if (digitalRead(_rowPins[r]) == LOW) {
+                    detected = _keys[r][c];
+                    hits++;
+                }
+            }
+
+            digitalWrite(_colPins[c], HIGH);
+        }
+
+        if (hits != 1) {
+            return '\0';
+        }
+
+        return detected;
+    };
+
+    const char first = scanOnce();
+    if (first == '\0') {
+        return '\0';
+    }
+
+    delayMicroseconds(600);
+    const char second = scanOnce();
+    if (second == first) {
+        return second;
+    }
+
+    return '\0';
 }
 
 void AuthHandler::appendToBuffer(char key) {
@@ -365,6 +454,12 @@ AuthResult AuthHandler::validatePIN(const String& pin) {
 }
 
 bool AuthHandler::addUser(const String& uid, const String& pin, const String& name) {
+    if (!_ensureFileSystemReady()) {
+        return false;
+    }
+
+    _loadUsersFromFS();
+
     String normalizedUid = _normalizeUID(uid);
     if (normalizedUid.length() == 0 || pin.length() == 0 || name.length() == 0) {
         return false;
@@ -385,7 +480,7 @@ bool AuthHandler::addUser(const String& uid, const String& pin, const String& na
         }
     } else {
         JsonArray users = _usersArray();
-        if (users.isNull() || users.size() >= MAX_USERS) {
+        if (users.isNull() || _userCount >= MAX_USERS) {
             return false;
         }
 
@@ -406,6 +501,10 @@ bool AuthHandler::addUser(const String& uid, const String& pin, const String& na
 }
 
 bool AuthHandler::removeUser(const String& uid) {
+    if (!_ensureFileSystemReady()) {
+        return false;
+    }
+
     String normalizedUid = _normalizeUID(uid);
     JsonArray users = _usersArray();
     if (users.isNull()) {
@@ -647,6 +746,10 @@ String AuthHandler::_extractUserUID(JsonObjectConst user) const {
 }
 
 bool AuthHandler::_loadUsersFromFS() {
+    if (!_ensureFileSystemReady()) {
+        return false;
+    }
+
     _usersDoc.clear();
 
     if (!LittleFS.exists(USERS_FILE)) {
@@ -673,44 +776,16 @@ bool AuthHandler::_loadUsersFromFS() {
         _saveUsersToFS();
     }
 
-    _userCount = 0;
-    JsonArray users = _usersArray();
-    for (JsonObject u : users) {
-        if (_userCount >= MAX_USERS) {
-            break;
-        }
-
-        JsonObjectConst userConst = u;
-        String uid = _extractUserUID(userConst);
-        if (uid.length() == 0) {
-            continue;
-        }
-
-        // Normalize persisted schema so lookups are deterministic.
-        u[USERS_CARD_UID_KEY] = uid;
-        u[USERS_UID_FALLBACK_KEY] = uid;
-
-        bool dup = false;
-        for (int i = 0; i < _userCount; i++) {
-            if (_userUIDs[i] == uid) {
-                dup = true;
-                break;
-            }
-        }
-
-        if (!dup) {
-            _userUIDs[_userCount++] = uid;
-        }
-    }
-
-    for (int i = _userCount; i < MAX_USERS; i++) {
-        _userUIDs[i] = "";
-    }
+    _compactUsers();
 
     return true;
 }
 
 bool AuthHandler::_saveUsersToFS() {
+    if (!_ensureFileSystemReady()) {
+        return false;
+    }
+
     File file = LittleFS.open(USERS_FILE, "w");
     if (!file) {
         return false;
@@ -744,4 +819,108 @@ JsonObject AuthHandler::_findUserByUID(const String& uid) {
     }
 
     return JsonObject();
+}
+
+bool AuthHandler::_ensureFileSystemReady() {
+    if (LittleFS.begin(false)) {
+        return true;
+    }
+
+    Serial.println("[AUTH][WARN] LittleFS not ready for auth storage");
+    return false;
+}
+
+bool AuthHandler::_compactUsers() {
+    if (!_usersDoc[USERS_KEY].is<JsonArray>()) {
+        _usersDoc[USERS_KEY] = JsonArray();
+    }
+
+    JsonArray users = _usersArray();
+    JsonDocument compactDoc;
+    JsonArray compactUsers = compactDoc[USERS_KEY].to<JsonArray>();
+
+    int compactCount = 0;
+    bool changed = false;
+
+    for (JsonObject u : users) {
+        if (compactCount >= MAX_USERS) {
+            changed = true;
+            continue;
+        }
+
+        JsonObjectConst userConst = u;
+        const String uid = _extractUserUID(userConst);
+        String pin = u[USERS_PIN_KEY] | "";
+        String name = u[USERS_NAME_KEY] | "";
+        String chat = u[USERS_CHAT_ID_KEY] | "";
+        String backup = u[USERS_BACKUP_PIN_KEY] | "";
+
+        pin.trim();
+        name.trim();
+        chat.trim();
+        backup.trim();
+
+        if (uid.length() == 0 || name.length() == 0 || !isFourDigitCode(pin)) {
+            changed = true;
+            continue;
+        }
+
+        bool duplicate = false;
+        for (int i = 0; i < compactCount; i++) {
+            if (_userUIDs[i] == uid) {
+                duplicate = true;
+                break;
+            }
+        }
+
+        if (duplicate) {
+            changed = true;
+            continue;
+        }
+
+        JsonObject nu = compactUsers.add<JsonObject>();
+        nu[USERS_CARD_UID_KEY] = uid;
+        nu[USERS_UID_FALLBACK_KEY] = uid;
+        nu[USERS_NAME_KEY] = name;
+        nu[USERS_PIN_KEY] = pin;
+        if (u["type"].is<const char*>()) {
+            nu["type"] = u["type"].as<const char*>();
+        } else {
+            nu["type"] = "user";
+        }
+
+        if (chat.length() > 0) {
+            nu[USERS_CHAT_ID_KEY] = chat;
+        }
+
+        if (isFourDigitCode(backup)) {
+            nu[USERS_BACKUP_PIN_KEY] = backup;
+        }
+
+        _userUIDs[compactCount++] = uid;
+    }
+
+    for (int i = compactCount; i < MAX_USERS; i++) {
+        _userUIDs[i] = "";
+    }
+
+    const bool sizeDiffers = compactCount != static_cast<int>(users.size());
+    if (changed || sizeDiffers) {
+        _usersDoc.clear();
+        _usersDoc[USERS_KEY] = JsonArray();
+        JsonArray dst = _usersArray();
+        for (JsonObject srcUser : compactUsers) {
+            JsonObject du = dst.add<JsonObject>();
+            for (JsonPair kv : srcUser) {
+                du[kv.key().c_str()] = kv.value();
+            }
+        }
+
+        _saveUsersToFS();
+        Serial.print("[AUTH] users.json compacted. active users=");
+        Serial.println(compactCount);
+    }
+
+    _userCount = compactCount;
+    return true;
 }

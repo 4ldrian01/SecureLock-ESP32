@@ -14,6 +14,7 @@ export function createInitialState() {
         logsPage: 1,
         logsPageSize: 10,
         logsClearInFlight: false,
+        logsRequestInFlight: false,
         guestCode: null,
         guestExpiry: 0,
         guestTimer: null,

@@ -21,8 +21,8 @@ SecurityManager::SecurityManager()
       _buzzerStartTime(0),
       _buzzerState(false),
     _sirenMode(false),
-    _beepOnDuration(60),
-    _beepOffDuration(100),
+    _beepOnDuration(28),
+    _beepOffDuration(45),
     _lastFeedbackBeepMs(0)
 {
 }
@@ -133,16 +133,8 @@ void SecurityManager::beep(int count) {
         return;
     }
 
-    if (count == 1) {
-        _beepOnDuration = 45;
-        _beepOffDuration = 70;
-    } else if (count == 2) {
-        _beepOnDuration = 70;
-        _beepOffDuration = 100;
-    } else {
-        _beepOnDuration = 95;
-        _beepOffDuration = 130;
-    }
+    _beepOnDuration = 28;
+    _beepOffDuration = 45;
     
     _beepCount = count;
     _currentBeep = 0;

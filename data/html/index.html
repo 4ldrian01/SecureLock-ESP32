@@ -167,6 +167,9 @@
                         </svg>
                         User Management
                     </h2>
+                    <button type="button" class="btn-clear-logs" id="btnResetUsers" aria-label="Reset all users from storage">
+                        Reset Users
+                    </button>
                     <button type="button" class="btn-add-user" id="btnAddUser" aria-label="Add new user">
                         <svg viewBox="0 0 24 24" aria-hidden="true">
                             <path d="M15 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm-9-2V7H4v3H1v2h3v3h2v-3h3v-2H6zm9 4c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
@@ -389,7 +392,7 @@
                         autocomplete="off"
                         required
                     />
-                    <span class="form-helper">User receives 6-digit OTP on this chat ID</span>
+                    <span class="form-helper">User receives 4-digit OTP on this chat ID</span>
                     <span class="form-error" id="userChatIdError"></span>
                 </div>
 

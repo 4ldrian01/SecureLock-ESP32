@@ -74,7 +74,7 @@ private:
     // Timing constants
     static const unsigned long SIREN_PULSE = 180;        // ms per siren pulse
     static const unsigned long VIBE_DEBOUNCE = 35;       // ms edge debounce
-    static const unsigned long FEEDBACK_BEEP_COOLDOWN_MS = 90;
+    static const unsigned long FEEDBACK_BEEP_COOLDOWN_MS = 250;
     
     // State variables
     bool _alarming;

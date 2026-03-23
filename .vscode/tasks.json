@@ -82,6 +82,29 @@
       "problemMatcher": []
     },
     {
+      "label": "PlatformIO: Monitor (Smart Filter)",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "scripts/monitor_smart_filter.sh"
+      ],
+      "windows": {
+        "command": "${env:USERPROFILE}\\.platformio\\penv\\Scripts\\pio.exe",
+        "args": [
+          "device",
+          "monitor",
+          "-b",
+          "115200",
+          "-f",
+          "direct"
+        ]
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
       "label": "platformio run --target uploadfs",
       "type": "shell",
       "command": "${env:HOME}/.platformio/penv/bin/pio",
@@ -93,6 +116,24 @@
         "--target",
         "uploadfs"
       ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "PlatformIO: Deploy All (Safe)",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "scripts/deploy_safe.sh"
+      ],
+      "windows": {
+        "command": "${env:USERPROFILE}\\.platformio\\penv\\Scripts\\pio.exe",
+        "args": [
+          "run"
+        ]
+      },
       "options": {
         "cwd": "${workspaceFolder}"
       },

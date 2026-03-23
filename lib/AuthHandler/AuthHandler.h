@@ -46,7 +46,6 @@
 
 #include <Arduino.h>
 #include <MFRC522.h>
-#include <Keypad.h>
 #include <ArduinoJson.h>
 #include "hardware_pins.h"
 
@@ -145,16 +144,16 @@ private:
     
     // Factory reset timing
     static const unsigned long FACTORY_RESET_TIME = 10000;  // 10 seconds
-    static const unsigned long RFID_COOLDOWN_MS = 1200;     // 1.2 seconds
-    static const unsigned long KEYPAD_MIN_KEY_INTERVAL_MS = 140;
+    static const unsigned long RFID_COOLDOWN_MS = 450;      // Fast re-detect while still debouncing held cards
+    static const unsigned long RFID_RECOVERY_INTERVAL_MS = 1500;
+    static const unsigned long KEYPAD_MIN_KEY_INTERVAL_MS = 60;
     static const unsigned long KEYPAD_NOISE_WINDOW_MS = 2000;
-    static const int KEYPAD_NOISE_THRESHOLD = 12;
+    static const int KEYPAD_NOISE_THRESHOLD = 20;
     static const unsigned long KEYPAD_MUTE_DURATION_MS = 3000;
-    static const unsigned long KEYPAD_STARTUP_SETTLE_MS = 2500;
+    static const unsigned long KEYPAD_STARTUP_SETTLE_MS = 600;
     
     // Hardware objects
     MFRC522 _rfid;
-    Keypad _keypad;
     JsonDocument _usersDoc;
     
     // State variables
@@ -163,12 +162,14 @@ private:
     unsigned long _lastRFIDScanMs;
     unsigned long _rfidCooldownStartMs;
     unsigned long _rfidCooldownDurationMs;
+    unsigned long _lastRFIDRecoverAttemptMs;
     unsigned long _lastAcceptedKeyMs;
     unsigned long _keypadNoiseWindowStartMs;
     int _keypadNoiseCount;
     unsigned long _keypadMutedUntilMs;
     unsigned long _keypadReadyAtMs;
     bool _keypadRuntimeSettlingStarted;
+    char _heldKey;
     int _activeRfidRstPin;
     bool _rfidReady;
     unsigned long _factoryPressStart;
@@ -176,6 +177,7 @@ private:
     
     // Private methods
     String _readRFIDUID();
+    bool _attemptRFIDRecovery();
     bool _validateStoredPIN(const String& pin);
     String _uidToString(byte* uid, byte size);
     String _normalizeUID(const String& uid) const;
@@ -184,6 +186,9 @@ private:
     bool _saveUsersToFS();
     JsonArray _usersArray();
     JsonObject _findUserByUID(const String& uid);
+    bool _ensureFileSystemReady();
+    bool _compactUsers();
+    char _scanKeypadRaw();
     
     // User tracking (UIDs of registered users for iteration)
     static const int MAX_USERS = 20;

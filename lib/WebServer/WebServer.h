@@ -113,6 +113,7 @@ private:
     void _handleAPIAddUser(AsyncWebServerRequest* request, uint8_t* data, size_t len);
     void _handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data, size_t len);
     void _handleAPIDeleteUser(AsyncWebServerRequest* request);
+    void _handleAPIResetUsers(AsyncWebServerRequest* request, uint8_t* data, size_t len);
     void _handleAPILogs(AsyncWebServerRequest* request);
     void _handleAPIClearLogs(AsyncWebServerRequest* request);
     void _handleAPIRfidScan(AsyncWebServerRequest* request);
@@ -125,8 +126,11 @@ private:
     String _getMimeType(const String& filename);
     void _sendJSON(AsyncWebServerRequest* request, int code, const JsonDocument& doc);
     void _addCORSHeaders(AsyncWebServerResponse* response);
+    void _addNoCacheHeaders(AsyncWebServerResponse* response);
     String _generateGuestCode();
     unsigned long _remainingCooldownMs(unsigned long lastActionMs, unsigned long cooldownMs) const;
+    bool _syncUsersFileFromAuth(JsonDocument* responseDoc = nullptr);
+    void _collectUsersStorageStats(int* rawCount, int* uniqueCount, int* invalidCount, int* duplicateCount);
     void _cleanupGuestUsers();
     void _expireGuestCodeIfNeeded();
 };

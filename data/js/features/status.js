@@ -1,4 +1,7 @@
 export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, onLogsUpdated }) {
+    let lastDiagnosticsFetchMs = 0;
+    let lastDiagnosticsText = 'Diagnostics: initializing...';
+
     function setConnectionState(online) {
         state.connected = online;
         DOM.statusBadge.dataset.status = online ? 'online' : 'offline';
@@ -193,20 +196,31 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
 
             if (DOM.diagStatus) {
                 try {
-                    const diag = await apiFetch(CONFIG.API.DIAGNOSTICS);
-                    const rfidText = diag.rfidReady ? 'RFID OK' : 'RFID WAIT';
-                    const keypadText = diag.keypadReady
-                        ? (diag.keypadMuted ? `KEYPAD MUTED ${Math.ceil((Number(diag.keypadMuteRemainingMs) || 0) / 1000)}s` : 'KEYPAD OK')
-                        : 'KEYPAD INIT';
-                    const keyText = diag.keypadLastKey ? `Last key: ${diag.keypadLastKey}` : 'Last key: -';
-                    const tgAge = state.telegramLastCommandAgeMs >= 0
-                        ? `${Math.ceil(state.telegramLastCommandAgeMs / 1000)}s`
-                        : '-';
-                    const tgCmd = state.telegramLastCommandText
-                        ? `${state.telegramLastCommandRole || 'user'}:${state.telegramLastCommandText}(${state.telegramLastCommandResult || 'ok'})`
-                        : 'none';
-                    const tgText = `TG ${state.telegramLastPollDurationMs}ms@${state.telegramPollIntervalMs}ms, cmd ${tgAge}, q${state.telegramPendingApprox}, e${state.telegramPollErrors}, last ${tgCmd}`;
-                    DOM.diagStatus.textContent = `Diagnostics: ${rfidText} • ${keypadText} • ${keyText} • ${tgText}`;
+                    const now = Date.now();
+                    if ((now - lastDiagnosticsFetchMs) >= Number(CONFIG.DIAGNOSTICS_INTERVAL || 3000)) {
+                        const diag = await apiFetch(CONFIG.API.DIAGNOSTICS);
+                        const rfidText = diag.rfidReady ? 'RFID OK' : 'RFID WAIT';
+                        const keypadText = diag.keypadReady
+                            ? (diag.keypadMuted ? `KEYPAD MUTED ${Math.ceil((Number(diag.keypadMuteRemainingMs) || 0) / 1000)}s` : 'KEYPAD OK')
+                            : 'KEYPAD INIT';
+                        const keyText = diag.keypadLastKey ? `Last key: ${diag.keypadLastKey}` : 'Last key: -';
+                        const tgAge = state.telegramLastCommandAgeMs >= 0
+                            ? `${Math.ceil(state.telegramLastCommandAgeMs / 1000)}s`
+                            : '-';
+                        const tgCmd = state.telegramLastCommandText
+                            ? `${state.telegramLastCommandRole || 'user'}:${state.telegramLastCommandText}(${state.telegramLastCommandResult || 'ok'})`
+                            : 'none';
+                        const tgText = `TG ${state.telegramLastPollDurationMs}ms@${state.telegramPollIntervalMs}ms, cmd ${tgAge}, q${state.telegramPendingApprox}, e${state.telegramPollErrors}, last ${tgCmd}`;
+                        const activeUsers = Number(diag.activeUsers || 0);
+                        const rawUsers = Number(diag.rawUsers || 0);
+                        const badUsers = Number(diag.invalidUsers || 0) + Number(diag.duplicateUsers || 0);
+                        const usersFlag = diag.usersStorageMismatch ? `MISMATCH(${badUsers})` : 'OK';
+                        const usersText = `USERS ${activeUsers}/${rawUsers} ${usersFlag}`;
+                        lastDiagnosticsText = `Diagnostics: ${rfidText} • ${keypadText} • ${keyText} • ${usersText} • ${tgText}`;
+                        lastDiagnosticsFetchMs = now;
+                    }
+
+                    DOM.diagStatus.textContent = lastDiagnosticsText;
                 } catch {
                     DOM.diagStatus.textContent = 'Diagnostics: unavailable';
                 }

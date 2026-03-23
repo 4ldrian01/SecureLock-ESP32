@@ -21,6 +21,7 @@ export function getDOM() {
 
         usersGrid: document.getElementById('usersGrid'),
         btnAddUser: document.getElementById('btnAddUser'),
+        btnResetUsers: document.getElementById('btnResetUsers'),
 
         modalOverlay: document.getElementById('modalOverlay'),
         modalTitle: document.getElementById('modalTitle'),

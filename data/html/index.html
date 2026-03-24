@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="theme-color" content="#111827">
     <meta name="description" content="SecureLock ESP32 Smart Lock Dashboard - Secure Access Management">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     
@@ -20,7 +21,7 @@
     <link rel="stylesheet" href="/css/users.css">
     <link rel="stylesheet" href="/css/pagination.css">
 </head>
-<body>
+<body data-authenticated="false">
     <main class="dashboard">
         <!-- ===== Header Section ===== -->
         <header class="header">
@@ -36,9 +37,14 @@
                 </div>
             </div>
             
-            <div class="status-badge" id="statusBadge" data-status="offline" role="status" aria-live="polite">
-                <span class="status-indicator" aria-hidden="true"></span>
-                <span id="statusText">Connecting</span>
+            <div class="header-actions">
+                <div class="status-badge" id="statusBadge" data-status="offline" role="status" aria-live="polite">
+                    <span class="status-indicator" aria-hidden="true"></span>
+                    <span id="statusText">Connecting</span>
+                </div>
+                <button type="button" class="btn-logout" id="btnLogout" hidden>
+                    Logout
+                </button>
             </div>
         </header>
 
@@ -72,7 +78,7 @@
                 <div class="lock-status">
                     <h2 class="lock-status-label" id="lockStatusLabel">LOCKED</h2>
                     <p class="lock-status-sub" id="lockStatusSub">System Armed • Secure</p>
-                    <p class="lock-status-sub" id="diagStatus" style="font-size:0.82rem;opacity:0.85;">Diagnostics: initializing...</p>
+                    <p class="lock-status-sub diag-status" id="diagStatus">Diagnostics: initializing...</p>
                 </div>
                 
                 <!-- Emergency Override Button -->
@@ -259,8 +265,8 @@
                         name="editUserName"
                         class="form-input" 
                         placeholder="e.g., John Doe"
-                        pattern="[A-Za-z ]+"
-                        title="Name must contain letters only"
+                        pattern="[A-Za-z .'-]+"
+                        title="Name can include letters, spaces, apostrophes, dots, and hyphens"
                         maxlength="48"
                         required
                         autocomplete="name"
@@ -370,8 +376,8 @@
                         name="userName"
                         class="form-input" 
                         placeholder="e.g., Sarah Johnson"
-                        pattern="[A-Za-z ]+"
-                        title="Name must contain letters only"
+                        pattern="[A-Za-z .'-]+"
+                        title="Name can include letters, spaces, apostrophes, dots, and hyphens"
                         maxlength="48"
                         required
                         autocomplete="name"
@@ -464,6 +470,50 @@
         </span>
         <span class="toast-message" id="toastMessage">System Online & Ready</span>
     </output>
+
+    <!-- ===== Admin Login Overlay ===== -->
+    <aside
+        class="auth-overlay"
+        id="authOverlay"
+        data-visible="false"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="authTitle"
+    >
+        <div class="auth-card">
+            <h2 class="auth-title" id="authTitle">Admin Login Required</h2>
+            <p class="auth-subtitle">SecureLock dashboard is restricted to authorized admin only.</p>
+
+            <form class="auth-form" id="adminLoginForm" novalidate>
+                <div class="auth-field">
+                    <label for="adminLoginUsername">Username</label>
+                    <input
+                        type="text"
+                        id="adminLoginUsername"
+                        name="adminLoginUsername"
+                        autocomplete="username"
+                        required
+                    />
+                </div>
+
+                <div class="auth-field">
+                    <label for="adminLoginPassword">Password</label>
+                    <input
+                        type="password"
+                        id="adminLoginPassword"
+                        name="adminLoginPassword"
+                        autocomplete="current-password"
+                        required
+                    />
+                </div>
+
+                <p class="auth-error" id="adminLoginError" role="alert" aria-live="assertive"></p>
+                <p class="auth-lockout" id="adminLockoutMessage" aria-live="polite"></p>
+
+                <button type="submit" class="btn-auth-login" id="btnAdminLogin">Login</button>
+            </form>
+        </div>
+    </aside>
 
     <!-- JavaScript -->
     <script type="module" src="/js/main.js"></script>

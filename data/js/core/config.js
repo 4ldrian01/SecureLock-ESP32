@@ -8,13 +8,20 @@ export const CONFIG = {
     LOGS_PAGE_SIZE_DESKTOP: 10,
     TOAST_DURATION: 3500,
     EMERGENCY_COOLDOWN: 5,
-    GUEST_GENERATE_COOLDOWN: 300,
-    GUEST_CODE_EXPIRY: 300,
     RFID_POLL_INTERVAL: 120,
+    ADMIN_AUTH: {
+        USERNAME: 'admin',
+        // SHA-256 hash of the admin dashboard password.
+        // Current placeholder password is: CHANGE_ME_NOW
+        // Replace this hash before production use.
+        PASSWORD_SHA256: 'd1e47cfc5b8eeaee72789781cf13ccf57d6f133e16dc7ee478c65a346e465fd3',
+        SESSION_TTL_MS: 15 * 60 * 1000,
+        MAX_ATTEMPTS: 5,
+        LOCKOUT_MS: 5 * 60 * 1000
+    },
     API: {
         STATUS: '/api/status',
         UNLOCK: '/api/unlock',
-        GUEST_CODE: '/api/guest-code',
         USERS: '/api/users',
         USERS_RESET: '/api/users/reset',
         LOGS: '/api/logs',

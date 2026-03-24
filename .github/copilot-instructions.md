@@ -21,7 +21,7 @@ The codebase follows a **4-component modular architecture** where each component
 3. **AuthHandler** (`lib/AuthHandler/`) - Multi-factor authentication
    - RFID RC522 (SPI: SS=5, RST=4, SCK=18, MOSI=25, MISO=19)
    - 4x4 Matrix Keypad (Rows[34,35,39,36], Cols[16,17,21,23], where 16=RX2 and 17=TX2 on many boards)
-   - Duress code detection (9999 = silent alarm)
+   - Duress code detection (2580 = silent alarm)
    - Factory reset via GPIO 0 (BOOT button held 10s)
 
 4. **WebServer** (`lib/WebServer/`) - Network & API layer
@@ -141,7 +141,7 @@ Frontend (JavaScript) → API Endpoints → WebServer Component → Hardware Com
 - Sends real-time security alerts to admin
 - Vibration detection → Intrusion alert
 - Door tamper → Unauthorized access alert
-- Duress code (9999) → Silent alarm (appears normal to attacker)
+- Duress code (2580) → Silent alarm (appears normal to attacker)
 - Initialize after WiFi connection with `telegramClient.setInsecure()` for testing
 
 ## Common Pitfalls & Solutions
@@ -159,12 +159,12 @@ Frontend (JavaScript) → API Endpoints → WebServer Component → Hardware Com
 ## Key Files to Reference
 
 ### For Architecture Understanding
-- [ARCHITECTURE_SUMMARY.md](../ARCHITECTURE_SUMMARY.md) - Component diagram and design rationale
-- [IMPLEMENTATION_SUMMARY.md](../IMPLEMENTATION_SUMMARY.md) - API endpoints and integration details
+- `ARCHITECTURE_SUMMARY.md` (optional, if present) - Component diagram and design rationale
+- `IMPLEMENTATION_SUMMARY.md` (optional, if present) - API endpoints and integration details
 
 ### For Deployment
-- [DEPLOYMENT_GUIDE.md](../DEPLOYMENT_GUIDE.md) - Step-by-step production deployment
-- [QUICK_REFERENCE.txt](../QUICK_REFERENCE.txt) - Command cheat sheet
+- `DEPLOYMENT_GUIDE.md` (optional, if present) - Step-by-step production deployment
+- `QUICK_REFERENCE.txt` (optional, if present) - Command cheat sheet
 
 ### For Hardware Setup
 - [platformio.ini](../platformio.ini) - Lines 1-30 have complete GPIO pin mapping and feature list

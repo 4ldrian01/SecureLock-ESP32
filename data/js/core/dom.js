@@ -2,6 +2,15 @@ export function getDOM() {
     return {
         statusBadge: document.getElementById('statusBadge'),
         statusText: document.getElementById('statusText'),
+        btnLogout: document.getElementById('btnLogout'),
+
+        authOverlay: document.getElementById('authOverlay'),
+        adminLoginForm: document.getElementById('adminLoginForm'),
+        adminLoginUsername: document.getElementById('adminLoginUsername'),
+        adminLoginPassword: document.getElementById('adminLoginPassword'),
+        adminLoginError: document.getElementById('adminLoginError'),
+        adminLockoutMessage: document.getElementById('adminLockoutMessage'),
+        btnAdminLogin: document.getElementById('btnAdminLogin'),
 
         lockVisual: document.getElementById('lockVisual'),
         lockStatusLabel: document.getElementById('lockStatusLabel'),

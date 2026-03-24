@@ -8,6 +8,7 @@ export function createInitialState() {
         pollTimer: null,
         logsTimer: null,
         usersTimer: null,
+        usersByUid: {},
         lastUsersHash: '',
         lastLogsHash: '',
         allLogs: [],
@@ -38,6 +39,7 @@ export function createInitialState() {
         lockCountdownSeconds: 0,
         lockCountdownTimer: null,
         rfidPollTimer: null,
+        rfidPollSession: 0,
         editingUserId: null
     };
 }

@@ -1,9 +1,27 @@
 export async function apiFetch(url, options = {}) {
+    const method = options.method || 'GET';
+    const headers = {
+        'Content-Type': 'application/json',
+        ...(options.headers || {})
+    };
+
+    // Avoid forcing JSON content-type for FormData uploads.
+    if (typeof FormData !== 'undefined' && options.body instanceof FormData) {
+        delete headers['Content-Type'];
+    }
+
+    const controller = new AbortController();
+    const timeoutMs = Number(options.timeoutMs || 10000);
+    const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
+
     try {
         const response = await fetch(url, {
-            headers: { 'Content-Type': 'application/json' },
+            ...options,
+            method,
+            headers,
             cache: 'no-store',
-            ...options
+            credentials: 'same-origin',
+            signal: controller.signal
         });
 
         const contentType = response.headers.get('content-type') || '';
@@ -20,7 +38,17 @@ export async function apiFetch(url, options = {}) {
 
         return payload;
     } catch (error) {
-        console.error(`[API] ${options.method || 'GET'} ${url} failed:`, error.message);
+        if (error?.name === 'AbortError') {
+            const timeoutError = new Error('Request timed out');
+            timeoutError.status = 408;
+            timeoutError.payload = { message: 'Request timed out' };
+            console.error(`[API] ${method} ${url} failed:`, timeoutError.message);
+            throw timeoutError;
+        }
+
+        console.error(`[API] ${method} ${url} failed:`, error.message);
         throw error;
+    } finally {
+        clearTimeout(timeoutHandle);
     }
 }

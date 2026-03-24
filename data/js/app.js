@@ -3,6 +3,7 @@ import { createInitialState } from './core/state.js';
 import { getDOM } from './core/dom.js';
 import { apiFetch } from './core/api.js';
 import { createFeedback } from './ui/feedback.js';
+import { createAuthFeature } from './features/auth.js';
 import { createStatusFeature } from './features/status.js';
 import { createGuestFeature } from './features/guest.js';
 import { createLogsFeature } from './features/logs.js';
@@ -40,14 +41,61 @@ export function initApp() {
         onLogsUpdated: logsFeature.loadLogs
     });
 
-    function bindEvents() {
-        feedback.bindCoreModalEvents();
+    let runtimeStarted = false;
+    let featureEventsBound = false;
+
+    function stopPollingLoops() {
+        if (state.pollTimer) {
+            clearInterval(state.pollTimer);
+            state.pollTimer = null;
+        }
+
+        if (state.logsTimer) {
+            clearInterval(state.logsTimer);
+            state.logsTimer = null;
+        }
+
+        if (state.usersTimer) {
+            clearInterval(state.usersTimer);
+            state.usersTimer = null;
+        }
+
+        if (state.guestTimer) {
+            clearInterval(state.guestTimer);
+            state.guestTimer = null;
+        }
+
+        if (state.emergencyCooldownTimer) {
+            clearInterval(state.emergencyCooldownTimer);
+            state.emergencyCooldownTimer = null;
+        }
+
+        if (state.lockCountdownTimer) {
+            clearInterval(state.lockCountdownTimer);
+            state.lockCountdownTimer = null;
+        }
+
+        if (state.rfidPollTimer) {
+            clearInterval(state.rfidPollTimer);
+            state.rfidPollTimer = null;
+        }
+    }
+
+    function bindFeatureEventsOnce(authFeature) {
+        if (featureEventsBound) {
+            return;
+        }
+
         statusFeature.bindEvents();
         guestFeature.bindEvents();
         logsFeature.bindEvents();
         usersFeature.bindEvents();
 
         document.addEventListener('visibilitychange', () => {
+            if (!runtimeStarted || !authFeature.isAuthenticated()) {
+                return;
+            }
+
             if (!document.hidden) {
                 statusFeature.pollStatus().then((data) => {
                     if (data) {
@@ -58,6 +106,12 @@ export function initApp() {
                 usersFeature.loadUsers();
             }
         });
+
+        featureEventsBound = true;
+    }
+
+    function bindEvents() {
+        feedback.bindCoreModalEvents();
     }
 
     function startPollingLoops() {
@@ -86,12 +140,14 @@ export function initApp() {
         }
     }
 
-    function init() {
-        console.log('[SecureLock] Dashboard modular app initializing...');
+    function startProtectedRuntime(authFeature) {
+        if (runtimeStarted) {
+            return;
+        }
 
-        logsFeature.initializePageSize();
-        bindEvents();
+        bindFeatureEventsOnce(authFeature);
 
+        runtimeStarted = true;
         statusFeature.updateEmergencyButton();
         usersFeature.updateAddUserSubmitButton();
 
@@ -104,6 +160,36 @@ export function initApp() {
         usersFeature.loadUsers();
 
         startPollingLoops();
+    }
+
+    function stopProtectedRuntime() {
+        runtimeStarted = false;
+        stopPollingLoops();
+
+        state.connected = false;
+        DOM.statusBadge.dataset.status = 'offline';
+        DOM.statusText.textContent = 'Locked';
+    }
+
+    const authFeature = createAuthFeature({
+        CONFIG,
+        DOM,
+        feedback,
+        onAuthenticated: () => {
+            startProtectedRuntime(authFeature);
+        },
+        onLogout: () => {
+            stopProtectedRuntime();
+        }
+    });
+
+    function init() {
+        console.log('[SecureLock] Dashboard modular app initializing...');
+
+        logsFeature.initializePageSize();
+        bindEvents();
+        authFeature.bindEvents();
+        authFeature.initialize();
 
         console.log('[SecureLock] Dashboard modular app ready');
     }

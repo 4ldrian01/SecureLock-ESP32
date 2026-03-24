@@ -193,10 +193,7 @@ WebServer::WebServer(LockManager* lockManager, SecurityManager* securityManager,
       _server(80),
       _wifiConnected(false),
       _ipAddress(""),
-      _guestCode(""),
-            _guestCodeExpiry(0),
-            _lastEmergencyUnlockMs(0),
-        _lastGuestCodeRequestMs(0)
+    _lastEmergencyUnlockMs(0)
 {
 }
 
@@ -223,7 +220,7 @@ void WebServer::init(const char* ssid, const char* password) {
 }
 
 void WebServer::update() {
-    _expireGuestCodeIfNeeded();
+    // Async server path - no periodic web-only tasks required here.
 }
 
 /**
@@ -671,8 +668,6 @@ void WebServer::_handleNotFound(AsyncWebServerRequest* request) {
  * Return system status as JSON
  */
 void WebServer::_handleAPIStatus(AsyncWebServerRequest* request) {
-    _expireGuestCodeIfNeeded();
-
     JsonDocument doc;
     
     // Lock status
@@ -682,7 +677,6 @@ void WebServer::_handleAPIStatus(AsyncWebServerRequest* request) {
     doc["autoLockDelayMs"] = _lock->getAutoLockDelayMs();
     doc["unlockRemainingMs"] = _lock->getRemainingAutoLockMs();
     doc["emergencyCooldownRemainingMs"] = _remainingCooldownMs(_lastEmergencyUnlockMs, EMERGENCY_COOLDOWN_MS);
-    doc["guestCodeCooldownRemainingMs"] = _remainingCooldownMs(_lastGuestCodeRequestMs, GUEST_CODE_COOLDOWN_MS);
     
     // Security status
     doc["alarm"] = _security->isAlarming();
@@ -1587,17 +1581,6 @@ void WebServer::_addNoCacheHeaders(AsyncWebServerResponse* response) {
     response->addHeader("Expires", "0");
 }
 
-/**
- * Generate random guest code (4-digit PIN)
- */
-String WebServer::_generateGuestCode() {
-    String code = "";
-    for (int i = 0; i < 4; i++) {
-        code += String(random(0, 10));
-    }
-    return code;
-}
-
 bool WebServer::_syncUsersFileFromAuth(JsonDocument* responseDoc) {
     // Read current users.json (if available) so we can preserve non-auth metadata (e.g., settings).
     JsonDocument currentDoc;
@@ -1824,25 +1807,6 @@ void WebServer::_cleanupGuestUsers() {
         Serial.print("[WEB] Cleaned stale guest auth entries: ");
         Serial.println(guestCount);
     }
-}
-
-void WebServer::_expireGuestCodeIfNeeded() {
-    if (_guestCode.isEmpty() || _guestCodeExpiry == 0) {
-        return;
-    }
-
-    const long remainingMs = static_cast<long>(_guestCodeExpiry - millis());
-    if (remainingMs > 0) {
-        return;
-    }
-
-    const String expiredGuestUid = "GUEST_" + _guestCode;
-    _auth->removeUser(expiredGuestUid);
-    _addLogEntry("System", "Guest Code Expired", "success");
-
-    _guestCode = "";
-    _guestCodeExpiry = 0;
-    Serial.println("[WEB] Guest code expired and was removed from auth storage");
 }
 
 /**

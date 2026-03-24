@@ -37,6 +37,7 @@ Desktop.ini
 
 # Security & Secrets (CRITICAL - Never commit credentials)
 include/secrets.h
+.env
 *.key
 *.pem
 *.crt

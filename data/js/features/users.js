@@ -208,13 +208,11 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
                     </div>
                 </div>
                 <div class="user-actions">
-                    <button class="btn-edit" title="Edit user" data-uid="${escapeHtml(user.cardUID || user.uid || '')}"
-                            onclick="window.__editUser('${escapeHtml(user.cardUID || user.uid || '')}')">
+                    <button class="btn-edit" title="Edit user" data-action="edit" data-uid="${escapeHtml(user.cardUID || user.uid || '')}">
                         <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
                     </button>
-                    ${isAdmin ? '' : `<button class="btn-delete" title="Delete user"
-                            data-uid="${escapeHtml(user.cardUID || user.uid || '')}"
-                            onclick="window.__deleteUser('${escapeHtml(user.cardUID || user.uid || '')}')">
+                    ${isAdmin ? '' : `<button class="btn-delete" title="Delete user" data-action="delete"
+                            data-uid="${escapeHtml(user.cardUID || user.uid || '')}">
                         <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
                     </button>`}
                 </div>
@@ -222,7 +220,74 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         }).join('');
     }
 
+    function handleDeleteUser(uid) {
+        feedback.showModal(
+            'Delete User',
+            'Are you sure you want to remove this user? This action cannot be undone.',
+            'danger',
+            async () => {
+                try {
+                    const data = await apiFetch(`${CONFIG.API.USERS}?uid=${encodeURIComponent(uid)}`, {
+                        method: 'DELETE'
+                    });
+                    if (data.success) {
+                        feedback.showToast('User deleted successfully', 'success');
+                        loadUsers();
+                        if (typeof onLogsUpdated === 'function') onLogsUpdated();
+                    } else {
+                        feedback.showToast(data.message || 'Failed to delete user', 'error');
+                    }
+                } catch {
+                    feedback.showToast('Connection error — could not delete user', 'error');
+                }
+            }
+        );
+    }
+
+    function handleEditUserRequest(uid) {
+        state.editingUserId = uid;
+        const key = String(uid || '').trim().toUpperCase();
+        const user = state.usersByUid?.[key];
+
+        DOM.editUserName.value = user?.name || '';
+        DOM.editUserChatId.value = user?.telegramChatID || '';
+        DOM.editUserBackupPin.value = user?.backupPIN || '';
+        DOM.editUserRfid.value = user?.cardUID || user?.uid || uid || '';
+
+        DOM.editUserRfid.classList.remove('input-error', 'scanned', 'scanning');
+        setFormError('editUserRfidError', '');
+
+        DOM.editUserModal.showModal();
+    }
+
+    function bindUsersGridActions() {
+        DOM.usersGrid.addEventListener('click', (event) => {
+            const actionButton = event.target.closest('button[data-action][data-uid]');
+            if (!actionButton) {
+                return;
+            }
+
+            const action = String(actionButton.dataset.action || '').trim();
+            const uid = String(actionButton.dataset.uid || '').trim();
+
+            if (!uid) {
+                return;
+            }
+
+            if (action === 'delete') {
+                handleDeleteUser(uid);
+                return;
+            }
+
+            if (action === 'edit') {
+                handleEditUserRequest(uid);
+            }
+        });
+    }
+
     function stopRfidPoll() {
+        state.rfidPollSession = Number(state.rfidPollSession || 0) + 1;
+
         if (state.rfidPollTimer) {
             clearInterval(state.rfidPollTimer);
             state.rfidPollTimer = null;
@@ -231,6 +296,7 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
 
     function startRfidPoll(targetInput) {
         stopRfidPoll();
+        const sessionId = Number(state.rfidPollSession || 0);
         targetInput.value = 'Waiting for card tap...';
         targetInput.classList.add('scanning');
         targetInput.classList.remove('scanned', 'input-error');
@@ -246,6 +312,10 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         }
 
         const pollRfidOnce = async () => {
+            if (sessionId !== Number(state.rfidPollSession || 0)) {
+                return;
+            }
+
             try {
                 const data = await apiFetch(CONFIG.API.RFID_SCAN);
                 const uid = String(data?.uid || data?.lastUid || '').trim();
@@ -326,11 +396,30 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             } catch {
                 // If baseline read fails, immediate polling below will still recover.
             }
-        })();
 
-        // Run once immediately so first tap is captured without waiting for interval tick.
-        pollRfidOnce();
-        state.rfidPollTimer = setInterval(pollRfidOnce, CONFIG.RFID_POLL_INTERVAL);
+            if (sessionId !== Number(state.rfidPollSession || 0)) {
+                return;
+            }
+
+            // Run once immediately after baseline so stale scans don't auto-fill.
+            await pollRfidOnce();
+
+            if (sessionId !== Number(state.rfidPollSession || 0)) {
+                return;
+            }
+
+            state.rfidPollTimer = setInterval(() => {
+                if (sessionId !== Number(state.rfidPollSession || 0)) {
+                    if (state.rfidPollTimer) {
+                        clearInterval(state.rfidPollTimer);
+                        state.rfidPollTimer = null;
+                    }
+                    return;
+                }
+
+                pollRfidOnce();
+            }, CONFIG.RFID_POLL_INTERVAL);
+        })();
     }
 
     function openAddUserDialog() {
@@ -424,7 +513,7 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             setFormError('userNameError', 'Name is required');
             valid = false;
         } else if (!isAlphabeticName(name)) {
-            setFormError('userNameError', 'Name must contain letters only');
+            setFormError('userNameError', 'Name can include letters, spaces, apostrophes, dots, and hyphens only');
             valid = false;
         }
         if (!chatId) {
@@ -484,7 +573,7 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             }
         } catch (error) {
             if (Number(error?.status) === 400 && error?.payload?.field === 'name') {
-                setFormError('userNameError', error?.payload?.message || 'Name must contain letters only');
+                setFormError('userNameError', error?.payload?.message || 'Name can include letters, spaces, apostrophes, dots, and hyphens only');
                 feedback.showToast(error?.payload?.message || 'Invalid name format', 'error');
                 return;
             }
@@ -539,7 +628,7 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             setFormError('editUserNameError', 'Name is required');
             valid = false;
         } else if (!isAlphabeticName(name)) {
-            setFormError('editUserNameError', 'Name must contain letters only');
+            setFormError('editUserNameError', 'Name can include letters, spaces, apostrophes, dots, and hyphens only');
             valid = false;
         }
         if (chatId && !isValidChatId(chatId)) {
@@ -596,7 +685,7 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             }
         } catch (error) {
             if (Number(error?.status) === 400 && error?.payload?.field === 'name') {
-                setFormError('editUserNameError', error?.payload?.message || 'Name must contain letters only');
+                setFormError('editUserNameError', error?.payload?.message || 'Name can include letters, spaces, apostrophes, dots, and hyphens only');
                 feedback.showToast(error?.payload?.message || 'Invalid name format', 'error');
                 return;
             }
@@ -631,50 +720,9 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         }
     }
 
-    function bindWindowActions() {
-        window.__deleteUser = function (uid) {
-            feedback.showModal(
-                'Delete User',
-                'Are you sure you want to remove this user? This action cannot be undone.',
-                'danger',
-                async () => {
-                    try {
-                        const data = await apiFetch(`${CONFIG.API.USERS}?uid=${encodeURIComponent(uid)}`, {
-                            method: 'DELETE'
-                        });
-                        if (data.success) {
-                            feedback.showToast('User deleted successfully', 'success');
-                            loadUsers();
-                            if (typeof onLogsUpdated === 'function') onLogsUpdated();
-                        } else {
-                            feedback.showToast(data.message || 'Failed to delete user', 'error');
-                        }
-                    } catch {
-                        feedback.showToast('Connection error — could not delete user', 'error');
-                    }
-                }
-            );
-        };
-
-        window.__editUser = function (uid) {
-            state.editingUserId = uid;
-            const key = String(uid || '').trim().toUpperCase();
-            const user = state.usersByUid?.[key];
-
-            DOM.editUserName.value = user?.name || '';
-            DOM.editUserChatId.value = user?.telegramChatID || '';
-            DOM.editUserBackupPin.value = user?.backupPIN || '';
-            DOM.editUserRfid.value = user?.cardUID || user?.uid || uid || '';
-
-            DOM.editUserRfid.classList.remove('input-error', 'scanned', 'scanning');
-            setFormError('editUserRfidError', '');
-
-            DOM.editUserModal.showModal();
-        };
-    }
-
     function bindEvents() {
         bindNameInputRestrictions();
+        bindUsersGridActions();
 
         DOM.btnAddUser.addEventListener('click', openAddUserDialog);
         if (DOM.btnResetUsers) {
@@ -698,7 +746,6 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             if (e.target === DOM.editUserModal) closeEditUserDialog();
         });
 
-        bindWindowActions();
     }
 
     return {

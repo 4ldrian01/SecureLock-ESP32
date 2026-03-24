@@ -22,7 +22,7 @@
  * API ENDPOINTS:
  *   GET    /api/status      → System status JSON
  *   POST   /api/unlock      → Remote unlock (emergency override)
- *   POST   /api/guest-code  → Generate temporary guest PIN (5-min)
+ *   POST   /api/guest-code  → Disabled (guest PIN is Telegram-managed)
  *   GET    /api/users       → List all registered users
  *   POST   /api/users       → Add new user (JSON body: name, pin(4-digit), uid)
  *   PUT    /api/users       → Edit existing user (JSON body: uid, name, pin(4-digit))
@@ -85,14 +85,10 @@ private:
     bool _wifiConnected;
     String _ipAddress;
     
-    // Guest code management
-    String _guestCode;
-    unsigned long _guestCodeExpiry;
+    // Emergency command management
     unsigned long _lastEmergencyUnlockMs;
-    unsigned long _lastGuestCodeRequestMs;
 
     static constexpr unsigned long EMERGENCY_COOLDOWN_MS = 5000;
-    static constexpr unsigned long GUEST_CODE_COOLDOWN_MS = 300000;
     
     // Initialization helpers
     void _initWiFi(const char* ssid, const char* password);
@@ -127,12 +123,10 @@ private:
     void _sendJSON(AsyncWebServerRequest* request, int code, const JsonDocument& doc);
     void _addCORSHeaders(AsyncWebServerResponse* response);
     void _addNoCacheHeaders(AsyncWebServerResponse* response);
-    String _generateGuestCode();
     unsigned long _remainingCooldownMs(unsigned long lastActionMs, unsigned long cooldownMs) const;
     bool _syncUsersFileFromAuth(JsonDocument* responseDoc = nullptr);
     void _collectUsersStorageStats(int* rawCount, int* uniqueCount, int* invalidCount, int* duplicateCount);
     void _cleanupGuestUsers();
-    void _expireGuestCodeIfNeeded();
 };
 
 #endif // WEB_SERVER_H

@@ -64,11 +64,7 @@ function Stop-StalePlatformIOMonitors {
     $candidates = Get-CimInstance Win32_Process | Where-Object {
         $_.CommandLine -and
         $_.CommandLine -match 'device\s+monitor' -and
-        (
-            $_.Name -match 'pio' -or
-            $_.Name -match 'python' -or
-            $_.CommandLine -match 'platformio'
-        )
+        ($_.Name -match 'pio|python' -or $_.CommandLine -match 'platformio')
     }
 
     foreach ($proc in $candidates) {

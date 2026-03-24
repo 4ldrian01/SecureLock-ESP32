@@ -8,18 +8,14 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    
+
     <title>SecureLock | Smart Lock Dashboard</title>
-    
+
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%233B82F6'%3E%3Cpath d='M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z'/%3E%3C/svg%3E">
-    
+
     <!-- Stylesheet -->
     <link rel="stylesheet" href="/css/style.css">
-    <link rel="stylesheet" href="/css/layout.css">
-    <link rel="stylesheet" href="/css/logs.css">
-    <link rel="stylesheet" href="/css/users.css">
-    <link rel="stylesheet" href="/css/pagination.css">
 </head>
 <body data-authenticated="false">
     <main class="dashboard">
@@ -36,7 +32,7 @@
                     <span class="brand-tagline">Internet of Things: Group - 7</span>
                 </div>
             </div>
-            
+
             <div class="header-actions">
                 <div class="status-badge" id="statusBadge" data-status="offline" role="status" aria-live="polite">
                     <span class="status-indicator" aria-hidden="true"></span>
@@ -56,15 +52,15 @@
                     <div class="lock-ring" aria-hidden="true"></div>
                     <svg class="lock-svg" viewBox="0 0 160 160" aria-hidden="true">
                         <!-- Lock Shackle (animated) -->
-                        <path 
-                            class="lock-shackle" 
+                        <path
+                            class="lock-shackle"
                             d="M50 65 L50 45 C50 28 65 15 80 15 C95 15 110 28 110 45 L110 65"
                         />
                         <!-- Lock Body -->
-                        <rect 
-                            class="lock-body" 
-                            x="35" y="65" 
-                            width="90" height="75" 
+                        <rect
+                            class="lock-body"
+                            x="35" y="65"
+                            width="90" height="75"
                             rx="12"
                         />
                         <!-- Keyhole Circle -->
@@ -73,18 +69,18 @@
                         <rect class="lock-keyhole" x="76" y="95" width="8" height="25" rx="2"/>
                     </svg>
                 </figure>
-                
+
                 <!-- Status Text -->
                 <div class="lock-status">
                     <h2 class="lock-status-label" id="lockStatusLabel">LOCKED</h2>
                     <p class="lock-status-sub" id="lockStatusSub">System Armed • Secure</p>
                     <p class="lock-status-sub diag-status" id="diagStatus">Diagnostics: initializing...</p>
                 </div>
-                
+
                 <!-- Emergency Override Button -->
-                <button 
-                    type="button" 
-                    class="btn-emergency" 
+                <button
+                    type="button"
+                    class="btn-emergency"
                     id="btnEmergency"
                     aria-describedby="emergencyDesc"
                 >
@@ -107,7 +103,7 @@
                         Guest Access
                     </h2>
                 </header>
-                
+
                 <!-- PIN Display -->
                 <div class="pin-display">
                     <output class="pin-code" id="pinCode" aria-live="polite">
@@ -118,7 +114,7 @@
                     </output>
                     <p class="pin-timer" id="pinTimer">No active code</p>
                 </div>
-                
+
                 <p class="pin-helper">Guest code is managed via Telegram command <strong>/guest_code</strong>.</p>
             </article>
         </section>
@@ -137,7 +133,7 @@
                         Clear Logs
                     </button>
                 </header>
-                
+
                 <!-- Logs Table -->
                 <div class="logs-table-wrapper">
                     <table class="logs-table" role="grid">
@@ -183,7 +179,7 @@
                         Add User
                     </button>
                 </header>
-                
+
                 <!-- Users Grid -->
                 <div class="users-grid" id="usersGrid" role="list">
                     <!-- Users populated dynamically from /api/users -->
@@ -209,12 +205,12 @@
     </footer>
 
     <!-- ===== Confirmation Modal ===== -->
-    <aside 
-        class="modal-overlay" 
-        id="modalOverlay" 
+    <aside
+        class="modal-overlay"
+        id="modalOverlay"
         data-visible="false"
-        role="dialog" 
-        aria-modal="true" 
+        role="dialog"
+        aria-modal="true"
         aria-labelledby="modalTitle"
         aria-describedby="modalMessage"
     >
@@ -240,8 +236,8 @@
     </aside>
 
     <!-- ===== Edit User Modal ===== -->
-    <dialog 
-        class="edit-user-dialog" 
+    <dialog
+        class="edit-user-dialog"
         id="editUserModal"
         aria-labelledby="editUserTitle"
     >
@@ -254,16 +250,16 @@
                     </svg>
                 </button>
             </div>
-            
+
             <form class="dialog-form" id="editUserForm" novalidate>
                 <!-- Input 1: Name -->
                 <div class="form-group">
                     <label for="editUserName" class="form-label">Full Name <span class="required">*</span></label>
-                    <input 
-                        type="text" 
-                        id="editUserName" 
+                    <input
+                        type="text"
+                        id="editUserName"
                         name="editUserName"
-                        class="form-input" 
+                        class="form-input"
                         placeholder="e.g., John Doe"
                         pattern="[A-Za-z .'-]+"
                         title="Name can include letters, spaces, apostrophes, dots, and hyphens"
@@ -309,16 +305,16 @@
                     <span class="form-helper">Used when user enters Offline Mode (#) after RFID scan</span>
                     <span class="form-error" id="editUserBackupPinError"></span>
                 </div>
-                
+
                 <!-- Input 4: RFID -->
                 <div class="form-group">
                     <label for="editUserRfid" class="form-label">RFID Tag ID <span class="required">*</span></label>
                     <div class="form-input-group">
-                        <input 
-                            type="text" 
-                            id="editUserRfid" 
+                        <input
+                            type="text"
+                            id="editUserRfid"
                             name="editUserRfid"
-                            class="form-input form-input-readonly" 
+                            class="form-input form-input-readonly"
                             placeholder="Current RFID tag..."
                             readonly
                             required
@@ -333,7 +329,7 @@
                     <span class="form-helper">Tap new RFID card to replace existing tag</span>
                     <span class="form-error" id="editUserRfidError"></span>
                 </div>
-                
+
                 <!-- Form Actions -->
                 <div class="dialog-actions">
                     <button type="button" class="btn-dialog-cancel" id="btnCancelEdit">
@@ -351,8 +347,8 @@
     </dialog>
 
     <!-- ===== Add User Modal ===== -->
-    <dialog 
-        class="add-user-dialog" 
+    <dialog
+        class="add-user-dialog"
         id="addUserModal"
         aria-labelledby="addUserTitle"
     >
@@ -365,16 +361,16 @@
                     </svg>
                 </button>
             </div>
-            
+
             <form class="dialog-form" id="addUserForm" novalidate>
                 <!-- Input 1: Name -->
                 <div class="form-group">
                     <label for="userName" class="form-label">Full Name <span class="required">*</span></label>
-                    <input 
-                        type="text" 
-                        id="userName" 
+                    <input
+                        type="text"
+                        id="userName"
                         name="userName"
-                        class="form-input" 
+                        class="form-input"
                         placeholder="e.g., Sarah Johnson"
                         pattern="[A-Za-z .'-]+"
                         title="Name can include letters, spaces, apostrophes, dots, and hyphens"
@@ -420,16 +416,16 @@
                     <span class="form-helper">Used when user enters Offline Mode (#) after RFID scan</span>
                     <span class="form-error" id="userBackupPinError"></span>
                 </div>
-                
+
                 <!-- Input 4: RFID -->
                 <div class="form-group">
                     <label for="userRfid" class="form-label">RFID Tag ID <span class="required">*</span></label>
                     <div class="form-input-group">
-                        <input 
-                            type="text" 
-                            id="userRfid" 
+                        <input
+                            type="text"
+                            id="userRfid"
                             name="userRfid"
-                            class="form-input form-input-readonly" 
+                            class="form-input form-input-readonly"
                             placeholder="Waiting for card tap..."
                             readonly
                             required
@@ -444,7 +440,7 @@
                     <span class="form-helper">Tap RFID card on reader to enroll</span>
                     <span class="form-error" id="userRfidError"></span>
                 </div>
-                
+
                 <!-- Form Actions -->
                 <div class="dialog-actions">
                     <button type="button" class="btn-dialog-cancel" id="btnCancelAdd">
@@ -516,6 +512,6 @@
     </aside>
 
     <!-- JavaScript -->
-    <script type="module" src="/js/main.js"></script>
+    <script type="module" src="/js/entry/main.js"></script>
 </body>
 </html>

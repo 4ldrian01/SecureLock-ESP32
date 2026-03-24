@@ -1,25 +1,31 @@
 export const CONFIG = {
-    POLL_INTERVAL: 1000,
-    LOGS_REFRESH_INTERVAL: 5000,
-    USERS_REFRESH_INTERVAL: 7000,
+    POLL_INTERVAL: 2500,
+    POLL_INTERVAL_HIDDEN: 7000,
+    POLL_INTERVAL_MAX: 15000,
+    POLL_BACKOFF_MULTIPLIER: 1.6,
+    LOGS_REFRESH_INTERVAL: 10000,
+    LOGS_REFRESH_INTERVAL_HIDDEN: 20000,
+    USERS_REFRESH_INTERVAL: 15000,
+    USERS_REFRESH_INTERVAL_HIDDEN: 30000,
     DIAGNOSTICS_INTERVAL: 3000,
     LOGS_PAGE_SIZE_MOBILE: 5,
     LOGS_PAGE_SIZE_TABLET: 8,
     LOGS_PAGE_SIZE_DESKTOP: 10,
     TOAST_DURATION: 3500,
     EMERGENCY_COOLDOWN: 5,
-    RFID_POLL_INTERVAL: 120,
+    RFID_POLL_INTERVAL: 400,
+    RFID_POLL_INTERVAL_HIDDEN: 1000,
+    RFID_POLL_MAX_INTERVAL: 2000,
+    AUTH_SESSION_KEY: 'securelock_admin_api_session_v2',
     ADMIN_AUTH: {
-        USERNAME: 'admin',
-        // SHA-256 hash of the admin dashboard password.
-        // Current placeholder password is: CHANGE_ME_NOW
-        // Replace this hash before production use.
-        PASSWORD_SHA256: 'd1e47cfc5b8eeaee72789781cf13ccf57d6f133e16dc7ee478c65a346e465fd3',
         SESSION_TTL_MS: 15 * 60 * 1000,
         MAX_ATTEMPTS: 5,
         LOCKOUT_MS: 5 * 60 * 1000
     },
     API: {
+        AUTH_LOGIN: '/api/auth/login',
+        AUTH_LOGOUT: '/api/auth/logout',
+        AUTH_STATUS: '/api/auth/status',
         STATUS: '/api/status',
         UNLOCK: '/api/unlock',
         USERS: '/api/users',

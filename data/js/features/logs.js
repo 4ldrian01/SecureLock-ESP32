@@ -1,6 +1,45 @@
 import { escapeHtml, formatLogTime } from '../core/helpers.js';
 
 export function createLogsFeature({ CONFIG, state, DOM, apiFetch, feedback }) {
+    function createLogSignature(log) {
+        return [
+            String(log?.epochMs || ''),
+            String(log?.time || ''),
+            String(log?.user || ''),
+            String(log?.method || ''),
+            String(log?.status || '')
+        ].join('|');
+    }
+
+    function createLogsCollectionSignature(logs) {
+        if (!Array.isArray(logs) || logs.length === 0) {
+            return '';
+        }
+
+        return logs.map(createLogSignature).join('||');
+    }
+
+    function buildLogRowHTML(log, isCompactMobile) {
+        const statusClass = log.status === 'success' ? 'status-success'
+            : log.status === 'alarm' ? 'status-alarm'
+                : 'status-error';
+
+        const statusLabel = isCompactMobile
+            ? (log.status === 'success' ? 'OK' : log.status === 'alarm' ? 'ALRM' : 'DENY')
+            : (log.status === 'success' ? '\u2705 Granted'
+                : log.status === 'alarm' ? '\uD83D\uDEA8 Alarm'
+                    : '\u274C Denied');
+
+        const displayTime = formatLogTime(log, isCompactMobile);
+
+        return `
+            <td class="col-time">${escapeHtml(displayTime)}</td>
+            <td class="col-user">${escapeHtml(log.user || 'Unknown')}</td>
+            <td class="col-method"><span class="method-badge">${escapeHtml(log.method || '--')}</span></td>
+            <td class="col-status"><span class="status-badge ${statusClass}">${statusLabel}</span></td>
+        `;
+    }
+
     function getLogsPageSize() {
         const width = window.innerWidth || document.documentElement.clientWidth || 1024;
         if (width <= 640) return CONFIG.LOGS_PAGE_SIZE_MOBILE;
@@ -33,12 +72,16 @@ export function createLogsFeature({ CONFIG, state, DOM, apiFetch, feedback }) {
         const logs = Array.isArray(state.allLogs) ? state.allLogs : [];
 
         if (logs.length === 0) {
-            DOM.logsTableBody.innerHTML =
-                '<tr><td colspan="4">' +
-                '<div class="logs-empty">' +
-                '<div class="logs-empty-icon">\uD83D\uDCCB</div>' +
-                '<div class="logs-empty-text">No activity recorded yet</div>' +
-                '</div></td></tr>';
+            if (state.renderedLogsPageFingerprint !== 'empty') {
+                DOM.logsTableBody.innerHTML =
+                    '<tr><td colspan="4">' +
+                    '<div class="logs-empty">' +
+                    '<div class="logs-empty-icon">\uD83D\uDCCB</div>' +
+                    '<div class="logs-empty-text">No activity recorded yet</div>' +
+                    '</div></td></tr>';
+                state.renderedLogsPageFingerprint = 'empty';
+            }
+
             updateLogsPaginationUI(0);
             return;
         }
@@ -51,26 +94,40 @@ export function createLogsFeature({ CONFIG, state, DOM, apiFetch, feedback }) {
         const pageLogs = logs.slice(startIndex, endIndex);
 
         const isCompactMobile = window.matchMedia('(max-width: 640px)').matches;
+        const pageSignatures = pageLogs.map(createLogSignature);
+        const nextPageFingerprint = [
+            isCompactMobile ? 'compact' : 'desktop',
+            state.logsPage,
+            state.logsPageSize,
+            pageSignatures.join('~')
+        ].join('|');
 
-        DOM.logsTableBody.innerHTML = pageLogs.map(log => {
-            const statusClass = log.status === 'success' ? 'status-success'
-                : log.status === 'alarm' ? 'status-alarm'
-                : 'status-error';
-            const statusLabel = isCompactMobile
-                ? (log.status === 'success' ? 'OK' : log.status === 'alarm' ? 'ALRM' : 'DENY')
-                : (log.status === 'success' ? '\u2705 Granted'
-                    : log.status === 'alarm' ? '\uD83D\uDEA8 Alarm'
-                        : '\u274C Denied');
+        if (state.renderedLogsPageFingerprint !== nextPageFingerprint) {
+            const existingRows = Array.from(DOM.logsTableBody.querySelectorAll('tr'));
 
-            const displayTime = formatLogTime(log, isCompactMobile);
+            pageLogs.forEach((log, index) => {
+                const signature = pageSignatures[index];
+                let row = existingRows[index];
 
-            return `<tr>
-                <td class="col-time">${escapeHtml(displayTime)}</td>
-                <td class="col-user">${escapeHtml(log.user || 'Unknown')}</td>
-                <td class="col-method"><span class="method-badge">${escapeHtml(log.method || '--')}</span></td>
-                <td class="col-status"><span class="status-badge ${statusClass}">${statusLabel}</span></td>
-            </tr>`;
-        }).join('');
+                if (!row) {
+                    row = document.createElement('tr');
+                    DOM.logsTableBody.appendChild(row);
+                }
+
+                const rowMode = isCompactMobile ? 'compact' : 'desktop';
+                if (row.dataset.sig !== signature || row.dataset.mode !== rowMode) {
+                    row.dataset.sig = signature;
+                    row.dataset.mode = rowMode;
+                    row.innerHTML = buildLogRowHTML(log, isCompactMobile);
+                }
+            });
+
+            for (let i = pageLogs.length; i < existingRows.length; i += 1) {
+                existingRows[i].remove();
+            }
+
+            state.renderedLogsPageFingerprint = nextPageFingerprint;
+        }
 
         updateLogsPaginationUI(logs.length);
     }
@@ -87,17 +144,18 @@ export function createLogsFeature({ CONFIG, state, DOM, apiFetch, feedback }) {
                 ? data.logs
                 : (Array.isArray(data) ? data : []);
 
-            const logsHash = JSON.stringify(logs);
+            const logsHash = createLogsCollectionSignature(logs);
             if (logsHash !== state.lastLogsHash) {
                 state.lastLogsHash = logsHash;
                 state.allLogs = logs;
-                state.logsPage = 1;
+                state.renderedLogsPageFingerprint = '';
             }
 
             renderCurrentLogsPage();
         } catch {
             DOM.logsTableBody.innerHTML =
                 '<tr><td colspan="4"><div class="logs-empty"><div class="logs-empty-text">Unable to load logs</div></div></td></tr>';
+            state.renderedLogsPageFingerprint = 'error';
             if (DOM.logsPagination) {
                 DOM.logsPagination.hidden = true;
             }
@@ -179,6 +237,7 @@ export function createLogsFeature({ CONFIG, state, DOM, apiFetch, feedback }) {
             if (nextPageSize !== state.logsPageSize) {
                 state.logsPageSize = nextPageSize;
                 state.logsPage = 1;
+                state.renderedLogsPageFingerprint = '';
                 renderCurrentLogsPage();
             }
         });

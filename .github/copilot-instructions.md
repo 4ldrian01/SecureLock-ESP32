@@ -63,7 +63,7 @@ pio run --target uploadfs && pio run --target upload && pio device monitor
 ### Two-Stage Deployment Pattern
 1. **Filesystem Upload** (`--target uploadfs`) - Uploads `data/` folder to LittleFS
    - Required when HTML/CSS/JS/JSON files change
-   - Files: `data/html/index.html`, `data/css/style.css`, `data/js/script.js`, `data/users.json`, `data/logs.json`
+   - Files: `data/html/pages/dashboard.html`, `data/css/style.css`, `data/js/entry/main.js`, `data/users.json`, `data/logs.json`
 
 2. **Firmware Upload** (`--target upload`) - Compiles and uploads C++ code
    - Required when `.cpp`/`.h` files change in `src/`, `lib/`, `include/`
@@ -74,7 +74,8 @@ pio run --target uploadfs && pio run --target upload && pio device monitor
 #define WIFI_SSID           "YOUR_WIFI_SSID"
 #define WIFI_PASSWORD       "YOUR_WIFI_PASSWORD"
 #define BOT_TOKEN           "1234567890:ABCdefGHI..."  // Get from @BotFather
-#define ADMIN_CHAT_ID       "123456789"              // Get from @userinfobot
+const String ADMIN_CHAT_IDS[] = { "123456789" };      // Get from @userinfobot
+const int NUM_ADMINS = 1;
 ```
 
 ## Project-Specific Conventions
@@ -122,7 +123,7 @@ if (key == '#') {  // Submit PIN
 
 ### WebServer File Serving Pattern
 - LittleFS mounted at root `/`
-- Files served from `data/` folder: `/html/index.html` → root URL `/`
+- Files served from `data/` folder: `/html/pages/dashboard.html` → root URL `/`
 - MIME types detected in `WebServer::_getMimeType()`: `.html`, `.css`, `.js`, `.json`, `.png`, `.ico`
 - CORS headers enabled for development: `Access-Control-Allow-Origin: *`
 

@@ -5,29 +5,9 @@
  */
 
 #include "WebServer.h"
-#include <time.h>
-#include <ctype.h>
 
-// Shared guest-code state provided by main authentication loop (Telegram path)
-extern String getActiveGuestCode();
-extern bool isTemporaryGuestCodeActive();
-extern unsigned long getTemporaryGuestCodeRemainingMs();
-extern String getAuthPrompt();
-extern bool isPendingAccessActive();
-extern String getLastKeypadKeyLabel();
-extern unsigned long getLastKeypadKeyMs();
-extern unsigned long getTelegramPollIntervalMs();
-extern unsigned long getTelegramLastPollDurationMs();
-extern unsigned long getTelegramLastSuccessMs();
-extern unsigned long getTelegramLastErrorMs();
-extern unsigned long getTelegramLastCommandMs();
-extern unsigned long getTelegramLastCommandLatencyMs();
-extern unsigned long getTelegramCommandsHandled();
-extern unsigned long getTelegramPollErrors();
-extern int getTelegramPendingApprox();
-extern String getTelegramLastCommandText();
-extern String getTelegramLastCommandRole();
-extern String getTelegramLastCommandResult();
+#include <time.h>
+#include <StorageService.h>
 
 namespace {
 constexpr bool kVerboseHttpLogs = false;
@@ -40,120 +20,6 @@ String normalizeUID(const String& input) {
     uid.replace(":", "");
     uid.replace("-", "");
     return uid;
-}
-
-bool isValidPersonName(const String& input) {
-    String name = input;
-    name.trim();
-
-    if (name.length() == 0) {
-        return false;
-    }
-
-    bool hasLetter = false;
-    for (size_t i = 0; i < name.length(); i++) {
-        const char c = name.charAt(i);
-        if (c == ' ' || c == '-' || c == '\'' || c == '.') {
-            continue;
-        }
-
-        if (!isalpha(static_cast<unsigned char>(c))) {
-            return false;
-        }
-
-        hasLetter = true;
-    }
-
-    return hasLetter;
-}
-
-bool isValidUID(const String& uid) {
-    if (uid.length() < 8 || uid.length() > 20) {
-        return false;
-    }
-
-    if ((uid.length() % 2) != 0) {
-        return false;
-    }
-
-    for (size_t i = 0; i < uid.length(); i++) {
-        const char c = uid.charAt(i);
-        const bool hex = (c >= '0' && c <= '9')
-            || (c >= 'A' && c <= 'F');
-        if (!hex) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-bool isFourDigitCode(const String& code) {
-    if (code.length() != 4) {
-        return false;
-    }
-
-    for (size_t i = 0; i < code.length(); i++) {
-        if (!isDigit(code.charAt(i))) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-bool isValidTelegramChatId(const String& chatId) {
-    String value = chatId;
-    value.trim();
-    if (value.length() == 0) {
-        return false;
-    }
-
-    size_t start = 0;
-    if (value.charAt(0) == '-') {
-        if (value.length() == 1) {
-            return false;
-        }
-        start = 1;
-    }
-
-    for (size_t i = start; i < value.length(); i++) {
-        if (!isDigit(value.charAt(i))) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-bool isTelegramChatIdInUse(AuthHandler* auth, const String& chatId, const String& excludeUid = "") {
-    if (!auth) {
-        return false;
-    }
-
-    String normalizedChatId = chatId;
-    normalizedChatId.trim();
-    if (normalizedChatId.length() == 0) {
-        return false;
-    }
-
-    String normalizedExcludeUid = normalizeUID(excludeUid);
-
-    const int userCount = auth->getUserCount();
-    for (int i = 0; i < userCount; i++) {
-        String uid = normalizeUID(auth->getUserUIDAt(i));
-        if (uid.length() == 0 || uid == normalizedExcludeUid) {
-            continue;
-        }
-
-        String listedChatId = auth->getUserTelegramChatId(uid);
-        listedChatId.trim();
-        if (listedChatId == normalizedChatId) {
-            return true;
-        }
-    }
-
-    return false;
 }
 
 String* getOrCreateRequestBody(AsyncWebServerRequest* request, size_t totalLen) {
@@ -173,14 +39,6 @@ void releaseRequestBody(AsyncWebServerRequest* request) {
         request->_tempObject = nullptr;
     }
 }
-
-void logEvery(const char* message, unsigned long& lastMs, unsigned long intervalMs) {
-    const unsigned long now = millis();
-    if (lastMs == 0 || (now - lastMs) >= intervalMs) {
-        Serial.println(message);
-        lastMs = now;
-    }
-}
 }
 
 /**
@@ -193,52 +51,77 @@ WebServer::WebServer(LockManager* lockManager, SecurityManager* securityManager,
       _server(80),
       _wifiConnected(false),
       _ipAddress(""),
-    _lastEmergencyUnlockMs(0)
-{
+      _lastEmergencyUnlockMs(0),
+      _apiSessionToken(""),
+      _apiSessionIssuedAtMs(0),
+      _apiSessionExpiresAtMs(0),
+      _authFailedAttempts(0),
+      _authLockoutUntilMs(0) {
 }
 
 /**
  * Initialize WiFi and Web Server
  */
-void WebServer::init(const char* ssid, const char* password) {
+void WebServer::init() {
     Serial.println("[WEB] Initializing Web Server...");
-    
+
     _initFileSystem();
     _cleanupGuestUsers();
-    _initWiFi(ssid, password);
+    _initWiFi();
     _setupRoutes();
-    
-    // Start server
+
     _server.begin();
     Serial.println("[WEB] ✓ Server started on port 80");
-    
+
     if (_wifiConnected) {
-        Serial.print("[WEB] Dashboard URL: http://");
+        Serial.println("[WEB] Dashboard URL: http://securelock.local/");
+        Serial.print("[WEB] Fallback IP URL: http://");
         Serial.print(_ipAddress);
         Serial.println("/");
     }
 }
 
 void WebServer::update() {
-    // Async server path - no periodic web-only tasks required here.
+    const bool connectedNow = (WiFi.status() == WL_CONNECTED);
+
+    if (connectedNow != _wifiConnected) {
+        _wifiConnected = connectedNow;
+
+        if (_wifiConnected) {
+            _ipAddress = WiFi.localIP().toString();
+            Serial.print("[WiFi] Link restored. IP: ");
+            Serial.println(_ipAddress);
+        } else {
+            _ipAddress = "";
+            Serial.println("[WiFi] Link lost");
+        }
+        return;
+    }
+
+    if (_wifiConnected) {
+        const String currentIp = WiFi.localIP().toString();
+        if (currentIp != _ipAddress) {
+            _ipAddress = currentIp;
+            Serial.print("[WiFi] IP changed: ");
+            Serial.println(_ipAddress);
+        }
+    }
 }
 
-/**
- * Check WiFi connection status
- */
 bool WebServer::isConnected() const {
     return _wifiConnected;
 }
 
-/**
- * Get IP address
- */
 String WebServer::getIPAddress() const {
     return _ipAddress;
 }
 
 void WebServer::markEmergencyOverride() {
     _lastEmergencyUnlockMs = millis();
+}
+
+unsigned long WebServer::getEmergencyCooldownRemainingMs() const {
+    return _remainingCooldownMs(_lastEmergencyUnlockMs, EMERGENCY_COOLDOWN_MS);
 }
 
 void WebServer::logActivity(const String& user, const String& method, const String& status) {
@@ -249,65 +132,24 @@ void WebServer::logActivity(const String& user, const String& method, const Stri
 // PRIVATE - Initialization
 // ============================================================
 
-/**
- * Initialize WiFi connection
- */
-void WebServer::_initWiFi(const char* ssid, const char* password) {
-    Serial.print("[WiFi] Connecting to: ");
-    Serial.println(ssid);
+void WebServer::_initWiFi() {
+    Serial.println("[WiFi] Preparing station connection (WiFiMulti-native)...");
 
     WiFi.mode(WIFI_STA);
     WiFi.setAutoReconnect(true);
     WiFi.persistent(false);
     WiFi.setSleep(false);
 
-    // Start from a clean station state to avoid stale auth/session issues.
-    WiFi.disconnect(true, true);
-    const unsigned long disconnectStartMs = millis();
-    while ((millis() - disconnectStartMs) < 150) {
+    const unsigned long settleStartMs = millis();
+    while (WiFi.status() != WL_CONNECTED && (millis() - settleStartMs) < 3000) {
         yield();
     }
 
-    static const int kMaxAttempts = 3;
-    for (int attempt = 1; attempt <= kMaxAttempts && WiFi.status() != WL_CONNECTED; ++attempt) {
-        Serial.print("[WiFi] Attempt ");
-        Serial.print(attempt);
-        Serial.print("/");
-        Serial.println(kMaxAttempts);
-
-        WiFi.begin(ssid, password);
-
-        // Wait for connection (20 second timeout per attempt)
-        const unsigned long attemptStartMs = millis();
-        unsigned long lastDotMs = 0;
-        while (WiFi.status() != WL_CONNECTED && (millis() - attemptStartMs) < 20000) {
-            const unsigned long nowMs = millis();
-            if (nowMs - lastDotMs >= 500) {
-                Serial.print(".");
-                lastDotMs = nowMs;
-            }
-            yield();
-        }
-        Serial.println();
-
-        if (WiFi.status() == WL_CONNECTED) {
-            break;
-        }
-
-        Serial.print("[WiFi] Attempt failed. Status code: ");
-        Serial.println(static_cast<int>(WiFi.status()));
-        WiFi.disconnect(true, true);
-        const unsigned long backoffStartMs = millis();
-        while ((millis() - backoffStartMs) < 300) {
-            yield();
-        }
-    }
-    
     if (WiFi.status() == WL_CONNECTED) {
         _wifiConnected = true;
         _ipAddress = WiFi.localIP().toString();
 
-        // Initialize NTP clock (UTC) for accurate world-time logging
+        // Initialize NTP clock (UTC) for accurate world-time logging.
         configTzTime("UTC0", "pool.ntp.org", "time.google.com", "time.nist.gov");
 
         bool timeReady = false;
@@ -320,8 +162,10 @@ void WebServer::_initWiFi(const char* ssid, const char* password) {
             }
             yield();
         }
-        
-        Serial.println("[WiFi] ✓ Connected!");
+
+        Serial.println("[WiFi] Reusing existing active connection");
+        Serial.print("[WiFi] SSID: ");
+        Serial.println(WiFi.SSID());
         Serial.print("[WiFi] IP: ");
         Serial.println(_ipAddress);
         Serial.print("[WiFi] RSSI: ");
@@ -329,33 +173,28 @@ void WebServer::_initWiFi(const char* ssid, const char* password) {
         Serial.println(" dBm");
         Serial.print("[WiFi] Channel: ");
         Serial.println(WiFi.channel());
-
         Serial.print("[TIME] NTP sync: ");
         Serial.println(timeReady ? "OK (UTC)" : "PENDING (using fallback until synced)");
-    } else {
-        _wifiConnected = false;
-        Serial.println("[WiFi] ✗ Connection failed");
-        Serial.print("[WiFi] Final status code: ");
-        Serial.println(static_cast<int>(WiFi.status()));
-        Serial.println("[WiFi] Check credentials in secrets.h (exact SSID/password, case-sensitive)");
-        Serial.println("[WiFi] Ensure hotspot/router uses 2.4GHz and WPA2 or WPA2/WPA3 mixed mode");
-    }
-}
-
-/**
- * Initialize LittleFS filesystem
- */
-void WebServer::_initFileSystem() {
-    Serial.print("[FS] Mounting LittleFS...");
-    
-    if (!LittleFS.begin(true)) {
-        Serial.println(" ✗ FAILED!");
         return;
     }
-    
+
+    _wifiConnected = false;
+    _ipAddress = "";
+    Serial.println("[WiFi][WARN] No active link at WebServer init.");
+    Serial.println("[WiFi][WARN] Web server will stay available and become reachable once WiFiMulti reconnects.");
+}
+
+void WebServer::_initFileSystem() {
+    Serial.print("[FS] Mounting LittleFS...");
+
+    if (!StorageService::instance().ensureMounted()) {
+        Serial.println(" ✗ FAILED!");
+        Serial.println("[FS][WARN] Auto-format is disabled by policy. Data preserved for manual recovery.");
+        return;
+    }
+
     Serial.println(" ✓ OK");
-    
-    // List files
+
     File root = LittleFS.open("/");
     if (root && root.isDirectory()) {
         Serial.println("[FS] Files:");
@@ -371,70 +210,73 @@ void WebServer::_initFileSystem() {
     }
 }
 
-/**
- * Setup all routes
- */
 void WebServer::_setupRoutes() {
     Serial.println("[WEB] Setting up routes...");
-    
+
     // ==================== CORS Preflight ====================
-    // Handle OPTIONS pre-flight requests for cross-origin API access
     _server.on("/api/*", HTTP_OPTIONS, [this](AsyncWebServerRequest* request) {
         AsyncWebServerResponse* response = request->beginResponse(204);
         _addCORSHeaders(response);
+        _addNoCacheHeaders(response);
         request->send(response);
     });
-    
+
     // ==================== STATIC FILES ====================
-    
-    // Root - Serve index.html
+
     _server.on("/", HTTP_GET, [this](AsyncWebServerRequest* request) {
         _handleRoot(request);
     });
-    
-    // CSS file
+
     _server.on("/css/style.css", HTTP_GET, [this](AsyncWebServerRequest* request) {
         _handleCSS(request);
     });
 
-    // Optional pagination styles
-    _server.on("/css/pagination.css", HTTP_GET, [](AsyncWebServerRequest* request) {
-        if (LittleFS.exists("/css/pagination.css")) {
-            request->send(LittleFS, "/css/pagination.css", "text/css");
-            return;
-        }
-
-        request->send(404, "text/plain", "CSS not found");
-    });
-    
-    // Legacy JavaScript file (compatibility shim to modular /js/main.js)
-    _server.on("/js/script.js", HTTP_GET, [this](AsyncWebServerRequest* request) {
-        _handleJS(request);
-    });
-    
     // ==================== API ENDPOINTS ====================
-    
-    // Get system status
+
+    _server.on("/api/auth/login", HTTP_POST,
+        [this](AsyncWebServerRequest* request) { /* handled in body callback */ },
+        NULL,
+        [this](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+            String* body = getOrCreateRequestBody(request, total);
+            if (len > 0) {
+                body->concat(reinterpret_cast<const char*>(data), len);
+            }
+
+            if ((index + len) >= total) {
+                _handleAPIAuthLogin(
+                    request,
+                    reinterpret_cast<uint8_t*>(const_cast<char*>(body->c_str())),
+                    body->length()
+                );
+                releaseRequestBody(request);
+            }
+        }
+    );
+
+    _server.on("/api/auth/logout", HTTP_POST, [this](AsyncWebServerRequest* request) {
+        _handleAPIAuthLogout(request);
+    });
+
+    _server.on("/api/auth/status", HTTP_GET, [this](AsyncWebServerRequest* request) {
+        _handleAPIAuthStatus(request);
+    });
+
     _server.on("/api/status", HTTP_GET, [this](AsyncWebServerRequest* request) {
         _handleAPIStatus(request);
     });
-    
-    // Remote unlock
+
     _server.on("/api/unlock", HTTP_POST, [this](AsyncWebServerRequest* request) {
         _handleAPIUnlock(request);
     });
-    
-    // Generate guest code
+
     _server.on("/api/guest-code", HTTP_POST, [this](AsyncWebServerRequest* request) {
         _handleAPIGuestCode(request);
     });
-    
-    // List users (GET)
+
     _server.on("/api/users", HTTP_GET, [this](AsyncWebServerRequest* request) {
         _handleAPIUsers(request);
     });
-    
-    // Add user (POST) - body handler
+
     _server.on("/api/users", HTTP_POST,
         [this](AsyncWebServerRequest* request) { /* handled in body callback */ },
         NULL,
@@ -455,7 +297,6 @@ void WebServer::_setupRoutes() {
         }
     );
 
-    // Alias: Add user using explicit endpoint name expected by some clients.
     _server.on("/api/addUser", HTTP_POST,
         [this](AsyncWebServerRequest* request) { /* handled in body callback */ },
         NULL,
@@ -475,8 +316,7 @@ void WebServer::_setupRoutes() {
             }
         }
     );
-    
-    // Edit user (PUT) - body handler
+
     _server.on("/api/users", HTTP_PUT,
         [this](AsyncWebServerRequest* request) { /* handled in body callback */ },
         NULL,
@@ -496,13 +336,11 @@ void WebServer::_setupRoutes() {
             }
         }
     );
-    
-    // Delete user (DELETE)
+
     _server.on("/api/users", HTTP_DELETE, [this](AsyncWebServerRequest* request) {
         _handleAPIDeleteUser(request);
     });
 
-    // Hard reset all users (POST body required)
     _server.on("/api/users/reset", HTTP_POST,
         [this](AsyncWebServerRequest* request) { /* handled in body callback */ },
         NULL,
@@ -522,18 +360,15 @@ void WebServer::_setupRoutes() {
             }
         }
     );
-    
-    // Get activity logs
+
     _server.on("/api/logs", HTTP_GET, [this](AsyncWebServerRequest* request) {
         _handleAPILogs(request);
     });
 
-    // Clear activity logs
     _server.on("/api/logs", HTTP_DELETE, [this](AsyncWebServerRequest* request) {
         _handleAPIClearLogs(request);
     });
-    
-    // RFID scan polling
+
     _server.on("/api/rfid/scan", HTTP_GET, [this](AsyncWebServerRequest* request) {
         _handleAPIRfidScan(request);
     });
@@ -541,12 +376,11 @@ void WebServer::_setupRoutes() {
     _server.on("/api/diagnostics", HTTP_GET, [this](AsyncWebServerRequest* request) {
         _handleAPIDiagnostics(request);
     });
-    
-    // 404 handler
+
     _server.onNotFound([this](AsyncWebServerRequest* request) {
         _handleNotFound(request);
     });
-    
+
     Serial.println("[WEB] ✓ Routes configured");
 }
 
@@ -554,13 +388,9 @@ void WebServer::_setupRoutes() {
 // PRIVATE - Static File Handlers
 // ============================================================
 
-/**
- * Handle root path - Serve index.html
- */
 void WebServer::_handleRoot(AsyncWebServerRequest* request) {
     const char* candidates[] = {
-        "/html/index.html",
-        "/index.html"
+        "/html/pages/dashboard.html"
     };
 
     for (const char* path : candidates) {
@@ -576,7 +406,7 @@ void WebServer::_handleRoot(AsyncWebServerRequest* request) {
         }
     }
 
-    Serial.println("[WEB] ✗ index.html not found in LittleFS!");
+    Serial.println("[WEB] ✗ dashboard HTML not found in LittleFS!");
     request->send(404, "text/html",
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -584,24 +414,21 @@ void WebServer::_handleRoot(AsyncWebServerRequest* request) {
         "<h2>SecureLock Dashboard files are missing</h2>"
         "<p>Upload LittleFS data first, then reload this page.</p>"
         "<pre>platformio run --target uploadfs</pre>"
-        "<p>Expected file: <code>data/html/index.html</code></p>"
+        "<p>Expected file: <code>data/html/pages/dashboard.html</code></p>"
         "</body></html>");
 }
 
-/**
- * Handle CSS request
- */
 void WebServer::_handleCSS(AsyncWebServerRequest* request) {
     if (LittleFS.exists("/css/style.css")) {
         AsyncWebServerResponse* response = request->beginResponse(LittleFS, "/css/style.css", "text/css");
-        _addNoCacheHeaders(response);
+        _addStaticCacheHeaders(response);
         request->send(response);
         if (kVerboseHttpLogs) {
             Serial.println("[WEB] GET /css/style.css -> OK");
         }
     } else if (LittleFS.exists("/style.css")) {
         AsyncWebServerResponse* response = request->beginResponse(LittleFS, "/style.css", "text/css");
-        _addNoCacheHeaders(response);
+        _addStaticCacheHeaders(response);
         request->send(response);
         if (kVerboseHttpLogs) {
             Serial.println("[WEB] GET /css/style.css -> fallback /style.css");
@@ -612,39 +439,16 @@ void WebServer::_handleCSS(AsyncWebServerRequest* request) {
     }
 }
 
-/**
- * Handle JavaScript request
- */
-void WebServer::_handleJS(AsyncWebServerRequest* request) {
-    if (LittleFS.exists("/js/script.js")) {
-        AsyncWebServerResponse* response = request->beginResponse(LittleFS, "/js/script.js", "application/javascript");
-        _addNoCacheHeaders(response);
-        request->send(response);
-        if (kVerboseHttpLogs) {
-            Serial.println("[WEB] GET /js/script.js -> OK");
-        }
-    } else if (LittleFS.exists("/script.js")) {
-        AsyncWebServerResponse* response = request->beginResponse(LittleFS, "/script.js", "application/javascript");
-        _addNoCacheHeaders(response);
-        request->send(response);
-        if (kVerboseHttpLogs) {
-            Serial.println("[WEB] GET /js/script.js -> fallback /script.js");
-        }
-    } else {
-        Serial.println("[WEB] ✗ script.js not found!");
-        request->send(404, "text/plain", "JavaScript not found");
-    }
-}
-
-/**
- * Handle 404 errors
- */
 void WebServer::_handleNotFound(AsyncWebServerRequest* request) {
     const String url = request->url();
 
-    if ((url.startsWith("/js/") || url.startsWith("/css/")) && LittleFS.exists(url)) {
+    if (!url.startsWith("/api/") && LittleFS.exists(url)) {
         AsyncWebServerResponse* response = request->beginResponse(LittleFS, url, _getMimeType(url));
-        _addNoCacheHeaders(response);
+        if (url.endsWith(".html")) {
+            _addNoCacheHeaders(response);
+        } else {
+            _addStaticCacheHeaders(response);
+        }
         request->send(response);
         if (kVerboseHttpLogs) {
             Serial.print("[WEB] Static fallback served: ");
@@ -655,893 +459,14 @@ void WebServer::_handleNotFound(AsyncWebServerRequest* request) {
 
     Serial.print("[WEB] 404: ");
     Serial.println(url);
-    
+
     request->send(404, "text/plain", "404 - Not Found");
-}
-
-// ============================================================
-// PRIVATE - API Handlers
-// ============================================================
-
-/**
- * API: GET /api/status
- * Return system status as JSON
- */
-void WebServer::_handleAPIStatus(AsyncWebServerRequest* request) {
-    JsonDocument doc;
-    
-    // Lock status
-    doc["locked"] = _lock->isLocked();
-    doc["doorOpen"] = _lock->isDoorOpen();
-    doc["tampered"] = _lock->isDoorTampered();
-    doc["autoLockDelayMs"] = _lock->getAutoLockDelayMs();
-    doc["unlockRemainingMs"] = _lock->getRemainingAutoLockMs();
-    doc["emergencyCooldownRemainingMs"] = _remainingCooldownMs(_lastEmergencyUnlockMs, EMERGENCY_COOLDOWN_MS);
-    
-    // Security status
-    doc["alarm"] = _security->isAlarming();
-    doc["vibration"] = _security->isVibrationLatched();
-    doc["buzzerActive"] = _security->isBuzzerActive();
-    doc["sirenActive"] = _security->isSirenActive();
-    
-    // System info
-    doc["uptime"] = millis() / 1000;
-    doc["freeHeap"] = ESP.getFreeHeap();
-    doc["wifiConnected"] = _wifiConnected;
-    doc["ipAddress"] = _ipAddress;
-    doc["rssi"] = WiFi.RSSI();
-
-    // Temporary guest code status (source of truth: Telegram/main.cpp flow)
-    const bool telegramGuestActive = isTemporaryGuestCodeActive();
-    const String telegramGuestCode = getActiveGuestCode();
-    const unsigned long telegramGuestRemainingMs = getTemporaryGuestCodeRemainingMs();
-
-    doc["guestCodeActive"] = telegramGuestActive;
-    doc["guestCode"] = telegramGuestActive ? telegramGuestCode : "";
-    doc["guestCodeRemainingMs"] = telegramGuestRemainingMs;
-    doc["authPrompt"] = getAuthPrompt();
-    doc["pendingAccess"] = isPendingAccessActive();
-    doc["timestampMs"] = millis();
-
-    const unsigned long nowMs = millis();
-    const unsigned long lastTgCommandMs = getTelegramLastCommandMs();
-    const unsigned long lastTgErrorMs = getTelegramLastErrorMs();
-    doc["telegramPollIntervalMs"] = getTelegramPollIntervalMs();
-    doc["telegramLastPollDurationMs"] = getTelegramLastPollDurationMs();
-    doc["telegramLastSuccessMs"] = getTelegramLastSuccessMs();
-    doc["telegramLastErrorMs"] = lastTgErrorMs;
-    doc["telegramLastCommandMs"] = lastTgCommandMs;
-    doc["telegramLastCommandLatencyMs"] = getTelegramLastCommandLatencyMs();
-    doc["telegramCommandsHandled"] = getTelegramCommandsHandled();
-    doc["telegramPollErrors"] = getTelegramPollErrors();
-    doc["telegramPendingApprox"] = getTelegramPendingApprox();
-    doc["telegramLastCommandText"] = getTelegramLastCommandText();
-    doc["telegramLastCommandRole"] = getTelegramLastCommandRole();
-    doc["telegramLastCommandResult"] = getTelegramLastCommandResult();
-    doc["telegramLastCommandAgeMs"] = (lastTgCommandMs > 0) ? (nowMs - lastTgCommandMs) : -1;
-    doc["telegramLastErrorAgeMs"] = (lastTgErrorMs > 0) ? (nowMs - lastTgErrorMs) : -1;
-    
-    _sendJSON(request, 200, doc);
-}
-
-/**
- * API: POST /api/unlock
- * Remote unlock command
- */
-void WebServer::_handleAPIUnlock(AsyncWebServerRequest* request) {
-    Serial.println("[API] POST /api/unlock - Emergency override");
-
-    const unsigned long retryAfterMs = _remainingCooldownMs(_lastEmergencyUnlockMs, EMERGENCY_COOLDOWN_MS);
-    if (retryAfterMs > 0) {
-        _addLogEntry("Admin (Web)", "Emergency Override Cooldown", "fail");
-
-        JsonDocument doc;
-        doc["success"] = false;
-        doc["message"] = "Emergency override is cooling down";
-        doc["retryAfterMs"] = retryAfterMs;
-        doc["retryAfterSec"] = (retryAfterMs + 999) / 1000;
-        doc["cooldownMs"] = EMERGENCY_COOLDOWN_MS;
-        _sendJSON(request, 429, doc);
-        return;
-    }
-    
-    // Unlock door
-    _lock->unlock();
-    _auth->startRFIDCooldown();
-    
-    // Stop alarm if active
-    if (_security->isAlarming()) {
-        _security->clearAlarm();
-    }
-
-    // Single confirmation beep for emergency override.
-    _security->beep(1);
-
-    _lastEmergencyUnlockMs = millis();
-    
-    // Log the event
-    _addLogEntry("Admin (Web)", "Emergency Override", "success");
-    
-    // Send response
-    JsonDocument doc;
-    doc["success"] = true;
-    doc["message"] = "Emergency unlock activated";
-    doc["timestamp"] = millis();
-    doc["cooldownMs"] = EMERGENCY_COOLDOWN_MS;
-    doc["autoLockDelayMs"] = _lock->getAutoLockDelayMs();
-    doc["unlockRemainingMs"] = _lock->getRemainingAutoLockMs();
-    
-    _sendJSON(request, 200, doc);
-}
-
-/**
- * API: POST /api/guest-code
- * Generate temporary guest access code
- */
-void WebServer::_handleAPIGuestCode(AsyncWebServerRequest* request) {
-    Serial.println("[API] POST /api/guest-code");
-
-    _addLogEntry("Admin (Web)", "Guest Code API Disabled", "fail");
-
-    JsonDocument doc;
-    doc["success"] = false;
-    doc["message"] = "Guest code generation is managed via Telegram command /guest_code";
-    _sendJSON(request, 403, doc);
-}
-
-/**
- * API: GET /api/users
- * List all registered users
- */
-void WebServer::_handleAPIUsers(AsyncWebServerRequest* request) {
-    JsonDocument responseDoc;
-    _syncUsersFileFromAuth(&responseDoc);
-    _sendJSON(request, 200, responseDoc);
-}
-
-/**
- * API: DELETE /api/users?uid=XXX
- * Delete a user
- */
-void WebServer::_handleAPIDeleteUser(AsyncWebServerRequest* request) {
-    if (!request->hasParam("uid")) {
-        JsonDocument doc;
-        doc["success"] = false;
-        doc["message"] = "Missing uid parameter";
-        _sendJSON(request, 400, doc);
-        return;
-    }
-    
-    String uid = normalizeUID(request->getParam("uid")->value());
-    Serial.print("[API] DELETE /api/users?uid=");
-    Serial.println(uid);
-    
-    // Remove from AuthHandler (NVS credentials)
-    bool removedFromAuth = _auth->removeUser(uid);
-
-    const bool deleted = removedFromAuth;
-
-    if (deleted) {
-        _security->beep(1);  // Success tone parity with Add User action
-        _syncUsersFileFromAuth();
-    }
-
-    _addLogEntry("Admin (Web)", "Delete User (" + uid + ")", deleted ? "success" : "fail");
-
-    // Send response
-    JsonDocument doc;
-    doc["success"] = deleted;
-    doc["removedFromAuth"] = removedFromAuth;
-    doc["removedFromList"] = removedFromAuth;
-
-    if (deleted) {
-        doc["message"] = "User deleted";
-        _sendJSON(request, 200, doc);
-        return;
-    }
-
-    doc["message"] = "User not found";
-    _sendJSON(request, 404, doc);
-}
-
-void WebServer::_handleAPIResetUsers(AsyncWebServerRequest* request, uint8_t* data, size_t len) {
-    JsonDocument body;
-    const DeserializationError err = deserializeJson(body, data, len);
-    if (err) {
-        JsonDocument doc;
-        doc["success"] = false;
-        doc["message"] = "Invalid JSON body";
-        _sendJSON(request, 400, doc);
-        return;
-    }
-
-    String confirm = body["confirm"] | "";
-    confirm.trim();
-    confirm.toUpperCase();
-
-    if (confirm != "RESET_ALL_USERS") {
-        JsonDocument doc;
-        doc["success"] = false;
-        doc["message"] = "Confirmation mismatch. Send confirm=RESET_ALL_USERS";
-        _sendJSON(request, 400, doc);
-        return;
-    }
-
-    const int before = _auth->getUserCount();
-    _auth->performFactoryReset();
-    _syncUsersFileFromAuth();
-    _security->beep(2);
-
-    _addLogEntry("Admin (Web)", "Reset All Users", "success");
-
-    JsonDocument doc;
-    doc["success"] = true;
-    doc["message"] = "All users reset";
-    doc["removedUsers"] = before;
-    doc["remainingUsers"] = _auth->getUserCount();
-    _sendJSON(request, 200, doc);
-}
-
-/**
- * API: POST /api/users (body: {name, pin, uid, type})
- * Add a new user
- */
-void WebServer::_handleAPIAddUser(AsyncWebServerRequest* request, uint8_t* data, size_t len) {
-    Serial.println("[API] POST /api/users - Add user");
-    
-    JsonDocument body;
-    DeserializationError err = deserializeJson(body, data, len);
-    
-    if (err) {
-        JsonDocument doc;
-        doc["success"] = false;
-        doc["message"] = "Invalid JSON body";
-        _sendJSON(request, 400, doc);
-        return;
-    }
-    
-    String name = body["name"] | "";
-    String pin  = body["pin"]  | "";
-    String uid  = body["cardUID"] | "";
-    if (uid.isEmpty()) {
-        uid = body["uid"] | "";
-    }
-    String type = body["type"] | "user";
-    String telegramChatID = body["telegramChatID"] | "";
-    if (telegramChatID.isEmpty()) {
-        telegramChatID = body["chat_id"] | "";
-    }
-    String backupPIN = body["backupPIN"] | "";
-    if (backupPIN.isEmpty()) {
-        backupPIN = body["backup_pin"] | "";
-    }
-
-    name.trim();
-    uid = normalizeUID(uid);
-    telegramChatID.trim();
-    backupPIN.trim();
-    
-    if (pin.isEmpty() && !backupPIN.isEmpty()) {
-        pin = backupPIN;
-    }
-
-    if (name.isEmpty() || pin.isEmpty() || uid.isEmpty()) {
-        JsonDocument doc;
-        doc["success"] = false;
-        doc["message"] = "Missing required fields: name, cardUID/uid, and pin or backupPIN";
-        _sendJSON(request, 400, doc);
-        return;
-    }
-
-    if (telegramChatID.isEmpty()) {
-        JsonDocument doc;
-        doc["success"] = false;
-        doc["field"] = "telegramChatID";
-        doc["message"] = "Telegram Chat ID is required for OTP delivery";
-        _sendJSON(request, 400, doc);
-        return;
-    }
-
-    if (!telegramChatID.isEmpty() && !isValidTelegramChatId(telegramChatID)) {
-        JsonDocument doc;
-        doc["success"] = false;
-        doc["field"] = "telegramChatID";
-        doc["message"] = "A valid Telegram Chat ID is required for OTP delivery";
-        _sendJSON(request, 400, doc);
-        return;
-    }
-
-    if (!isFourDigitCode(pin)) {
-        JsonDocument doc;
-        doc["success"] = false;
-        doc["field"] = "pin";
-        doc["message"] = "PIN must be exactly 4 digits";
-        _sendJSON(request, 400, doc);
-        return;
-    }
-
-    if (!isValidPersonName(name)) {
-        JsonDocument doc;
-        doc["success"] = false;
-        doc["field"] = "name";
-        doc["message"] = "Name can contain letters, spaces, apostrophes, dots, and hyphens only";
-        _sendJSON(request, 400, doc);
-        return;
-    }
-
-    if (!isValidUID(uid)) {
-        JsonDocument doc;
-        doc["success"] = false;
-        doc["field"] = "uid";
-        doc["message"] = "RFID UID must be valid uppercase hex (8 to 20 chars)";
-        _sendJSON(request, 400, doc);
-        return;
-    }
-
-    if (isTelegramChatIdInUse(_auth, telegramChatID)) {
-        JsonDocument doc;
-        doc["success"] = false;
-        doc["errorCode"] = "CHAT_ID_ALREADY_REGISTERED";
-        doc["field"] = "telegramChatID";
-        doc["message"] = "This Telegram Chat ID is already linked to another user";
-        _sendJSON(request, 409, doc);
-        return;
-    }
-
-    if (!backupPIN.isEmpty() && !isFourDigitCode(backupPIN)) {
-        JsonDocument doc;
-        doc["success"] = false;
-        doc["field"] = "backupPIN";
-        doc["message"] = "Backup PIN must be exactly 4 digits";
-        _sendJSON(request, 400, doc);
-        return;
-    }
-
-    // Professional duplicate RFID protection
-    bool duplicateRFID = _auth->userExists(uid);
-    if (!duplicateRFID && LittleFS.exists("/users.json")) {
-        JsonDocument usersDoc;
-        File file = LittleFS.open("/users.json", "r");
-        if (file) {
-            DeserializationError fileErr = deserializeJson(usersDoc, file);
-            file.close();
-
-            if (!fileErr && usersDoc["users"].is<JsonArray>()) {
-                JsonArray users = usersDoc["users"].as<JsonArray>();
-                for (size_t i = 0; i < users.size(); i++) {
-                    String existingUID = users[i]["cardUID"].as<String>();
-                    if (existingUID.length() == 0) {
-                        existingUID = users[i]["uid"].as<String>();
-                    }
-                    existingUID = normalizeUID(existingUID);
-                    if (existingUID == uid) {
-                        duplicateRFID = true;
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    if (duplicateRFID) {
-        Serial.print("[API][WARN] Duplicate RFID enrollment blocked (Add User): ");
-        Serial.println(uid);
-        _security->beep(3);  // Error tone
-        _addLogEntry("Admin (Web)", "Duplicate RFID " + uid, "fail");
-
-        JsonDocument doc;
-        doc["success"] = false;
-        doc["errorCode"] = "RFID_ALREADY_REGISTERED";
-        doc["field"] = "uid";
-        doc["message"] = "This RFID card is already registered. Please scan a different card.";
-        _sendJSON(request, 409, doc);
-        return;
-    }
-    
-    // Add to AuthHandler (users.json)
-    bool added = _auth->addUser(uid, pin, name);
-    String failureReason = "";
-
-    if (!added) {
-        if (_auth->userExists(uid)) {
-            failureReason = "This RFID card is already registered.";
-        } else if (_auth->getUserCount() >= 20) {
-            failureReason = "User limit reached (max 20 users). Delete an existing user first.";
-        } else {
-            failureReason = "Unable to write user record. Storage may be full or unavailable.";
-        }
-    }
-
-    if (added) {
-        const bool chatSaved = _auth->setUserTelegramChatId(uid, telegramChatID);
-        if (!chatSaved) {
-            _auth->removeUser(uid);
-            added = false;
-            failureReason = "Failed to persist Telegram Chat ID for this user.";
-        }
-
-        if (added && !backupPIN.isEmpty()) {
-            const bool backupSaved = _auth->setUserBackupPIN(uid, backupPIN);
-            if (!backupSaved) {
-                _auth->removeUser(uid);
-                added = false;
-                failureReason = "Failed to persist Backup PIN for this user.";
-            }
-        }
-    }
-    
-    if (added) {
-        // Audible confirmation when admin saves a new user
-        _security->beep(1);
-        _syncUsersFileFromAuth();
-    }
-    
-    _addLogEntry(name, "Add User", added ? "success" : "fail");
-    
-    JsonDocument doc;
-    doc["success"] = added;
-    doc["message"] = added ? "User added" : (failureReason.length() ? failureReason : "Failed to add user");
-    _sendJSON(request, added ? 201 : 500, doc);
-}
-
-/**
- * API: PUT /api/users (body: {uid, name, pin?, rfid?})
- * Edit an existing user
- */
-void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data, size_t len) {
-    Serial.println("[API] PUT /api/users - Edit user");
-    
-    JsonDocument body;
-    DeserializationError err = deserializeJson(body, data, len);
-    
-    if (err) {
-        JsonDocument doc;
-        doc["success"] = false;
-        doc["message"] = "Invalid JSON body";
-        _sendJSON(request, 400, doc);
-        return;
-    }
-    
-    String uid  = body["uid"]  | "";
-    String name = body["name"] | "";
-    String pin  = body["pin"]  | "";
-    String rfid = body["rfid"] | "";
-    if (rfid.isEmpty()) {
-        rfid = body["cardUID"] | "";
-    }
-    String telegramChatID = body["telegramChatID"] | "";
-    if (telegramChatID.isEmpty()) {
-        telegramChatID = body["chat_id"] | "";
-    }
-    String backupPIN = body["backupPIN"] | "";
-    if (backupPIN.isEmpty()) {
-        backupPIN = body["backup_pin"] | "";
-    }
-
-    name.trim();
-    pin.trim();
-    uid = normalizeUID(uid);
-    rfid = normalizeUID(rfid);
-    telegramChatID.trim();
-    backupPIN.trim();
-
-    if (pin.isEmpty() && !backupPIN.isEmpty()) {
-        pin = backupPIN;
-    }
-    
-    if (uid.isEmpty() || name.isEmpty()) {
-        JsonDocument doc;
-        doc["success"] = false;
-        doc["message"] = "Missing required fields: uid, name";
-        _sendJSON(request, 400, doc);
-        return;
-    }
-
-    if (!telegramChatID.isEmpty() && !isValidTelegramChatId(telegramChatID)) {
-        JsonDocument doc;
-        doc["success"] = false;
-        doc["field"] = "telegramChatID";
-        doc["message"] = "Telegram Chat ID must be numeric when provided";
-        _sendJSON(request, 400, doc);
-        return;
-    }
-
-    if (!pin.isEmpty() && !isFourDigitCode(pin)) {
-        JsonDocument doc;
-        doc["success"] = false;
-        doc["field"] = "pin";
-        doc["message"] = "PIN must be exactly 4 digits";
-        _sendJSON(request, 400, doc);
-        return;
-    }
-
-    if (!isValidPersonName(name)) {
-        JsonDocument doc;
-        doc["success"] = false;
-        doc["field"] = "name";
-        doc["message"] = "Name can contain letters, spaces, apostrophes, dots, and hyphens only";
-        _sendJSON(request, 400, doc);
-        return;
-    }
-
-    if (!isValidUID(uid)) {
-        JsonDocument doc;
-        doc["success"] = false;
-        doc["field"] = "uid";
-        doc["message"] = "RFID UID must be valid uppercase hex (8 to 20 chars)";
-        _sendJSON(request, 400, doc);
-        return;
-    }
-
-    if (!rfid.isEmpty() && !isValidUID(rfid)) {
-        JsonDocument doc;
-        doc["success"] = false;
-        doc["field"] = "rfid";
-        doc["message"] = "Replacement RFID UID must be valid uppercase hex (8 to 20 chars)";
-        _sendJSON(request, 400, doc);
-        return;
-    }
-
-    if (!backupPIN.isEmpty()) {
-        if (!isFourDigitCode(backupPIN)) {
-            JsonDocument doc;
-            doc["success"] = false;
-            doc["field"] = "backupPIN";
-            doc["message"] = "Backup PIN must be exactly 4 digits";
-            _sendJSON(request, 400, doc);
-            return;
-        }
-    }
-
-    // Duplicate RFID protection for card replacement/edit flow
-    bool duplicateRFID = false;
-    if (!rfid.isEmpty() && rfid != uid) {
-        duplicateRFID = _auth->userExists(rfid);
-
-        if (!duplicateRFID && LittleFS.exists("/users.json")) {
-            JsonDocument usersDoc;
-            File usersFile = LittleFS.open("/users.json", "r");
-            if (usersFile) {
-                DeserializationError usersErr = deserializeJson(usersDoc, usersFile);
-                usersFile.close();
-
-                if (!usersErr && usersDoc["users"].is<JsonArray>()) {
-                    JsonArray users = usersDoc["users"].as<JsonArray>();
-                    for (size_t i = 0; i < users.size(); i++) {
-                        String existingUID = users[i]["cardUID"].as<String>();
-                        if (existingUID.length() == 0) {
-                            existingUID = users[i]["uid"].as<String>();
-                        }
-                        existingUID = normalizeUID(existingUID);
-
-                        if (existingUID == rfid && existingUID != uid) {
-                            duplicateRFID = true;
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if (duplicateRFID) {
-        Serial.print("[API][WARN] Duplicate RFID replacement blocked (Edit User): old=");
-        Serial.print(uid);
-        Serial.print(" new=");
-        Serial.println(rfid);
-
-        _security->beep(3);  // Error tone
-        _addLogEntry("Admin (Web)", "Duplicate RFID " + rfid, "fail");
-
-        JsonDocument doc;
-        doc["success"] = false;
-        doc["errorCode"] = "RFID_ALREADY_REGISTERED";
-        doc["field"] = "uid";
-        doc["message"] = "This RFID card is already registered. Please scan a different card.";
-        _sendJSON(request, 409, doc);
-        return;
-    }
-    
-    const String oldName = _auth->getUserName(uid);
-    const String oldPin = _auth->getUserPIN(uid);
-    const String oldTelegramChatId = _auth->getUserTelegramChatId(uid);
-    const String oldBackupPIN = _auth->getUserBackupPIN(uid);
-
-    if (oldPin.isEmpty()) {
-        JsonDocument doc;
-        doc["success"] = false;
-        doc["message"] = "User not found";
-        _sendJSON(request, 404, doc);
-        return;
-    }
-
-    auto restorePreviousUserState = [this, &uid, &oldPin, &oldName, &oldTelegramChatId, &oldBackupPIN]() {
-        _auth->removeUser(uid);
-        if (_auth->addUser(uid, oldPin, oldName)) {
-            _auth->setUserTelegramChatId(uid, oldTelegramChatId);
-            if (oldBackupPIN.length() == 4) {
-                _auth->setUserBackupPIN(uid, oldBackupPIN);
-            }
-        }
-    };
-
-    String effectivePin = pin;
-    if (effectivePin.isEmpty()) {
-        effectivePin = _auth->getUserPIN(uid);
-    }
-    if (effectivePin.isEmpty()) {
-        effectivePin = oldBackupPIN;
-    }
-
-    if (effectivePin.isEmpty()) {
-        JsonDocument doc;
-        doc["success"] = false;
-        doc["message"] = "PIN required to update this user. Provide a valid 4-digit backup PIN.";
-        _sendJSON(request, 400, doc);
-        return;
-    }
-
-    if (!isFourDigitCode(effectivePin)) {
-        JsonDocument doc;
-        doc["success"] = false;
-        doc["message"] = "PIN must be exactly 4 digits";
-        _sendJSON(request, 400, doc);
-        return;
-    }
-
-    const String targetUid = rfid.isEmpty() ? uid : rfid;
-    const bool uidChanged = (targetUid != uid);
-
-    String effectiveTelegramChatId = telegramChatID;
-    if (effectiveTelegramChatId.isEmpty()) {
-        effectiveTelegramChatId = _auth->getUserTelegramChatId(uid);
-    }
-
-    effectiveTelegramChatId.trim();
-
-    if (!effectiveTelegramChatId.isEmpty() && !isValidTelegramChatId(effectiveTelegramChatId)) {
-        JsonDocument doc;
-        doc["success"] = false;
-        doc["field"] = "telegramChatID";
-        doc["message"] = "Telegram Chat ID must be numeric when provided";
-        _sendJSON(request, 400, doc);
-        return;
-    }
-
-    if (effectiveTelegramChatId.isEmpty()) {
-        JsonDocument doc;
-        doc["success"] = false;
-        doc["field"] = "telegramChatID";
-        doc["message"] = "Telegram Chat ID is required for OTP delivery";
-        _sendJSON(request, 400, doc);
-        return;
-    }
-
-    if (isTelegramChatIdInUse(_auth, effectiveTelegramChatId, uid)) {
-        JsonDocument doc;
-        doc["success"] = false;
-        doc["errorCode"] = "CHAT_ID_ALREADY_REGISTERED";
-        doc["field"] = "telegramChatID";
-        doc["message"] = "This Telegram Chat ID is already linked to another user";
-        _sendJSON(request, 409, doc);
-        return;
-    }
-
-    String effectiveBackupPIN = backupPIN;
-    if (effectiveBackupPIN.isEmpty()) {
-        effectiveBackupPIN = _auth->getUserBackupPIN(uid);
-    }
-
-    if (effectiveBackupPIN.isEmpty()) {
-        effectiveBackupPIN = effectivePin;
-    }
-
-    bool authUpdated = false;
-    if (uidChanged) {
-        const bool removedOld = _auth->removeUser(uid);
-        if (!removedOld) {
-            JsonDocument doc;
-            doc["success"] = false;
-            doc["message"] = "Original user record could not be updated";
-            _sendJSON(request, 500, doc);
-            return;
-        }
-
-        authUpdated = _auth->addUser(targetUid, effectivePin, name);
-
-        if (!authUpdated) {
-            restorePreviousUserState();
-        }
-    } else {
-        // Re-add same UID to persist any name/PIN updates.
-        authUpdated = _auth->addUser(uid, effectivePin, name);
-    }
-
-    if (!authUpdated) {
-        JsonDocument doc;
-        doc["success"] = false;
-        doc["message"] = "Failed to update user credentials";
-        _sendJSON(request, 500, doc);
-        return;
-    }
-
-    if (!_auth->setUserTelegramChatId(targetUid, effectiveTelegramChatId)) {
-        if (uidChanged) {
-            _auth->removeUser(targetUid);
-            restorePreviousUserState();
-        } else {
-            restorePreviousUserState();
-        }
-
-        JsonDocument doc;
-        doc["success"] = false;
-        doc["message"] = "Failed to persist Telegram Chat ID";
-        _sendJSON(request, 500, doc);
-        return;
-    }
-
-    if (effectiveBackupPIN.length() == 4 && !_auth->setUserBackupPIN(targetUid, effectiveBackupPIN)) {
-        if (uidChanged) {
-            _auth->removeUser(targetUid);
-            restorePreviousUserState();
-        } else {
-            restorePreviousUserState();
-        }
-
-        JsonDocument doc;
-        doc["success"] = false;
-        doc["message"] = "Failed to persist Backup PIN";
-        _sendJSON(request, 500, doc);
-        return;
-    }
-    
-    JsonDocument doc;
-    doc["success"] = true;
-    doc["message"] = "User updated";
-    doc["uid"] = targetUid;
-
-    _syncUsersFileFromAuth();
-
-    _addLogEntry(name, uidChanged ? "Edit User (RFID Replaced)" : "Edit User", "success");
-
-    _sendJSON(request, 200, doc);
-}
-
-/**
- * API: GET /api/rfid/scan
- * Return the last scanned RFID UID (for frontend enrollment polling)
- */
-void WebServer::_handleAPIRfidScan(AsyncWebServerRequest* request) {
-    // Avoid polling the MFRC522 from async HTTP context. The main loop is the
-    // single reader owner and updates the latest scan state continuously.
-
-    const unsigned long scanMs = _auth->getLastRFIDScanMs();
-    const String lastUID = _auth->getLastRFIDUID();
-    const bool scanned = (scanMs > 0 && lastUID.length() > 0);
-    const bool known = scanned ? _auth->userExists(lastUID) : false;
-    const String knownUserName = known ? _auth->getUserName(lastUID) : "";
-
-    JsonDocument doc;
-    doc["scanned"] = scanned;
-    doc["known"] = known;
-    doc["status"] = known ? "registered" : "unregistered";
-    if (scanned) {
-        doc["uid"] = lastUID;
-        doc["scanTimestamp"] = scanMs;
-        doc["userName"] = knownUserName;
-    }
-    doc["lastUid"] = lastUID;
-    doc["lastScanTimestamp"] = scanMs;
-    doc["timestamp"] = millis();
-    
-    _sendJSON(request, 200, doc);
-}
-
-void WebServer::_handleAPIDiagnostics(AsyncWebServerRequest* request) {
-    JsonDocument doc;
-    int rawUsers = 0;
-    int uniqueUsers = 0;
-    int invalidUsers = 0;
-    int duplicateUsers = 0;
-    _collectUsersStorageStats(&rawUsers, &uniqueUsers, &invalidUsers, &duplicateUsers);
-
-    doc["rfidReady"] = _auth->isRFIDReady();
-    doc["rfidRstActivePin"] = _auth->getActiveRFIDRstPin();
-    doc["rfidCooldownActive"] = _auth->isRFIDCooldownActive();
-    doc["lastRfidUid"] = _auth->getLastRFIDUID();
-    doc["lastRfidScanMs"] = _auth->getLastRFIDScanMs();
-    doc["keypadReady"] = _auth->isKeypadReady();
-    doc["keypadMuted"] = _auth->isKeypadMuted();
-    doc["keypadMuteRemainingMs"] = _auth->getKeypadMuteRemainingMs();
-    doc["keypadLastKey"] = getLastKeypadKeyLabel();
-    doc["keypadLastKeyMs"] = getLastKeypadKeyMs();
-    doc["buzzerActive"] = _security->isBuzzerActive();
-    doc["sirenActive"] = _security->isSirenActive();
-    doc["vibrationLatched"] = _security->isVibrationLatched();
-    doc["activeUsers"] = _auth->getUserCount();
-    doc["rawUsers"] = rawUsers;
-    doc["uniqueUsers"] = uniqueUsers;
-    doc["invalidUsers"] = invalidUsers;
-    doc["duplicateUsers"] = duplicateUsers;
-    doc["usersStorageMismatch"] = (_auth->getUserCount() != uniqueUsers) || (invalidUsers > 0) || (duplicateUsers > 0);
-    doc["timestamp"] = millis();
-    _sendJSON(request, 200, doc);
-}
-
-/**
- * API: GET /api/logs
- * Get activity logs
- */
-void WebServer::_handleAPILogs(AsyncWebServerRequest* request) {
-    // Intentionally silent: dashboard polls logs frequently and serial spam can
-    // hide important security events.
-
-    JsonDocument storageDoc;
-    if (LittleFS.exists("/logs.json")) {
-        File file = LittleFS.open("/logs.json", "r");
-        DeserializationError error = deserializeJson(storageDoc, file);
-        file.close();
-
-        if (error || !storageDoc["logs"].is<JsonArray>()) {
-            storageDoc.clear();
-            storageDoc["logs"] = JsonArray();
-        }
-    } else {
-        storageDoc["logs"] = JsonArray();
-    }
-
-    // Return newest-first for instant top-of-list updates in UI.
-    JsonDocument responseDoc;
-    JsonArray responseLogs = responseDoc["logs"].to<JsonArray>();
-    JsonArray sourceLogs = storageDoc["logs"].as<JsonArray>();
-
-    for (int i = static_cast<int>(sourceLogs.size()) - 1; i >= 0; --i) {
-        if (!sourceLogs[i].is<JsonObject>()) {
-            continue;
-        }
-
-        JsonObject src = sourceLogs[i].as<JsonObject>();
-        JsonObject dst = responseLogs.add<JsonObject>();
-        for (JsonPair kv : src) {
-            dst[kv.key().c_str()] = kv.value();
-        }
-    }
-
-    _sendJSON(request, 200, responseDoc);
-}
-
-/**
- * API: DELETE /api/logs
- * Clear all activity logs (fresh start)
- */
-void WebServer::_handleAPIClearLogs(AsyncWebServerRequest* request) {
-    Serial.println("[API] DELETE /api/logs - Clear all logs");
-
-    JsonDocument logsDoc;
-    logsDoc["logs"] = JsonArray();
-
-    bool cleared = false;
-    File file = LittleFS.open("/logs.json", "w");
-    if (file) {
-        serializeJson(logsDoc, file);
-        file.close();
-        cleared = true;
-    }
-
-    JsonDocument response;
-    response["success"] = cleared;
-    response["message"] = cleared ? "All logs cleared" : "Failed to clear logs";
-
-    _sendJSON(request, cleared ? 200 : 500, response);
 }
 
 // ============================================================
 // PRIVATE - Utilities
 // ============================================================
 
-/**
- * Get MIME type from filename
- */
 String WebServer::_getMimeType(const String& filename) {
     if (filename.endsWith(".html")) return "text/html";
     if (filename.endsWith(".css"))  return "text/css";
@@ -1554,9 +479,6 @@ String WebServer::_getMimeType(const String& filename) {
     return "text/plain";
 }
 
-/**
- * Send JSON response with CORS headers
- */
 void WebServer::_sendJSON(AsyncWebServerRequest* request, int code, const JsonDocument& doc) {
     String response;
     serializeJson(doc, response);
@@ -1566,23 +488,36 @@ void WebServer::_sendJSON(AsyncWebServerRequest* request, int code, const JsonDo
     request->send(resp);
 }
 
-/**
- * Add CORS headers to response
- */
 void WebServer::_addCORSHeaders(AsyncWebServerResponse* response) {
     response->addHeader("Access-Control-Allow-Origin", "*");
     response->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-    response->addHeader("Access-Control-Allow-Headers", "Content-Type");
+    response->addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+}
+
+void WebServer::_addSecurityHeaders(AsyncWebServerResponse* response) {
+    response->addHeader("X-Content-Type-Options", "nosniff");
+    response->addHeader("X-Frame-Options", "DENY");
+    response->addHeader("Referrer-Policy", "no-referrer");
+    response->addHeader("Cross-Origin-Resource-Policy", "same-origin");
+    response->addHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+}
+
+void WebServer::_addStaticCacheHeaders(AsyncWebServerResponse* response) {
+    _addSecurityHeaders(response);
+
+    response->addHeader("Cache-Control", "public, max-age=600, stale-while-revalidate=120");
+    response->addHeader("Vary", "Accept-Encoding");
 }
 
 void WebServer::_addNoCacheHeaders(AsyncWebServerResponse* response) {
+    _addSecurityHeaders(response);
+
     response->addHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
     response->addHeader("Pragma", "no-cache");
     response->addHeader("Expires", "0");
 }
 
 bool WebServer::_syncUsersFileFromAuth(JsonDocument* responseDoc) {
-    // Read current users.json (if available) so we can preserve non-auth metadata (e.g., settings).
     JsonDocument currentDoc;
     if (LittleFS.exists("/users.json")) {
         File file = LittleFS.open("/users.json", "r");
@@ -1612,7 +547,6 @@ bool WebServer::_syncUsersFileFromAuth(JsonDocument* responseDoc) {
             continue;
         }
 
-        // Do not expose temporary guest PIN pseudo-users in User Management.
         if (uid.startsWith("GUEST_")) {
             continue;
         }
@@ -1624,7 +558,6 @@ bool WebServer::_syncUsersFileFromAuth(JsonDocument* responseDoc) {
 
         String type = "user";
 
-        // Preserve explicit role from existing users.json if one exists.
         for (JsonObject existing : existingUsers) {
             String existingUid = normalizeUID(existing["uid"] | "");
             if (existingUid != uid) {
@@ -1649,7 +582,6 @@ bool WebServer::_syncUsersFileFromAuth(JsonDocument* responseDoc) {
         user["backupPIN"] = _auth->getUserBackupPIN(uid);
     }
 
-    // Keep optional settings section if present.
     if (currentDoc["settings"].is<JsonObject>()) {
         JsonObject currentSettings = currentDoc["settings"].as<JsonObject>();
         JsonObject outSettings = outDoc["settings"].to<JsonObject>();
@@ -1658,15 +590,79 @@ bool WebServer::_syncUsersFileFromAuth(JsonDocument* responseDoc) {
         }
     }
 
-    // Self-heal users.json whenever it diverges from auth storage
-    // (prevents "empty UI but RFID still grants access" drift after uploadfs).
+    auto normalizeType = [](const JsonObjectConst& obj) {
+        String type = obj["type"] | "user";
+        type.trim();
+        type.toLowerCase();
+        if (type.isEmpty()) {
+            type = "user";
+        }
+        return type;
+    };
+
+    auto normalizedUidFromObject = [](const JsonObjectConst& obj) {
+        String uid = normalizeUID(obj["uid"] | "");
+        if (uid.isEmpty()) {
+            uid = normalizeUID(obj["cardUID"] | "");
+        }
+        if (uid.isEmpty()) {
+            uid = normalizeUID(obj["cardUid"] | "");
+        }
+        return uid;
+    };
+
+    auto usersEquivalent = [&](const JsonArrayConst& lhs, const JsonArrayConst& rhs) {
+        if (lhs.size() != rhs.size()) {
+            return false;
+        }
+
+        for (JsonObjectConst rhsUser : rhs) {
+            const String rhsUid = normalizedUidFromObject(rhsUser);
+            if (rhsUid.isEmpty()) {
+                return false;
+            }
+
+            bool matched = false;
+            for (JsonObjectConst lhsUser : lhs) {
+                if (normalizedUidFromObject(lhsUser) != rhsUid) {
+                    continue;
+                }
+
+                String lhsName = lhsUser["name"] | "";
+                String rhsName = rhsUser["name"] | "";
+                lhsName.trim();
+                rhsName.trim();
+
+                String lhsChat = lhsUser["telegramChatID"] | "";
+                String rhsChat = rhsUser["telegramChatID"] | "";
+                lhsChat.trim();
+                rhsChat.trim();
+
+                String lhsBackup = lhsUser["backupPIN"] | "";
+                String rhsBackup = rhsUser["backupPIN"] | "";
+                lhsBackup.trim();
+                rhsBackup.trim();
+
+                if (lhsName == rhsName
+                    && normalizeType(lhsUser) == normalizeType(rhsUser)
+                    && lhsChat == rhsChat
+                    && lhsBackup == rhsBackup) {
+                    matched = true;
+                }
+                break;
+            }
+
+            if (!matched) {
+                return false;
+            }
+        }
+
+        return true;
+    };
+
     bool shouldRewriteUsersFile = !LittleFS.exists("/users.json");
-    String existingUsersSerialized;
-    String outUsersSerialized;
-    serializeJson(existingUsers, existingUsersSerialized);
-    serializeJson(outUsers, outUsersSerialized);
-    if (existingUsersSerialized != outUsersSerialized) {
-        shouldRewriteUsersFile = true;
+    if (!shouldRewriteUsersFile) {
+        shouldRewriteUsersFile = !usersEquivalent(existingUsers, outUsers);
     }
 
     if (!shouldRewriteUsersFile) {
@@ -1807,78 +803,4 @@ void WebServer::_cleanupGuestUsers() {
         Serial.print("[WEB] Cleaned stale guest auth entries: ");
         Serial.println(guestCount);
     }
-}
-
-/**
- * Add an entry to the activity log (logs.json on LittleFS)
- */
-void WebServer::_addLogEntry(const String& user, const String& method, const String& status) {
-    JsonDocument logsDoc;
-    
-    if (LittleFS.exists("/logs.json")) {
-        File file = LittleFS.open("/logs.json", "r");
-        if (file) {
-            DeserializationError err = deserializeJson(logsDoc, file);
-            file.close();
-            if (err || !logsDoc.is<JsonObject>()) {
-                logsDoc.clear();
-            }
-        }
-    }
-    
-    if (!logsDoc["logs"].is<JsonArray>()) {
-        logsDoc["logs"] = JsonArray();
-    }
-    
-    JsonArray logs = logsDoc["logs"].as<JsonArray>();
-    
-    // Cap at 50 entries — remove oldest (FIFO) to prevent LittleFS overflow
-    while (logs.size() >= 50) {
-        logs.remove(0);
-    }
-    
-    // Build accurate world time (UTC) when NTP is available.
-    // Store both display text and machine-readable timestamps.
-    char timeStr[40];
-    unsigned long long epochMs = 0;
-    time_t now = time(nullptr);
-    if (now > 1700000000) {
-        struct tm utcTime;
-        gmtime_r(&now, &utcTime);
-        strftime(timeStr, sizeof(timeStr), "%Y-%m-%dT%H:%M:%SZ", &utcTime);
-        epochMs = static_cast<unsigned long long>(now) * 1000ULL;
-    } else {
-        unsigned long sec = millis() / 1000;
-        unsigned long m = (sec / 60) % 60;
-        unsigned long h = (sec / 3600) % 24;
-        snprintf(timeStr, sizeof(timeStr), "%02lu:%02lu (uptime)", h, m);
-    }
-    
-    JsonObject entry = logs.add<JsonObject>();
-    entry["time"]   = String(timeStr);
-    entry["epochMs"] = epochMs;
-    entry["user"]   = user;
-    entry["method"] = method;
-    entry["status"] = status;
-    
-    File wFile = LittleFS.open("/logs.json", "w");
-    if (!wFile) {
-        Serial.println("[LOG][WARN] Failed to open /logs.json for write");
-        return;
-    }
-
-    const size_t written = serializeJson(logsDoc, wFile);
-    wFile.close();
-
-    if (written == 0) {
-        Serial.println("[LOG][WARN] Failed to write /logs.json");
-        return;
-    }
-    
-    Serial.print("[LOG] ");
-    Serial.print(user);
-    Serial.print(" | ");
-    Serial.print(method);
-    Serial.print(" | ");
-    Serial.println(status);
 }

@@ -14,12 +14,14 @@
  *   - AuthHandler (user management)
  * 
  * FILE SERVING:
- *   GET /                 → /html/index.html
- *   GET /css/style.css    → /css/style.css
- *   GET /js/main.js       → /js/main.js (modular entrypoint)
- *   GET /js/script.js     → /js/script.js (legacy compatibility shim)
+ *   GET /                 → /html/pages/dashboard.html (canonical dashboard page)
+ *   GET /css/style.css    → /css/style.css (modular stylesheet aggregator)
+ *   Other static assets   → served by onNotFound LittleFS fallback
  * 
  * API ENDPOINTS:
+ *   POST   /api/auth/login  → Authenticate admin and issue API session token
+ *   POST   /api/auth/logout → Revoke active API session token
+ *   GET    /api/auth/status → Current API authentication status
  *   GET    /api/status      → System status JSON
  *   POST   /api/unlock      → Remote unlock (emergency override)
  *   POST   /api/guest-code  → Disabled (guest PIN is Telegram-managed)
@@ -41,7 +43,7 @@
  * 
  * USAGE:
  *   WebServer webServer(&lockManager, &securityManager, &authHandler);
- *   webServer.init("SSID", "PASSWORD");
+ *   webServer.init();
  *   // No update needed - fully async
  * 
  * ============================================================
@@ -65,11 +67,12 @@ public:
     WebServer(LockManager* lockManager, SecurityManager* securityManager, AuthHandler* authHandler);
     
     // Lifecycle
-    void init(const char* ssid, const char* password);
+    void init();
     void update();
     bool isConnected() const;
     String getIPAddress() const;
     void markEmergencyOverride();
+    unsigned long getEmergencyCooldownRemainingMs() const;
 
     // Runtime activity logging hook (used by main authentication flow)
     void logActivity(const String& user, const String& method, const String& status);
@@ -87,21 +90,31 @@ private:
     
     // Emergency command management
     unsigned long _lastEmergencyUnlockMs;
+    String _apiSessionToken;
+    unsigned long _apiSessionIssuedAtMs;
+    unsigned long _apiSessionExpiresAtMs;
+    int _authFailedAttempts;
+    unsigned long _authLockoutUntilMs;
 
     static constexpr unsigned long EMERGENCY_COOLDOWN_MS = 5000;
+    static constexpr unsigned long API_SESSION_TTL_MS = 15UL * 60UL * 1000UL;
+    static constexpr int AUTH_MAX_FAILED_ATTEMPTS = 5;
+    static constexpr unsigned long AUTH_LOCKOUT_MS = 5UL * 60UL * 1000UL;
     
     // Initialization helpers
-    void _initWiFi(const char* ssid, const char* password);
+    void _initWiFi();
     void _initFileSystem();
     void _setupRoutes();
     
     // Route handlers - Static files
     void _handleRoot(AsyncWebServerRequest* request);
     void _handleCSS(AsyncWebServerRequest* request);
-    void _handleJS(AsyncWebServerRequest* request);
     void _handleNotFound(AsyncWebServerRequest* request);
     
     // Route handlers - API
+    void _handleAPIAuthLogin(AsyncWebServerRequest* request, uint8_t* data, size_t len);
+    void _handleAPIAuthLogout(AsyncWebServerRequest* request);
+    void _handleAPIAuthStatus(AsyncWebServerRequest* request);
     void _handleAPIStatus(AsyncWebServerRequest* request);
     void _handleAPIUnlock(AsyncWebServerRequest* request);
     void _handleAPIGuestCode(AsyncWebServerRequest* request);
@@ -122,7 +135,15 @@ private:
     String _getMimeType(const String& filename);
     void _sendJSON(AsyncWebServerRequest* request, int code, const JsonDocument& doc);
     void _addCORSHeaders(AsyncWebServerResponse* response);
+    void _addSecurityHeaders(AsyncWebServerResponse* response);
+    void _addStaticCacheHeaders(AsyncWebServerResponse* response);
     void _addNoCacheHeaders(AsyncWebServerResponse* response);
+    bool _isApiSessionValid() const;
+    String _extractBearerToken(AsyncWebServerRequest* request) const;
+    bool _requireApiAuth(AsyncWebServerRequest* request);
+    String _generateApiSessionToken() const;
+    void _invalidateApiSession();
+    bool _secureEquals(const String& a, const String& b) const;
     unsigned long _remainingCooldownMs(unsigned long lastActionMs, unsigned long cooldownMs) const;
     bool _syncUsersFileFromAuth(JsonDocument* responseDoc = nullptr);
     void _collectUsersStorageStats(int* rawCount, int* uniqueCount, int* invalidCount, int* duplicateCount);

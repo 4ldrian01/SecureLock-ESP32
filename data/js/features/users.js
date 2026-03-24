@@ -5,6 +5,66 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         ? DOM.btnSubmitAdd.innerHTML
         : 'Save User';
 
+    function normalizeUsersForDisplay(users) {
+        // Enforce single-admin view: keep first admin only, convert duplicates to regular users.
+        let adminSeen = false;
+
+        return (Array.isArray(users) ? users : []).map((user) => {
+            const normalized = { ...user };
+            const role = (normalized.type || normalized.role || 'user').toString().toLowerCase();
+            const uid = (normalized.uid || normalized.cardUID || '').toString().trim().toUpperCase();
+            const isAdmin = role === 'admin' || uid === 'DEFAULT_ADMIN';
+
+            if (isAdmin) {
+                if (!adminSeen) {
+                    normalized.type = 'admin';
+                    adminSeen = true;
+                } else {
+                    normalized.type = 'user';
+                }
+            }
+
+            return normalized;
+        });
+    }
+
+    function createUserFingerprint(user) {
+        return [
+            String(user?.cardUID || user?.uid || '').trim().toUpperCase(),
+            String(user?.name || '').trim(),
+            String(user?.type || user?.role || 'user').trim().toLowerCase(),
+            String(user?.telegramChatID || user?.chat_id || '').trim(),
+            String(user?.backupPIN || user?.backup_pin || '').trim()
+        ].join('|');
+    }
+
+    function buildUserCardInnerHTML(user) {
+        const role = user.type || user.role || 'user';
+        const badgeClass = role === 'admin' ? 'badge-admin'
+            : role === 'guest' ? 'badge-guest'
+                : 'badge-user';
+        const isAdmin = role === 'admin';
+        const uid = String(user.cardUID || user.uid || '').trim().toUpperCase();
+
+        return `<div class="user-info">
+                <div class="user-name-row">
+                    <span class="user-name">${escapeHtml(user.name || 'Unknown')}</span>
+                    <span class="user-badge ${badgeClass}">${escapeHtml(role.toUpperCase())}</span>
+                </div>
+                <div class="user-meta">
+                    <span class="user-uid">${escapeHtml(uid || '--')}</span>
+                </div>
+            </div>
+            <div class="user-actions">
+                <button class="btn-edit" title="Edit user" data-action="edit" data-uid="${escapeHtml(uid)}">
+                    <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+                </button>
+                ${isAdmin ? '' : `<button class="btn-delete" title="Delete user" data-action="delete" data-uid="${escapeHtml(uid)}">
+                    <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+                </button>`}
+            </div>`;
+    }
+
     function isAlphabeticName(name) {
         const trimmed = String(name || '').trim();
         if (!trimmed) {
@@ -140,6 +200,7 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         try {
             const data = await apiFetch(getUsersEndpointNoCache());
             const users = data.users || data || [];
+            const normalizedUsers = normalizeUsersForDisplay(users);
 
             state.usersByUid = {};
             users.forEach((user) => {
@@ -149,13 +210,13 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
                 }
             });
 
-            const usersHash = JSON.stringify(users);
+            const usersHash = normalizedUsers.map(createUserFingerprint).join('||');
             if (usersHash === state.lastUsersHash) {
                 return;
             }
 
             state.lastUsersHash = usersHash;
-            renderUsers(users);
+            renderUsers(normalizedUsers);
         } catch {
             DOM.usersGrid.innerHTML =
                 '<p style="color:var(--text-muted);text-align:center;padding:2rem;">Unable to load users</p>';
@@ -164,60 +225,71 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
 
     function renderUsers(users) {
         if (!Array.isArray(users) || users.length === 0) {
-            DOM.usersGrid.innerHTML =
-                '<p class="users-empty">' +
-                'No users registered. Tap "Add User" to get started.</p>';
+            if (!DOM.usersGrid.querySelector('.users-empty')) {
+                DOM.usersGrid.innerHTML =
+                    '<p class="users-empty">' +
+                    'No users registered. Tap "Add User" to get started.</p>';
+            }
+
+            state.renderedUserFingerprints = {};
+            state.renderedUserOrder = [];
             return;
         }
 
-        // Enforce single-admin view: keep first admin only, convert duplicates to regular users.
-        let adminSeen = false;
-        const normalizedUsers = users.map((user) => {
-            const normalized = { ...user };
-            const role = (normalized.type || normalized.role || 'user').toString().toLowerCase();
-            const uid = (normalized.uid || '').toString().trim().toUpperCase();
+        const emptyStateNode = DOM.usersGrid.querySelector('.users-empty');
+        if (emptyStateNode) {
+            emptyStateNode.remove();
+        }
 
-            const isAdmin = role === 'admin' || uid === 'DEFAULT_ADMIN';
-            if (isAdmin) {
-                if (!adminSeen) {
-                    normalized.type = 'admin';
-                    adminSeen = true;
-                } else {
-                    normalized.type = 'user';
-                }
-            }
-
-            return normalized;
+        const existingCards = new Map();
+        DOM.usersGrid.querySelectorAll('.user-card[data-uid]').forEach((card) => {
+            existingCards.set(String(card.dataset.uid || '').trim().toUpperCase(), card);
         });
 
-        DOM.usersGrid.innerHTML = normalizedUsers.map(user => {
-            const role = user.type || user.role || 'user';
-            const badgeClass = role === 'admin' ? 'badge-admin'
-                : role === 'guest' ? 'badge-guest'
-                    : 'badge-user';
-            const isAdmin = role === 'admin';
+        const nextFingerprints = {};
+        const nextOrder = [];
+        const cardsInOrder = [];
 
-            return `<div class="user-card" role="listitem" data-uid="${escapeHtml(user.uid || '')}">
-                <div class="user-info">
-                    <div class="user-name-row">
-                        <span class="user-name">${escapeHtml(user.name || 'Unknown')}</span>
-                        <span class="user-badge ${badgeClass}">${escapeHtml(role.toUpperCase())}</span>
-                    </div>
-                    <div class="user-meta">
-                        <span class="user-uid">${escapeHtml(user.cardUID || user.uid || '--')}</span>
-                    </div>
-                </div>
-                <div class="user-actions">
-                    <button class="btn-edit" title="Edit user" data-action="edit" data-uid="${escapeHtml(user.cardUID || user.uid || '')}">
-                        <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
-                    </button>
-                    ${isAdmin ? '' : `<button class="btn-delete" title="Delete user" data-action="delete"
-                            data-uid="${escapeHtml(user.cardUID || user.uid || '')}">
-                        <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
-                    </button>`}
-                </div>
-            </div>`;
-        }).join('');
+        users.forEach((user) => {
+            const uid = String(user.cardUID || user.uid || '').trim().toUpperCase();
+            if (!uid) {
+                return;
+            }
+
+            const fingerprint = createUserFingerprint(user);
+            nextFingerprints[uid] = fingerprint;
+            nextOrder.push(uid);
+
+            let card = existingCards.get(uid);
+            if (!card) {
+                card = document.createElement('div');
+                card.className = 'user-card';
+                card.setAttribute('role', 'listitem');
+                card.dataset.uid = uid;
+                DOM.usersGrid.appendChild(card);
+                existingCards.set(uid, card);
+            }
+
+            if (state.renderedUserFingerprints[uid] !== fingerprint || card.dataset.rendered !== '1') {
+                card.innerHTML = buildUserCardInnerHTML(user);
+                card.dataset.rendered = '1';
+            }
+
+            cardsInOrder.push(card);
+        });
+
+        existingCards.forEach((card, uid) => {
+            if (!nextFingerprints[uid]) {
+                card.remove();
+            }
+        });
+
+        cardsInOrder.forEach((card) => {
+            DOM.usersGrid.appendChild(card);
+        });
+
+        state.renderedUserFingerprints = nextFingerprints;
+        state.renderedUserOrder = nextOrder;
     }
 
     function handleDeleteUser(uid) {
@@ -289,7 +361,7 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         state.rfidPollSession = Number(state.rfidPollSession || 0) + 1;
 
         if (state.rfidPollTimer) {
-            clearInterval(state.rfidPollTimer);
+            clearTimeout(state.rfidPollTimer);
             state.rfidPollTimer = null;
         }
     }
@@ -311,9 +383,14 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             setFormError('editUserRfidError', '');
         }
 
+        const basePollInterval = Math.max(150, Number(CONFIG.RFID_POLL_INTERVAL || 400));
+        const hiddenPollInterval = Math.max(basePollInterval, Number(CONFIG.RFID_POLL_INTERVAL_HIDDEN || 1000));
+        const maxPollInterval = Math.max(hiddenPollInterval, Number(CONFIG.RFID_POLL_MAX_INTERVAL || 2000));
+        let currentPollInterval = document.hidden ? hiddenPollInterval : basePollInterval;
+
         const pollRfidOnce = async () => {
             if (sessionId !== Number(state.rfidPollSession || 0)) {
-                return;
+                return { captured: false, error: false };
             }
 
             try {
@@ -344,7 +421,7 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
                                 : 'RFID already registered. Scan a different card.'
                         );
                         feedback.showToast('Registered RFID detected. Please scan an unregistered card.', 'error');
-                        return;
+                        return { captured: false, error: false };
                     }
 
                     if (isEditFlow && known && normalizedUid !== editingUid) {
@@ -359,7 +436,7 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
                                 : 'RFID already belongs to another user. Scan another card.'
                         );
                         feedback.showToast('Card is already assigned to another user.', 'error');
-                        return;
+                        return { captured: false, error: false };
                     }
 
                     targetInput.value = normalizedUid;
@@ -378,10 +455,44 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
                     } else {
                         feedback.showToast('Unregistered RFID detected: ' + normalizedUid, 'success');
                     }
+
+                    return { captured: true, error: false };
                 }
+
+                return { captured: false, error: false };
             } catch {
-                // Keep polling silently
+                return { captured: false, error: true };
             }
+        };
+
+        const scheduleNextPoll = (delayMs) => {
+            if (sessionId !== Number(state.rfidPollSession || 0)) {
+                return;
+            }
+
+            state.rfidPollTimer = setTimeout(async () => {
+                if (sessionId !== Number(state.rfidPollSession || 0)) {
+                    return;
+                }
+
+                const result = await pollRfidOnce();
+
+                if (result.captured || sessionId !== Number(state.rfidPollSession || 0)) {
+                    return;
+                }
+
+                const preferredInterval = document.hidden ? hiddenPollInterval : basePollInterval;
+                if (result.error) {
+                    currentPollInterval = Math.min(
+                        maxPollInterval,
+                        Math.round(Math.max(currentPollInterval, preferredInterval) * 1.35)
+                    );
+                } else {
+                    currentPollInterval = preferredInterval;
+                }
+
+                scheduleNextPoll(currentPollInterval);
+            }, Math.max(120, Number(delayMs) || basePollInterval));
         };
 
         // Baseline from current scan state so we only accept scans that happen
@@ -402,23 +513,10 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             }
 
             // Run once immediately after baseline so stale scans don't auto-fill.
-            await pollRfidOnce();
-
-            if (sessionId !== Number(state.rfidPollSession || 0)) {
-                return;
+            const firstResult = await pollRfidOnce();
+            if (!firstResult.captured) {
+                scheduleNextPoll(currentPollInterval);
             }
-
-            state.rfidPollTimer = setInterval(() => {
-                if (sessionId !== Number(state.rfidPollSession || 0)) {
-                    if (state.rfidPollTimer) {
-                        clearInterval(state.rfidPollTimer);
-                        state.rfidPollTimer = null;
-                    }
-                    return;
-                }
-
-                pollRfidOnce();
-            }, CONFIG.RFID_POLL_INTERVAL);
         })();
     }
 

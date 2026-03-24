@@ -1,0 +1,66 @@
+.pin-display {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--border-glass);
+    border-radius: var(--radius-md);
+    padding: var(--space-xl);
+    text-align: center;
+    margin-bottom: var(--space-lg);
+}
+
+.pin-code {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    align-items: center;
+    margin: 1.5rem 0;
+    font-family: var(--font-mono);
+    font-size: 3rem;
+    font-weight: 700;
+    letter-spacing: 0.3em;
+    color: var(--primary-light);
+    text-shadow: 0 0 20px rgba(59, 130, 246, 0.5);
+}
+
+.pin-digit {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 3.5rem;
+    height: 4rem;
+    background: rgba(59, 130, 246, 0.15);
+    border: 2px solid rgba(59, 130, 246, 0.3);
+    border-radius: var(--radius-md);
+    font-size: 2rem;
+    font-weight: 700;
+    font-family: var(--font-mono);
+    color: var(--primary-light);
+    line-height: 1;
+    transform: translateZ(0);
+}
+
+.pin-timer {
+    font-size: 0.875rem;
+    color: var(--text-muted);
+}
+
+.pin-timer[data-expired="true"] {
+    color: var(--danger);
+}
+
+@media (max-width: 1023px) {
+    .pin-display {
+        padding: 14px 12px;
+        margin-bottom: 12px;
+    }
+
+    .pin-code {
+        margin: 0.8rem 0;
+        gap: 0.5rem;
+    }
+
+    .pin-digit {
+        width: 2.5rem;
+        height: 3rem;
+        font-size: 1.35rem;
+    }
+}

@@ -81,6 +81,7 @@
     transform: translateZ(0);
     transition: all var(--transition-normal);
     gap: 1.5rem;
+    contain: layout paint;
 }
 
 .user-card:hover {

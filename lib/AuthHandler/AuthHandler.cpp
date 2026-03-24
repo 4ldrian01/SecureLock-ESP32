@@ -7,6 +7,7 @@
 #include "AuthHandler.h"
 #include <SPI.h>
 #include <LittleFS.h>
+#include <StorageService.h>
 
 const char* AuthHandler::DURESS_CODE = "2580";
 
@@ -822,7 +823,7 @@ JsonObject AuthHandler::_findUserByUID(const String& uid) {
 }
 
 bool AuthHandler::_ensureFileSystemReady() {
-    if (LittleFS.begin(false)) {
+    if (StorageService::instance().ensureMounted()) {
         return true;
     }
 

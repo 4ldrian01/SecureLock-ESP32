@@ -3,14 +3,21 @@
 
 Write-Host "=== SecureLock Build Script ===" -ForegroundColor Cyan
 
-# Set PlatformIO path
-$pioPath = "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe"
+# Set PlatformIO path (prefer stable local core install on this workstation)
+$pioCandidates = @(
+    "C:\pio_core\penv\Scripts\platformio.exe",
+    "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe"
+)
+
+$pioPath = $pioCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 
 # Check if PlatformIO exists
-if (-not (Test-Path $pioPath)) {
-    Write-Host "ERROR: PlatformIO not found at $pioPath" -ForegroundColor Red
+if (-not $pioPath) {
+    Write-Host "ERROR: PlatformIO not found. Checked: $($pioCandidates -join ', ')" -ForegroundColor Red
     exit 1
 }
+
+Write-Host "Using PlatformIO: $pioPath" -ForegroundColor DarkGray
 
 # Clean .pio folder
 Write-Host "`n[1/4] Cleaning build folder..." -ForegroundColor Yellow

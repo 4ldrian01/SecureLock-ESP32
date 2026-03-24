@@ -1,5 +1,4 @@
-const SESSION_KEY = 'securelock_admin_session_v1';
-const LOCKOUT_KEY = 'securelock_admin_lockout_v1';
+const DEFAULT_SESSION_KEY = 'securelock_admin_api_session_v2';
 
 function safeParse(value, fallback) {
     if (!value) {
@@ -28,26 +27,24 @@ function formatLockout(msRemaining) {
     return `${toTwoDigits(min)}:${toTwoDigits(sec)}`;
 }
 
-async function sha256Hex(input) {
-    const data = new TextEncoder().encode(String(input || ''));
-    const digest = await crypto.subtle.digest('SHA-256', data);
-    return Array.from(new Uint8Array(digest))
-        .map((b) => b.toString(16).padStart(2, '0'))
-        .join('');
-}
-
-export function createAuthFeature({ CONFIG, DOM, feedback, onAuthenticated, onLogout }) {
+export function createAuthFeature({
+    CONFIG,
+    DOM,
+    feedback,
+    apiFetch,
+    setApiAuthToken,
+    clearApiAuthToken,
+    onAuthenticated,
+    onLogout
+}) {
     let authenticated = false;
     let sessionTimer = null;
     let lockoutTimer = null;
+    let lockoutUntilMs = 0;
 
     const authConfig = CONFIG.ADMIN_AUTH || {};
-
     const SESSION_TTL_MS = Number(authConfig.SESSION_TTL_MS || (15 * 60 * 1000));
-    const MAX_ATTEMPTS = Number(authConfig.MAX_ATTEMPTS || 5);
-    const LOCKOUT_MS = Number(authConfig.LOCKOUT_MS || (5 * 60 * 1000));
-    const ADMIN_USERNAME = String(authConfig.USERNAME || 'admin').trim().toLowerCase();
-    const ADMIN_PASSWORD_SHA256 = String(authConfig.PASSWORD_SHA256 || '').trim().toLowerCase();
+    const SESSION_KEY = String(CONFIG.AUTH_SESSION_KEY || DEFAULT_SESSION_KEY);
 
     function readSession() {
         return safeParse(sessionStorage.getItem(SESSION_KEY), null);
@@ -66,54 +63,9 @@ export function createAuthFeature({ CONFIG, DOM, feedback, onAuthenticated, onLo
             return false;
         }
 
+        const token = String(session.token || '').trim();
         const expiresAt = Number(session.expiresAt || 0);
-        return Number.isFinite(expiresAt) && expiresAt > nowMs();
-    }
-
-    function createSession() {
-        const current = nowMs();
-        return {
-            issuedAt: current,
-            lastActivityAt: current,
-            expiresAt: current + SESSION_TTL_MS
-        };
-    }
-
-    function touchSession() {
-        const session = readSession();
-        if (!isSessionValid(session)) {
-            return false;
-        }
-
-        const current = nowMs();
-        session.lastActivityAt = current;
-        session.expiresAt = current + SESSION_TTL_MS;
-        writeSession(session);
-        return true;
-    }
-
-    function readLockoutState() {
-        const parsed = safeParse(localStorage.getItem(LOCKOUT_KEY), null);
-        return {
-            failedAttempts: Number(parsed?.failedAttempts || 0),
-            lockoutUntil: Number(parsed?.lockoutUntil || 0)
-        };
-    }
-
-    function writeLockoutState(nextState) {
-        localStorage.setItem(LOCKOUT_KEY, JSON.stringify({
-            failedAttempts: Number(nextState?.failedAttempts || 0),
-            lockoutUntil: Number(nextState?.lockoutUntil || 0)
-        }));
-    }
-
-    function resetLockoutState() {
-        writeLockoutState({ failedAttempts: 0, lockoutUntil: 0 });
-    }
-
-    function getLockoutRemainingMs() {
-        const { lockoutUntil } = readLockoutState();
-        return Math.max(0, lockoutUntil - nowMs());
+        return token.length > 0 && Number.isFinite(expiresAt) && expiresAt > nowMs();
     }
 
     function setAuthenticatedUI(isAuthenticated) {
@@ -125,6 +77,10 @@ export function createAuthFeature({ CONFIG, DOM, feedback, onAuthenticated, onLo
             DOM.statusBadge.dataset.status = 'offline';
             DOM.statusText.textContent = 'Locked';
         }
+    }
+
+    function getLockoutRemainingMs() {
+        return Math.max(0, Number(lockoutUntilMs || 0) - nowMs());
     }
 
     function updateLockoutUI() {
@@ -180,65 +136,83 @@ export function createAuthFeature({ CONFIG, DOM, feedback, onAuthenticated, onLo
         }
     }
 
-    function onUserActivity() {
-        if (!authenticated) {
-            return;
+    function beginAuthenticatedSession({ token, expiresInMs }) {
+        const now = nowMs();
+        const ttl = Math.max(1000, Number(expiresInMs || SESSION_TTL_MS));
+        const session = {
+            token: String(token || '').trim(),
+            issuedAt: now,
+            expiresAt: now + ttl
+        };
+
+        if (!session.token) {
+            return false;
         }
 
-        touchSession();
-    }
-
-    function registerActivityListeners() {
-        ['pointerdown', 'keydown', 'touchstart', 'mousemove'].forEach((eventName) => {
-            window.addEventListener(eventName, onUserActivity, { passive: true });
-        });
-    }
-
-    function beginAuthenticatedSession() {
         authenticated = true;
-        writeSession(createSession());
-        resetLockoutState();
+        lockoutUntilMs = 0;
+        setApiAuthToken(session.token);
+        writeSession(session);
+
         DOM.adminLoginError.textContent = '';
         DOM.adminLockoutMessage.textContent = '';
         DOM.adminLoginPassword.value = '';
+
         setAuthenticatedUI(true);
         startSessionTimer();
 
         if (typeof onAuthenticated === 'function') {
             onAuthenticated();
         }
+
+        return true;
     }
 
-    function forceLogout(reason) {
+    async function notifyBackendLogout(token) {
+        const safeToken = String(token || '').trim();
+        if (!safeToken) {
+            return;
+        }
+
+        try {
+            await apiFetch(CONFIG.API.AUTH_LOGOUT, {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${safeToken}`
+                },
+                skipAuthHandling: true,
+                timeoutMs: 5000
+            });
+        } catch {
+            // Best-effort logout. Local session is still cleared below.
+        }
+    }
+
+    async function forceLogout(reason, options = {}) {
+        const { skipBackendLogout = false } = options;
+        const previousSession = readSession();
+        const previousToken = String(previousSession?.token || '').trim();
+        const wasAuthenticated = authenticated;
+
         authenticated = false;
-        clearSession();
         stopSessionTimer();
+
+        if (!skipBackendLogout) {
+            await notifyBackendLogout(previousToken);
+        }
+
+        clearApiAuthToken();
+        clearSession();
         setAuthenticatedUI(false);
         DOM.adminLoginPassword.value = '';
         DOM.adminLoginError.textContent = reason || '';
         updateLockoutUI();
 
-        if (typeof onLogout === 'function') {
+        if (wasAuthenticated && typeof onLogout === 'function') {
             onLogout();
         }
 
         DOM.adminLoginUsername.focus();
-    }
-
-    async function verifyCredentials(username, password) {
-        if (!ADMIN_PASSWORD_SHA256 || ADMIN_PASSWORD_SHA256.length !== 64) {
-            DOM.adminLoginError.textContent =
-                'Admin password hash is not configured. Update CONFIG.ADMIN_AUTH.PASSWORD_SHA256.';
-            return false;
-        }
-
-        const normalizedUsername = String(username || '').trim().toLowerCase();
-        if (normalizedUsername !== ADMIN_USERNAME) {
-            return false;
-        }
-
-        const hashedPassword = await sha256Hex(password);
-        return hashedPassword === ADMIN_PASSWORD_SHA256;
     }
 
     async function handleLoginSubmit(event) {
@@ -265,74 +239,119 @@ export function createAuthFeature({ CONFIG, DOM, feedback, onAuthenticated, onLo
         DOM.btnAdminLogin.textContent = 'Verifying...';
 
         try {
-            const success = await verifyCredentials(username, password);
-            if (success) {
-                beginAuthenticatedSession();
-                feedback.showToast('Admin login successful', 'success');
-                return;
+            const data = await apiFetch(CONFIG.API.AUTH_LOGIN, {
+                method: 'POST',
+                body: JSON.stringify({ username, password }),
+                skipAuthHandling: true
+            });
+
+            if (data?.success && data?.authenticated && data?.token) {
+                const started = beginAuthenticatedSession({
+                    token: data.token,
+                    expiresInMs: data.expiresInMs
+                });
+
+                if (started) {
+                    feedback.showToast('Admin login successful', 'success');
+                    return;
+                }
             }
 
-            const lockoutState = readLockoutState();
-            lockoutState.failedAttempts = Number(lockoutState.failedAttempts || 0) + 1;
+            DOM.adminLoginError.textContent = data?.message || 'Invalid credentials.';
+        } catch (error) {
+            const status = Number(error?.status || 0);
+            const payload = error?.payload || {};
 
-            if (lockoutState.failedAttempts >= MAX_ATTEMPTS) {
-                lockoutState.failedAttempts = 0;
-                lockoutState.lockoutUntil = nowMs() + LOCKOUT_MS;
-                writeLockoutState(lockoutState);
+            if (status === 429) {
+                const retryAfterMs = Number(payload.retryAfterMs || (payload.retryAfterSec * 1000) || 0);
+                if (retryAfterMs > 0) {
+                    lockoutUntilMs = nowMs() + retryAfterMs;
+                }
+
+                DOM.adminLoginError.textContent = payload.message || 'Too many failed attempts. Login temporarily locked.';
                 updateLockoutUI();
-                DOM.adminLoginError.textContent = 'Too many failed attempts. Login temporarily locked.';
                 return;
             }
 
-            writeLockoutState(lockoutState);
-            const remainingAttempts = Math.max(0, MAX_ATTEMPTS - lockoutState.failedAttempts);
-            DOM.adminLoginError.textContent = `Invalid credentials. ${remainingAttempts} attempt(s) left.`;
-        } catch {
-            DOM.adminLoginError.textContent = 'Unable to verify login right now. Try again.';
+            if (status === 401) {
+                const attemptsRemaining = Number(payload.attemptsRemaining);
+                if (Number.isFinite(attemptsRemaining) && attemptsRemaining >= 0) {
+                    DOM.adminLoginError.textContent = `Invalid credentials. ${attemptsRemaining} attempt(s) left.`;
+                    return;
+                }
+            }
+
+            DOM.adminLoginError.textContent = payload.message || error?.message || 'Unable to verify login right now. Try again.';
         } finally {
             DOM.btnAdminLogin.textContent = 'Login';
             updateLockoutUI();
         }
     }
 
-    function restoreSession() {
+    async function restoreSession() {
         const session = readSession();
         if (!isSessionValid(session)) {
+            clearApiAuthToken();
+            clearSession();
             setAuthenticatedUI(false);
             return false;
         }
 
-        authenticated = true;
-        touchSession();
-        setAuthenticatedUI(true);
-        startSessionTimer();
+        const token = String(session.token || '').trim();
+        setApiAuthToken(token);
 
-        if (typeof onAuthenticated === 'function') {
-            onAuthenticated();
+        try {
+            const status = await apiFetch(CONFIG.API.AUTH_STATUS, {
+                headers: {
+                    Authorization: `Bearer ${token}`
+                },
+                skipAuthHandling: true,
+                timeoutMs: 5000
+            });
+
+            if (!status?.authenticated) {
+                clearApiAuthToken();
+                clearSession();
+                setAuthenticatedUI(false);
+                return false;
+            }
+
+            return beginAuthenticatedSession({
+                token,
+                expiresInMs: status?.expiresInMs || SESSION_TTL_MS
+            });
+        } catch {
+            clearApiAuthToken();
+            clearSession();
+            setAuthenticatedUI(false);
+            return false;
         }
-
-        return true;
     }
 
     function bindEvents() {
         DOM.adminLoginForm.addEventListener('submit', handleLoginSubmit);
-        DOM.btnLogout.addEventListener('click', () => {
-            forceLogout('Logged out. Please login again.');
+        DOM.btnLogout.addEventListener('click', async () => {
+            await forceLogout('Logged out. Please login again.');
             feedback.showToast('Logged out', 'info');
         });
-
-        registerActivityListeners();
     }
 
     function initialize() {
         startLockoutTimer();
 
-        const restored = restoreSession();
-        if (!restored) {
-            DOM.adminLoginUsername.focus();
+        restoreSession().then((restored) => {
+            if (!restored) {
+                DOM.adminLoginUsername.focus();
+            }
+        });
+    }
+
+    async function handleUnauthorized() {
+        if (!authenticated && !readSession()) {
+            return;
         }
 
-        return restored;
+        await forceLogout('Session expired. Please login again.', { skipBackendLogout: true });
     }
 
     return {
@@ -340,6 +359,7 @@ export function createAuthFeature({ CONFIG, DOM, feedback, onAuthenticated, onLo
         initialize,
         isAuthenticated: () => authenticated,
         logout: forceLogout,
+        handleUnauthorized,
         dispose: () => {
             stopSessionTimer();
             stopLockoutTimer();

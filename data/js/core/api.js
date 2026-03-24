@@ -1,9 +1,57 @@
+let apiAuthToken = '';
+let unauthorizedHandler = null;
+let unauthorizedInFlight = false;
+
+export function setApiAuthToken(token) {
+    apiAuthToken = String(token || '').trim();
+}
+
+export function clearApiAuthToken() {
+    apiAuthToken = '';
+}
+
+export function setApiUnauthorizedHandler(handler) {
+    unauthorizedHandler = typeof handler === 'function' ? handler : null;
+}
+
+function shouldHandleUnauthorized(url, options = {}) {
+    if (options.skipAuthHandling) {
+        return false;
+    }
+
+    const endpoint = String(url || '');
+    if (endpoint.includes('/api/auth/login')) {
+        return false;
+    }
+
+    return Boolean(apiAuthToken);
+}
+
+function triggerUnauthorized(error, context) {
+    if (!unauthorizedHandler || unauthorizedInFlight) {
+        return;
+    }
+
+    unauthorizedInFlight = true;
+    Promise.resolve(unauthorizedHandler(error, context))
+        .catch(() => {
+            // No-op: best-effort session invalidation hook.
+        })
+        .finally(() => {
+            unauthorizedInFlight = false;
+        });
+}
+
 export async function apiFetch(url, options = {}) {
     const method = options.method || 'GET';
     const headers = {
         'Content-Type': 'application/json',
         ...(options.headers || {})
     };
+
+    if (!headers.Authorization && apiAuthToken) {
+        headers.Authorization = `Bearer ${apiAuthToken}`;
+    }
 
     // Avoid forcing JSON content-type for FormData uploads.
     if (typeof FormData !== 'undefined' && options.body instanceof FormData) {
@@ -33,6 +81,11 @@ export async function apiFetch(url, options = {}) {
             const error = new Error(payload.message || `HTTP ${response.status}`);
             error.status = response.status;
             error.payload = payload;
+
+            if (response.status === 401 && shouldHandleUnauthorized(url, options)) {
+                triggerUnauthorized(error, { url, method });
+            }
+
             throw error;
         }
 

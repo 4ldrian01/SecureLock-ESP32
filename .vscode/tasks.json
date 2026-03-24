@@ -6,7 +6,7 @@
       "type": "shell",
       "command": "${env:HOME}/.platformio/penv/bin/pio",
       "windows": {
-        "command": "${env:USERPROFILE}\\.platformio\\penv\\Scripts\\pio.exe"
+        "command": "C:\\pio_core\\penv\\Scripts\\platformio.exe"
       },
       "args": [
         "run"
@@ -25,7 +25,7 @@
       "type": "shell",
       "command": "${env:HOME}/.platformio/penv/bin/pio",
       "windows": {
-        "command": "${env:USERPROFILE}\\.platformio\\penv\\Scripts\\pio.exe"
+        "command": "C:\\pio_core\\penv\\Scripts\\platformio.exe"
       },
       "args": [
         "run",
@@ -46,7 +46,7 @@
         "timeout 20 ${env:HOME}/.platformio/penv/bin/pio device monitor -b 115200 -f direct || true"
       ],
       "windows": {
-        "command": "${env:USERPROFILE}\\.platformio\\penv\\Scripts\\pio.exe",
+        "command": "C:\\pio_core\\penv\\Scripts\\platformio.exe",
         "args": [
           "device",
           "monitor",
@@ -66,7 +66,7 @@
       "type": "shell",
       "command": "${env:HOME}/.platformio/penv/bin/pio",
       "windows": {
-        "command": "${env:USERPROFILE}\\.platformio\\penv\\Scripts\\pio.exe"
+        "command": "C:\\pio_core\\penv\\Scripts\\platformio.exe"
       },
       "args": [
         "device",
@@ -82,34 +82,11 @@
       "problemMatcher": []
     },
     {
-      "label": "PlatformIO: Monitor (Smart Filter)",
-      "type": "shell",
-      "command": "bash",
-      "args": [
-        "scripts/monitor_smart_filter.sh"
-      ],
-      "windows": {
-        "command": "${env:USERPROFILE}\\.platformio\\penv\\Scripts\\pio.exe",
-        "args": [
-          "device",
-          "monitor",
-          "-b",
-          "115200",
-          "-f",
-          "direct"
-        ]
-      },
-      "options": {
-        "cwd": "${workspaceFolder}"
-      },
-      "problemMatcher": []
-    },
-    {
       "label": "platformio run --target uploadfs",
       "type": "shell",
       "command": "${env:HOME}/.platformio/penv/bin/pio",
       "windows": {
-        "command": "${env:USERPROFILE}\\.platformio\\penv\\Scripts\\pio.exe"
+        "command": "C:\\pio_core\\penv\\Scripts\\platformio.exe"
       },
       "args": [
         "run",
@@ -129,9 +106,13 @@
         "scripts/deploy_safe.sh"
       ],
       "windows": {
-        "command": "${env:USERPROFILE}\\.platformio\\penv\\Scripts\\pio.exe",
+        "command": "powershell",
         "args": [
-          "run"
+          "-NoProfile",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-File",
+          "scripts/deploy_all.ps1"
         ]
       },
       "options": {

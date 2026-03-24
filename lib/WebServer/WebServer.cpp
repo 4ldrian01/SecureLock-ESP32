@@ -390,7 +390,9 @@ void WebServer::_setupRoutes() {
 
 void WebServer::_handleRoot(AsyncWebServerRequest* request) {
     const char* candidates[] = {
-        "/html/pages/dashboard.html"
+        "/html/pages/dashboard.html",
+        "/html/index.html",
+        "/index.html"
     };
 
     for (const char* path : candidates) {

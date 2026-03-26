@@ -33,6 +33,49 @@ void WebServer::_handleAPIDeleteUser(AsyncWebServerRequest* request) {
     Serial.print("[API] DELETE /api/users?uid=");
     Serial.println(uid);
 
+    bool protectedAdmin = (uid == "DEFAULT_ADMIN");
+    if (!protectedAdmin && LittleFS.exists("/users.json")) {
+        JsonDocument usersDoc;
+        File file = LittleFS.open("/users.json", "r");
+        if (file) {
+            const DeserializationError err = deserializeJson(usersDoc, file);
+            file.close();
+
+            if (!err && usersDoc["users"].is<JsonArray>()) {
+                JsonArray users = usersDoc["users"].as<JsonArray>();
+                for (JsonObject user : users) {
+                    String listedUid = webserver_route_utils::normalizeUID(user["cardUID"] | "");
+                    if (listedUid.length() == 0) {
+                        listedUid = webserver_route_utils::normalizeUID(user["uid"] | "");
+                    }
+
+                    if (listedUid != uid) {
+                        continue;
+                    }
+
+                    String type = user["type"] | "";
+                    type.trim();
+                    type.toLowerCase();
+                    if (type == "admin") {
+                        protectedAdmin = true;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    if (protectedAdmin) {
+        _addLogEntry("Admin (Web)", "Delete User (blocked admin " + uid + ")", "fail");
+
+        JsonDocument doc;
+        doc["success"] = false;
+        doc["message"] = "Admin user cannot be deleted";
+        doc["errorCode"] = "PROTECTED_ADMIN_USER";
+        _sendJSON(request, 403, doc);
+        return;
+    }
+
     bool removedFromAuth = _auth->removeUser(uid);
     const bool deleted = removedFromAuth;
 
@@ -687,11 +730,15 @@ void WebServer::_handleAPIRfidScan(AsyncWebServerRequest* request) {
     const bool scanned = (scanMs > 0 && lastUID.length() > 0);
     const bool known = scanned ? _auth->userExists(lastUID) : false;
     const String knownUserName = known ? _auth->getUserName(lastUID) : "";
+    String scanStatus = "idle";
+    if (scanned) {
+        scanStatus = known ? "registered" : "unregistered";
+    }
 
     JsonDocument doc;
     doc["scanned"] = scanned;
     doc["known"] = known;
-    doc["status"] = known ? "registered" : "unregistered";
+    doc["status"] = scanStatus;
     if (scanned) {
         doc["uid"] = lastUID;
         doc["scanTimestamp"] = scanMs;

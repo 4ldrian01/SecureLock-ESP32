@@ -71,10 +71,13 @@ export function createAuthFeature({
     function setAuthenticatedUI(isAuthenticated) {
         document.body.dataset.authenticated = isAuthenticated ? 'true' : 'false';
         DOM.authOverlay.dataset.visible = isAuthenticated ? 'false' : 'true';
+        DOM.authOverlay.hidden = Boolean(isAuthenticated);
         DOM.btnLogout.hidden = !isAuthenticated;
 
         if (!isAuthenticated) {
             DOM.statusBadge.dataset.status = 'offline';
+            DOM.statusBadge.classList.remove('badge-success');
+            DOM.statusBadge.classList.add('badge-danger');
             DOM.statusText.textContent = 'Locked';
         }
     }
@@ -237,6 +240,7 @@ export function createAuthFeature({
 
         DOM.btnAdminLogin.disabled = true;
         DOM.btnAdminLogin.textContent = 'Verifying...';
+        DOM.btnAdminLogin.dataset.state = 'busy';
 
         try {
             const data = await apiFetch(CONFIG.API.AUTH_LOGIN, {
@@ -284,6 +288,7 @@ export function createAuthFeature({
             DOM.adminLoginError.textContent = payload.message || error?.message || 'Unable to verify login right now. Try again.';
         } finally {
             DOM.btnAdminLogin.textContent = 'Login';
+            DOM.btnAdminLogin.dataset.state = 'ready';
             updateLockoutUI();
         }
     }

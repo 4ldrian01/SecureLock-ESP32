@@ -48,6 +48,25 @@ export function formatLogTime(logOrTimeValue, compact) {
     }
 
     if (date) {
+        const now = Date.now();
+        const deltaMs = now - date.getTime();
+
+        if (Number.isFinite(deltaMs) && deltaMs >= 0) {
+            const deltaSec = Math.floor(deltaMs / 1000);
+            const deltaMin = Math.floor(deltaSec / 60);
+            const deltaHr = Math.floor(deltaMin / 60);
+
+            if (compact) {
+                if (deltaSec < 60) return `${deltaSec}s ago`;
+                if (deltaMin < 60) return `${deltaMin}m ago`;
+                if (deltaHr < 24) return `${deltaHr}h ago`;
+            } else {
+                if (deltaSec < 60) return `${date.toLocaleTimeString()} (${deltaSec}s ago)`;
+                if (deltaMin < 60) return `${date.toLocaleTimeString()} (${deltaMin}m ago)`;
+                if (deltaHr < 24) return `${date.toLocaleString()} (${deltaHr}h ago)`;
+            }
+        }
+
         if (compact) {
             return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         }

@@ -7,7 +7,7 @@
 #endif
 
 #ifndef DASHBOARD_ADMIN_PASSWORD
-#define DASHBOARD_ADMIN_PASSWORD "CHANGE_ME_NOW"
+#define DASHBOARD_ADMIN_PASSWORD "admin123"
 #endif
 
 void WebServer::_handleAPIAuthLogin(AsyncWebServerRequest* request, uint8_t* data, size_t len) {

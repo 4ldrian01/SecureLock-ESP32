@@ -163,6 +163,20 @@
     color: rgba(249, 250, 251, 0.85);
 }
 
+.btn-emergency[data-state="busy"] {
+    background: linear-gradient(135deg, #7f1d1d 0%, #b91c1c 100%);
+}
+
+.btn-emergency[data-state="guest-lock"] {
+    background: linear-gradient(135deg, #92400e 0%, #b45309 100%);
+    color: rgba(255, 251, 235, 0.95);
+}
+
+.btn-emergency[data-state="cooldown"] {
+    background: linear-gradient(135deg, #1f2937 0%, #374151 100%);
+    color: rgba(229, 231, 235, 0.95);
+}
+
 @media (max-width: 1023px) {
     .hero-card {
         padding: 22px 14px;

@@ -49,17 +49,17 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         return `<div class="user-info">
                 <div class="user-name-row">
                     <span class="user-name">${escapeHtml(user.name || 'Unknown')}</span>
-                    <span class="user-badge ${badgeClass}">${escapeHtml(role.toUpperCase())}</span>
+                    <span class="badge user-badge ${badgeClass}">${escapeHtml(role.toUpperCase())}</span>
                 </div>
                 <div class="user-meta">
                     <span class="user-uid">${escapeHtml(uid || '--')}</span>
                 </div>
             </div>
             <div class="user-actions">
-                <button class="btn-edit" title="Edit user" data-action="edit" data-uid="${escapeHtml(uid)}">
+                <button class="btn btn-ghost btn-edit" title="Edit user" data-action="edit" data-uid="${escapeHtml(uid)}">
                     <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
                 </button>
-                ${isAdmin ? '' : `<button class="btn-delete" title="Delete user" data-action="delete" data-uid="${escapeHtml(uid)}">
+                ${isAdmin ? '' : `<button class="btn btn-ghost btn-delete" title="Delete user" data-action="delete" data-uid="${escapeHtml(uid)}">
                     <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
                 </button>`}
             </div>`;
@@ -203,7 +203,7 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             const normalizedUsers = normalizeUsersForDisplay(users);
 
             state.usersByUid = {};
-            users.forEach((user) => {
+            normalizedUsers.forEach((user) => {
                 const key = String(user.cardUID || user.uid || '').trim().toUpperCase();
                 if (key) {
                     state.usersByUid[key] = user;
@@ -218,8 +218,7 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             state.lastUsersHash = usersHash;
             renderUsers(normalizedUsers);
         } catch {
-            DOM.usersGrid.innerHTML =
-                '<p style="color:var(--text-muted);text-align:center;padding:2rem;">Unable to load users</p>';
+            DOM.usersGrid.innerHTML = '<p class="users-empty">Unable to load users</p>';
         }
     }
 
@@ -263,7 +262,7 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             let card = existingCards.get(uid);
             if (!card) {
                 card = document.createElement('div');
-                card.className = 'user-card';
+                card.className = 'user-card card';
                 card.setAttribute('role', 'listitem');
                 card.dataset.uid = uid;
                 DOM.usersGrid.appendChild(card);
@@ -731,6 +730,9 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         }
         if (chatId && !isValidChatId(chatId)) {
             setFormError('editUserChatIdError', 'Telegram Chat ID must be numeric');
+            valid = false;
+        } else if (!chatId) {
+            setFormError('editUserChatIdError', 'Telegram Chat ID is required');
             valid = false;
         } else if (chatId && isDuplicateChatId(chatId, state.editingUserId)) {
             setFormError('editUserChatIdError', 'Telegram Chat ID already linked to another user');

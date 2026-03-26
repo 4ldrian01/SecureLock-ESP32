@@ -1,11 +1,2 @@
-#include "app/Application.h"
-
-static securelock::app::Application app;
-
-void setup() {
-    app.setup();
-}
-
-void loop() {
-    app.loop();
-}
+// Runtime entrypoint moved into src/main_runtime.cpp.
+// Keep this file as a stable placeholder for PlatformIO project structure.

@@ -1,6 +1,46 @@
 import { escapeHtml, formatLogTime } from '../core/helpers.js';
 
 export function createLogsFeature({ CONFIG, state, DOM, apiFetch, feedback }) {
+    function getLogSortScore(log, index) {
+        const epochMs = Number(log?.epochMs || 0);
+        if (Number.isFinite(epochMs) && epochMs > 0) {
+            return epochMs;
+        }
+
+        const uptimeMs = Number(log?.uptimeMs || 0);
+        if (Number.isFinite(uptimeMs) && uptimeMs > 0) {
+            // Offset to keep uptime-based logs sorted after true-epoch logs while
+            // still preserving newest-first among uptime-only entries.
+            return uptimeMs;
+        }
+
+        return index;
+    }
+
+    function sortLogsLatestFirst(logs) {
+        return (Array.isArray(logs) ? logs : [])
+            .map((log, index) => ({ log, index }))
+            .sort((a, b) => getLogSortScore(b.log, b.index) - getLogSortScore(a.log, a.index))
+            .map((entry) => entry.log);
+    }
+
+    function startLogsClockTicker() {
+        if (state.logsClockTimer) {
+            clearInterval(state.logsClockTimer);
+            state.logsClockTimer = null;
+        }
+
+        state.logsClockTimer = setInterval(() => {
+            if (!Array.isArray(state.allLogs) || state.allLogs.length === 0) {
+                return;
+            }
+
+            // Force row HTML refresh so relative time labels stay fresh.
+            state.renderedLogsPageFingerprint = '';
+            renderCurrentLogsPage();
+        }, 1000);
+    }
+
     function createLogSignature(log) {
         return [
             String(log?.epochMs || ''),
@@ -19,6 +59,27 @@ export function createLogsFeature({ CONFIG, state, DOM, apiFetch, feedback }) {
         return logs.map(createLogSignature).join('||');
     }
 
+    function deriveMethodLabel(log) {
+        const explicitCode = String(log?.methodCode || '').trim().toUpperCase();
+        if (explicitCode) {
+            return explicitCode;
+        }
+
+        const rawMethod = String(log?.method || '').trim();
+        const rawLower = rawMethod.toLowerCase();
+
+        if (!rawLower) return 'SYSTEM';
+        if (rawLower.includes('rfid')) return 'RFID';
+        if (rawLower.includes('otp')) return 'OTP';
+        if (rawLower.includes('pin')) return 'PIN';
+        if (rawLower.includes('guest')) return 'GUEST';
+        if (rawLower.includes('auth')) return 'AUTH';
+        if (rawLower.includes('emergency')) return 'EMERGENCY';
+        if (rawLower.includes('lockdown')) return 'LOCKDOWN';
+        if (rawLower.includes('user')) return 'USER';
+        return 'SYSTEM';
+    }
+
     function buildLogRowHTML(log, isCompactMobile) {
         const statusClass = log.status === 'success' ? 'status-success'
             : log.status === 'alarm' ? 'status-alarm'
@@ -31,12 +92,15 @@ export function createLogsFeature({ CONFIG, state, DOM, apiFetch, feedback }) {
                     : '\u274C Denied');
 
         const displayTime = formatLogTime(log, isCompactMobile);
+        const userLabel = String(log?.user || '').trim() || 'System';
+        const methodLabel = deriveMethodLabel(log);
+        const methodDetail = String(log?.method || '').trim() || methodLabel;
 
         return `
             <td class="col-time">${escapeHtml(displayTime)}</td>
-            <td class="col-user">${escapeHtml(log.user || 'Unknown')}</td>
-            <td class="col-method"><span class="method-badge">${escapeHtml(log.method || '--')}</span></td>
-            <td class="col-status"><span class="status-badge ${statusClass}">${statusLabel}</span></td>
+            <td class="col-user" title="${escapeHtml(userLabel)}">${escapeHtml(userLabel)}</td>
+            <td class="col-method" title="${escapeHtml(methodDetail)}"><span class="badge method-badge">${escapeHtml(methodLabel)}</span></td>
+            <td class="col-status"><span class="badge status-badge ${statusClass}">${statusLabel}</span></td>
         `;
     }
 
@@ -140,9 +204,10 @@ export function createLogsFeature({ CONFIG, state, DOM, apiFetch, feedback }) {
         state.logsRequestInFlight = true;
         try {
             const data = await apiFetch(CONFIG.API.LOGS);
-            const logs = Array.isArray(data.logs)
+            const logsRaw = Array.isArray(data.logs)
                 ? data.logs
                 : (Array.isArray(data) ? data : []);
+            const logs = sortLogsLatestFirst(logsRaw);
 
             const logsHash = createLogsCollectionSignature(logs);
             if (logsHash !== state.lastLogsHash) {
@@ -209,6 +274,8 @@ export function createLogsFeature({ CONFIG, state, DOM, apiFetch, feedback }) {
     }
 
     function bindEvents() {
+        startLogsClockTicker();
+
         if (DOM.btnClearLogs) {
             DOM.btnClearLogs.addEventListener('click', handleClearLogs);
         }

@@ -11,6 +11,7 @@
 
 @import url('/css/tokens.css');
 @import url('/css/base.css');
+@import url('/css/components.css');
 @import url('/css/layout.css');
 @import url('/css/components/glass.css');
 @import url('/css/components/brand.css');
@@ -24,4 +25,14 @@
 @import url('/css/features/logs.css');
 @import url('/css/features/users.css');
 @import url('/css/features/pagination.css');
+
+/*
+ * Critical resilience fallback
+ * Keeps essential UI legible even if modular imports load partially.
+ */
+
+#toast[hidden],
+.toast[hidden] {
+	display: none !important;
+}
 

@@ -1,4 +1,15 @@
 export function createGuestFeature({ CONFIG, state, DOM, apiFetch, feedback, onLogsUpdated }) {
+    function setGuestVisualState(mode) {
+        const stateValue = String(mode || 'idle');
+        DOM.pinCode.dataset.state = stateValue;
+        DOM.pinTimer.dataset.state = stateValue;
+
+        const display = DOM.pinCode.closest('.pin-display');
+        if (display) {
+            display.dataset.state = stateValue;
+        }
+    }
+
     function displayGuestCode(code, expiresInSec) {
         const digits = code.toString().padStart(4, '0').split('');
         const pinDigits = DOM.pinCode.querySelectorAll('.pin-digit');
@@ -24,12 +35,14 @@ export function createGuestFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             const sec = state.guestExpiry % 60;
             DOM.pinTimer.textContent = `Expires in ${min}:${sec.toString().padStart(2, '0')}`;
             DOM.pinTimer.dataset.expired = 'false';
+            setGuestVisualState('active');
         }, 1000);
 
         const min = Math.floor(state.guestExpiry / 60);
         const sec = state.guestExpiry % 60;
         DOM.pinTimer.textContent = `Expires in ${min}:${sec.toString().padStart(2, '0')}`;
         DOM.pinTimer.dataset.expired = 'false';
+        setGuestVisualState('active');
     }
 
     function clearGuestCodeDisplay() {
@@ -37,6 +50,7 @@ export function createGuestFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         pinDigits.forEach(el => { el.textContent = '-'; });
         DOM.pinTimer.textContent = 'No active code';
         DOM.pinTimer.dataset.expired = 'true';
+        setGuestVisualState('idle');
     }
 
     function syncFromStatus(statusData) {

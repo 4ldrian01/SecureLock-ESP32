@@ -1,6 +1,27 @@
 #include "WebServer.h"
 #include <time.h>
 
+namespace {
+String normalizeMethodCode(const String& methodRaw) {
+    String method = methodRaw;
+    method.trim();
+    method.toLowerCase();
+
+    if (method.length() == 0) return "SYSTEM";
+    if (method.indexOf("rfid") >= 0) return "RFID";
+    if (method.indexOf("otp") >= 0) return "OTP";
+    if (method.indexOf("pin") >= 0 || method.indexOf("backup") >= 0) return "PIN";
+    if (method.indexOf("guest") >= 0) return "GUEST";
+    if (method.indexOf("auth") >= 0) return "AUTH";
+    if (method.indexOf("emergency") >= 0 || method.indexOf("override") >= 0) return "EMERGENCY";
+    if (method.indexOf("lockdown") >= 0) return "LOCKDOWN";
+    if (method.indexOf("buzzer") >= 0) return "BUZZER";
+    if (method.indexOf("status") >= 0) return "STATUS";
+    if (method.indexOf("user") >= 0) return "USER";
+    return "SYSTEM";
+}
+}
+
 void WebServer::_handleAPILogs(AsyncWebServerRequest* request) {
     if (!_requireApiAuth(request)) {
         return;
@@ -33,6 +54,18 @@ void WebServer::_handleAPILogs(AsyncWebServerRequest* request) {
         JsonObject dst = responseLogs.add<JsonObject>();
         for (JsonPair kv : src) {
             dst[kv.key().c_str()] = kv.value();
+        }
+
+        String user = dst["user"] | "";
+        user.trim();
+        if (user.length() == 0) {
+            dst["user"] = "System";
+        }
+
+        String method = dst["method"] | "";
+        const String methodCode = dst["methodCode"] | "";
+        if (methodCode.length() == 0) {
+            dst["methodCode"] = normalizeMethodCode(method);
         }
     }
 
@@ -106,8 +139,10 @@ void WebServer::_addLogEntry(const String& user, const String& method, const Str
     JsonObject entry = logs.add<JsonObject>();
     entry["time"] = String(timeStr);
     entry["epochMs"] = epochMs;
+    entry["uptimeMs"] = millis();
     entry["user"] = user;
     entry["method"] = method;
+    entry["methodCode"] = normalizeMethodCode(method);
     entry["status"] = status;
 
     File wFile = LittleFS.open("/logs.json", "w");

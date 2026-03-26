@@ -133,8 +133,17 @@ void SecurityManager::beep(int count) {
         return;
     }
 
-    _beepOnDuration = 28;
-    _beepOffDuration = 45;
+    if (count == 1) {
+        _beepOnDuration = 16;
+        _beepOffDuration = 26;
+    } else if (count == 2) {
+        _beepOnDuration = 20;
+        _beepOffDuration = 30;
+    } else {
+        // Denied feedback stays distinct but shorter to avoid nuisance long sound.
+        _beepOnDuration = 16;
+        _beepOffDuration = 24;
+    }
     
     _beepCount = count;
     _currentBeep = 0;

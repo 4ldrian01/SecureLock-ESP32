@@ -68,6 +68,7 @@ public:
     
     // Lifecycle
     void init();
+    void init(const char* ssid, const char* password); // legacy compatibility overload
     void update();
     bool isConnected() const;
     String getIPAddress() const;

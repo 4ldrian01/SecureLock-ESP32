@@ -6,44 +6,32 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: var(--space-lg);
+    margin-bottom: var(--space-5);
     flex-wrap: wrap;
-    gap: var(--space-md);
+    gap: var(--space-3);
+}
+
+.section-header-actions .section-title {
+    margin-right: auto;
 }
 
 .btn-add-user {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.7rem 1.5rem;
-    background: linear-gradient(135deg, var(--success) 0%, #059669 100%);
-    border: 1px solid rgba(16, 185, 129, 0.3);
-    border-radius: var(--radius-md);
-    color: #FFFFFF;
-    font-size: 0.95rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all var(--transition-normal);
-    transform: translateZ(0);
-    box-shadow: 0 2px 8px rgba(16, 185, 129, 0.2);
+    box-shadow: var(--shadow-xs);
 }
 
 .btn-add-user svg {
-    width: 1.2rem;
-    height: 1.2rem;
+    width: 1rem;
+    height: 1rem;
     fill: currentColor;
 }
 
 .btn-add-user:hover {
-    background: linear-gradient(135deg, #059669 0%, var(--success) 100%);
-    border-color: var(--success);
-    transform: translateY(-2px) translateZ(0);
-    box-shadow: 0 4px 16px rgba(16, 185, 129, 0.4);
+    box-shadow: var(--shadow-sm);
 }
 
 .users-grid {
     display: grid;
-    gap: var(--space-md);
+    gap: var(--space-3);
     align-items: stretch;
 }
 
@@ -63,7 +51,7 @@
     grid-column: 1 / -1;
     text-align: center;
     color: var(--text-muted);
-    padding: var(--space-xl) var(--space-md);
+    padding: var(--space-8) var(--space-4);
     margin: 0;
 }
 
@@ -72,101 +60,108 @@
     align-items: center;
     justify-content: space-between;
     flex-wrap: wrap;
-    padding: 1.5rem;
-    padding-right: 1.75rem;
-    margin-bottom: 1.25rem;
-    background: var(--surface-glass);
-    border: 1px solid var(--border-glass);
+    padding: var(--space-5);
+    background: color-mix(in srgb, var(--surface) 90%, #ffffff 10%);
+    border: 1px solid var(--border);
     border-radius: var(--radius-md);
-    transform: translateZ(0);
-    transition: all var(--transition-normal);
-    gap: 1.5rem;
+    transition:
+        background var(--transition-fast),
+        border-color var(--transition-fast),
+        transform var(--transition-fast),
+        box-shadow var(--transition-fast);
+    gap: var(--space-4);
     contain: layout paint;
 }
 
 .user-card:hover {
-    background: var(--surface-glass-hover);
-    border-color: var(--primary);
-    transform: translateY(-2px) translateZ(0);
-    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);
+    background: color-mix(in srgb, var(--surface-hover) 88%, #ffffff 12%);
+    border-color: color-mix(in srgb, var(--primary) 44%, var(--border-strong) 56%);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-sm);
 }
 
 .user-card-locked {
-    border-color: rgba(239, 68, 68, 0.4);
-    background: rgba(239, 68, 68, 0.05);
+    border-color: color-mix(in srgb, var(--danger) 36%, var(--border) 64%);
+    background: color-mix(in srgb, var(--danger) 8%, var(--surface) 92%);
 }
 
 .user-card-locked:hover {
-    border-color: var(--danger);
-    background: rgba(239, 68, 68, 0.08);
+    border-color: color-mix(in srgb, var(--danger) 54%, var(--border-strong) 46%);
+    background: color-mix(in srgb, var(--danger) 10%, var(--surface-hover) 90%);
 }
 
 .user-info {
     flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 0.65rem;
+    gap: var(--space-2);
 }
 
 .user-name-row {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    gap: var(--space-2);
 }
 
 .user-name {
-    font-size: 1.15rem;
+    font-size: 1rem;
     font-weight: 600;
     color: var(--text-main);
-    line-height: 1.3;
+    line-height: 1.2;
 }
 
 .user-meta {
     display: flex;
     align-items: center;
-    gap: 1rem;
+    gap: var(--space-2);
     flex-wrap: wrap;
 }
 
 .user-uid {
     font-family: var(--font-mono);
-    font-size: 0.85rem;
+    font-size: 0.77rem;
     color: var(--text-subtle);
-    background: rgba(255, 255, 255, 0.05);
-    padding: 0.25rem 0.6rem;
+    background: color-mix(in srgb, var(--surface-active) 84%, #ffffff 16%);
+    border: 1px solid color-mix(in srgb, var(--border) 78%, transparent 22%);
+    padding: 0.25rem 0.55rem;
     border-radius: var(--radius-sm);
 }
 
 .user-badge {
-    padding: 0.3rem 0.8rem;
-    border-radius: var(--radius-sm);
-    font-size: 0.7rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 1.4rem;
+    padding: 0.22rem 0.55rem;
+    border-radius: var(--radius-full);
+    font-size: 0.68rem;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.04em;
+    border: 1px solid transparent;
 }
 
 .badge-admin {
-    background: rgba(239, 68, 68, 0.2);
+    background: color-mix(in srgb, var(--danger) 18%, transparent 82%);
     color: var(--danger-light);
-    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-color: color-mix(in srgb, var(--danger) 46%, transparent 54%);
 }
 
 .badge-user {
-    background: rgba(59, 130, 246, 0.2);
+    background: color-mix(in srgb, var(--primary) 18%, transparent 82%);
     color: var(--primary-light);
-    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-color: color-mix(in srgb, var(--primary) 46%, transparent 54%);
 }
 
 .badge-guest {
-    background: rgba(245, 158, 11, 0.2);
+    background: color-mix(in srgb, var(--warning) 18%, transparent 82%);
     color: var(--warning);
-    border: 1px solid rgba(245, 158, 11, 0.3);
+    border-color: color-mix(in srgb, var(--warning) 46%, transparent 54%);
 }
 
 .user-actions {
     display: flex;
-    gap: 0.85rem;
+    gap: var(--space-2);
     align-items: center;
     flex-shrink: 0;
 }
@@ -176,27 +171,26 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 0.4rem;
-    padding: 0.65rem;
-    min-width: 38px;
-    min-height: 38px;
+    padding: 0.52rem;
+    min-width: 2.2rem;
+    min-height: 2.2rem;
     border-radius: var(--radius-sm);
-    font-size: 0.85rem;
+    font-size: 0.8rem;
     font-weight: 600;
     cursor: pointer;
-    transition: all var(--transition-normal);
-    transform: translateZ(0);
+    transition: background var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
+    border: 1px solid transparent;
 }
 
 .btn-edit {
-    background: rgba(59, 130, 246, 0.15);
-    border: 1px solid rgba(59, 130, 246, 0.3);
+    background: color-mix(in srgb, var(--primary) 14%, transparent 86%);
+    border-color: color-mix(in srgb, var(--primary) 40%, transparent 60%);
     color: var(--primary-light);
 }
 
 .btn-delete {
-    background: rgba(239, 68, 68, 0.1);
-    border: 1px solid rgba(239, 68, 68, 0.3);
+    background: color-mix(in srgb, var(--danger) 12%, transparent 88%);
+    border-color: color-mix(in srgb, var(--danger) 40%, transparent 60%);
     color: var(--danger-light);
 }
 
@@ -209,33 +203,33 @@
 }
 
 .btn-edit:hover {
-    background: rgba(59, 130, 246, 0.25);
-    border-color: var(--primary);
-    transform: translateY(-1px) translateZ(0);
+    background: color-mix(in srgb, var(--primary) 22%, transparent 78%);
+    border-color: color-mix(in srgb, var(--primary) 55%, transparent 45%);
+    transform: translateY(-1px);
 }
 
 .btn-delete:hover:not(:disabled) {
-    background: rgba(239, 68, 68, 0.2);
-    border-color: var(--danger);
-    transform: translateY(-1px) translateZ(0);
+    background: color-mix(in srgb, var(--danger) 18%, transparent 82%);
+    border-color: color-mix(in srgb, var(--danger) 56%, transparent 44%);
+    transform: translateY(-1px);
 }
 
 .btn-delete:disabled {
-    opacity: 0.4;
+    opacity: 0.46;
     cursor: not-allowed;
 }
 
 @media (max-width: 1023px) {
     .users-grid {
-        grid-template-columns: 1fr;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
         gap: 12px;
     }
 
     .users-grid .user-card {
         margin: 0;
         height: 100%;
-        padding: 1rem;
-        gap: 0.85rem;
+        padding: var(--space-4);
+        gap: var(--space-3);
         flex-wrap: nowrap;
         align-items: flex-start;
     }
@@ -246,21 +240,21 @@
 
     .users-grid .user-name-row {
         flex-wrap: wrap;
-        gap: 0.45rem;
+        gap: var(--space-1);
     }
 
     .users-grid .user-name {
-        font-size: 0.98rem;
+        font-size: 0.95rem;
     }
 
     .users-grid .user-meta {
-        gap: 0.45rem;
+        gap: var(--space-1);
         margin-bottom: 0;
     }
 
     .users-grid .user-actions {
         margin-left: auto;
-        gap: 0.5rem;
+        gap: var(--space-1);
         flex-shrink: 0;
     }
 
@@ -278,6 +272,16 @@
         align-items: stretch;
     }
 
+    .section-header-controls {
+        justify-content: stretch;
+    }
+
+    .section-header-controls .btn-clear-logs,
+    .section-header-controls .btn-add-user {
+        flex: 1 1 180px;
+        justify-content: center;
+    }
+
     .btn-add-user {
         width: 100%;
         justify-content: center;
@@ -285,6 +289,10 @@
 }
 
 @media (max-width: 640px) {
+    .users-grid {
+        grid-template-columns: 1fr;
+    }
+
     .users-grid .user-card {
         flex-wrap: wrap;
         gap: 0.7rem;

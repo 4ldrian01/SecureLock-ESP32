@@ -6,8 +6,8 @@
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     border-radius: var(--radius-md);
-    background: rgba(0, 0, 0, 0.2);
-    border: 1px solid var(--border-glass);
+    background: color-mix(in srgb, var(--surface) 90%, #ffffff 10%);
+    border: 1px solid var(--border);
     overflow-y: hidden;
 }
 
@@ -19,34 +19,34 @@
 }
 
 .logs-table thead {
-    background: rgba(31, 41, 55, 0.6);
-    border-bottom: 2px solid var(--border-glass-strong);
+    background: color-mix(in srgb, var(--surface-active) 88%, #ffffff 12%);
+    border-bottom: 1px solid var(--border-strong);
 }
 
 .logs-table th {
-    padding: 1rem 1.25rem;
+    padding: 0.76rem 0.8rem;
     text-align: left;
     font-weight: 600;
     color: var(--text-main);
     text-transform: uppercase;
-    font-size: 0.75rem;
-    letter-spacing: 1px;
+    font-size: 0.72rem;
+    letter-spacing: 0.05em;
     vertical-align: middle;
 }
 
 .logs-table td {
-    padding: 1rem 1.25rem;
+    padding: 0.74rem 0.8rem;
     color: var(--text-muted);
     vertical-align: middle;
 }
 
 .logs-table tbody tr {
-    border-bottom: 1px solid var(--border-glass);
-    transition: background var(--transition-fast);
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 86%, transparent 14%);
+    transition: background var(--transition-fast), border-color var(--transition-fast);
 }
 
 .logs-table tbody tr:hover {
-    background: rgba(31, 41, 55, 0.4);
+    background: color-mix(in srgb, var(--surface-hover) 88%, #ffffff 12%);
 }
 
 .logs-table tbody tr:last-child {
@@ -55,19 +55,21 @@
 
 .col-time {
     color: var(--text-subtle);
-    font-size: 0.85rem;
+    font-size: 0.84rem;
     white-space: nowrap;
-    width: 28%;
+    width: 32%;
 }
 
 .col-user {
     font-weight: 500;
     color: var(--text-main);
-    width: 34%;
+    width: 28%;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .col-method {
-    width: 20%;
+    width: 22%;
 }
 
 .logs-table th.col-status,
@@ -83,21 +85,25 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 0.35rem 0.75rem;
-    background: rgba(59, 130, 246, 0.2);
-    border: 1px solid rgba(59, 130, 246, 0.3);
+    min-width: 88px;
+    max-width: 100%;
+    padding: 0.28rem 0.52rem;
+    background: color-mix(in srgb, var(--primary) 16%, transparent 84%);
+    border: 1px solid color-mix(in srgb, var(--primary) 48%, transparent 52%);
     border-radius: var(--radius-sm);
-    color: var(--primary-light);
+    color: color-mix(in srgb, var(--primary) 82%, #ffffff 18%);
     font-size: 0.7rem;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.04em;
     vertical-align: middle;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .method-guest {
-    background: rgba(245, 158, 11, 0.2);
-    border-color: rgba(245, 158, 11, 0.4);
+    background: color-mix(in srgb, var(--warning) 18%, transparent 82%);
+    border-color: color-mix(in srgb, var(--warning) 50%, transparent 50%);
     color: var(--warning);
 }
 
@@ -105,32 +111,33 @@
     display: inline-flex;
     align-items: center;
     gap: 0.35rem;
-    padding: 0.35rem 0.75rem;
+    padding: 0.28rem 0.62rem;
     border-radius: var(--radius-sm);
-    font-size: 0.75rem;
+    font-size: 0.68rem;
     font-weight: 700;
     text-transform: uppercase;
     white-space: nowrap;
+    border: 1px solid transparent;
 }
 
 .status-success {
-    background: rgba(16, 185, 129, 0.2);
+    background: color-mix(in srgb, var(--success) 18%, transparent 82%);
     color: var(--success-light);
-    border: 1px solid rgba(16, 185, 129, 0.4);
+    border-color: color-mix(in srgb, var(--success) 45%, transparent 55%);
 }
 
 .status-error {
-    background: rgba(239, 68, 68, 0.2);
+    background: color-mix(in srgb, var(--danger) 16%, transparent 84%);
     color: var(--danger-light);
-    border: 1px solid rgba(239, 68, 68, 0.4);
+    border-color: color-mix(in srgb, var(--danger) 46%, transparent 54%);
 }
 
 .status-alarm {
-    background: rgba(239, 68, 68, 0.3);
-    color: #FFFFFF;
-    border: 2px solid var(--danger);
+    background: color-mix(in srgb, var(--danger) 24%, transparent 76%);
+    color: var(--danger-foreground);
+    border-color: color-mix(in srgb, var(--danger) 64%, transparent 36%);
     font-weight: 700;
-    box-shadow: 0 0 12px rgba(239, 68, 68, 0.5);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 48%, transparent 52%);
 }
 
 .logs-empty {
@@ -156,25 +163,18 @@
 }
 
 .btn-clear-logs {
-    padding: 0.45rem 0.85rem;
-    border-radius: var(--radius-sm);
-    border: 1px solid rgba(239, 68, 68, 0.35);
-    background: rgba(239, 68, 68, 0.12);
-    color: var(--danger-light);
-    font-weight: 600;
-    font-size: 0.8rem;
-    cursor: pointer;
-    transition: all var(--transition-fast);
+    white-space: nowrap;
+    border-color: color-mix(in srgb, var(--danger) 45%, var(--border) 55%);
+    color: color-mix(in srgb, var(--danger-light) 90%, var(--text-main) 10%);
 }
 
 .btn-clear-logs:hover:not(:disabled) {
-    background: rgba(239, 68, 68, 0.2);
-    border-color: rgba(239, 68, 68, 0.55);
+    background: color-mix(in srgb, var(--danger) 14%, var(--surface) 86%);
+    border-color: color-mix(in srgb, var(--danger) 56%, var(--border-strong) 44%);
 }
 
 .btn-clear-logs:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
+    opacity: 0.5;
 }
 
 @media (max-width: 768px) {
@@ -183,16 +183,16 @@
     }
 
     .col-time {
-        width: 38%;
+        width: 40%;
     }
 
     .col-user {
-        width: 38%;
+        width: 36%;
     }
 
     .logs-table th,
     .logs-table td {
-        padding: 0.75rem 0.85rem;
+        padding: 0.62rem 0.68rem;
     }
 }
 
@@ -204,7 +204,7 @@
     .logs-table {
         min-width: 0;
         width: 100%;
-        font-size: 0.72rem;
+        font-size: 0.7rem;
     }
 
     .logs-table th,
@@ -216,11 +216,11 @@
     }
 
     .logs-table .col-time {
-        width: 30%;
+        width: 34%;
     }
 
     .logs-table .col-user {
-        width: 44%;
+        width: 40%;
     }
 
     .logs-table th:last-child,

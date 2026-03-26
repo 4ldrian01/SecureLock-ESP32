@@ -62,6 +62,26 @@ WebServer::WebServer(LockManager* lockManager, SecurityManager* securityManager,
 /**
  * Initialize WiFi and Web Server
  */
+void WebServer::init(const char* ssid, const char* password) {
+    if (ssid != nullptr && ssid[0] != '\0') {
+        Serial.print("[WEB] Legacy init: connecting to SSID '");
+        Serial.print(ssid);
+        Serial.println("'...");
+
+        WiFi.mode(WIFI_STA);
+        WiFi.begin(ssid, (password != nullptr) ? password : "");
+
+        const unsigned long startMs = millis();
+        while (WiFi.status() != WL_CONNECTED && (millis() - startMs) < 15000UL) {
+            delay(250);
+            Serial.print('.');
+        }
+        Serial.println();
+    }
+
+    init();
+}
+
 void WebServer::init() {
     Serial.println("[WEB] Initializing Web Server...");
 
@@ -423,14 +443,14 @@ void WebServer::_handleRoot(AsyncWebServerRequest* request) {
 void WebServer::_handleCSS(AsyncWebServerRequest* request) {
     if (LittleFS.exists("/css/style.css")) {
         AsyncWebServerResponse* response = request->beginResponse(LittleFS, "/css/style.css", "text/css");
-        _addStaticCacheHeaders(response);
+        _addNoCacheHeaders(response);
         request->send(response);
         if (kVerboseHttpLogs) {
             Serial.println("[WEB] GET /css/style.css -> OK");
         }
     } else if (LittleFS.exists("/style.css")) {
         AsyncWebServerResponse* response = request->beginResponse(LittleFS, "/style.css", "text/css");
-        _addStaticCacheHeaders(response);
+        _addNoCacheHeaders(response);
         request->send(response);
         if (kVerboseHttpLogs) {
             Serial.println("[WEB] GET /css/style.css -> fallback /style.css");
@@ -443,10 +463,25 @@ void WebServer::_handleCSS(AsyncWebServerRequest* request) {
 
 void WebServer::_handleNotFound(AsyncWebServerRequest* request) {
     const String url = request->url();
+    String staticPath = url;
 
-    if (!url.startsWith("/api/") && LittleFS.exists(url)) {
-        AsyncWebServerResponse* response = request->beginResponse(LittleFS, url, _getMimeType(url));
-        if (url.endsWith(".html")) {
+    const int queryPos = staticPath.indexOf('?');
+    if (queryPos >= 0) {
+        staticPath = staticPath.substring(0, queryPos);
+    }
+
+    const int fragmentPos = staticPath.indexOf('#');
+    if (fragmentPos >= 0) {
+        staticPath = staticPath.substring(0, fragmentPos);
+    }
+
+    if (!staticPath.startsWith("/api/") && LittleFS.exists(staticPath)) {
+        AsyncWebServerResponse* response = request->beginResponse(LittleFS, staticPath, _getMimeType(staticPath));
+        const bool noCacheUiAsset = staticPath.endsWith(".html")
+            || staticPath.endsWith(".css")
+            || staticPath.endsWith(".js");
+
+        if (noCacheUiAsset) {
             _addNoCacheHeaders(response);
         } else {
             _addStaticCacheHeaders(response);
@@ -454,7 +489,7 @@ void WebServer::_handleNotFound(AsyncWebServerRequest* request) {
         request->send(response);
         if (kVerboseHttpLogs) {
             Serial.print("[WEB] Static fallback served: ");
-            Serial.println(url);
+            Serial.println(staticPath);
         }
         return;
     }

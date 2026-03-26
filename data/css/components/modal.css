@@ -134,6 +134,11 @@
     overflow: hidden;
 }
 
+.add-user-dialog[open],
+.edit-user-dialog[open] {
+    display: block;
+}
+
 .add-user-dialog::backdrop,
 .edit-user-dialog::backdrop {
     background: rgba(0, 0, 0, 0.75);
@@ -146,6 +151,7 @@
     max-height: calc(90vh - 2px);
     overflow-y: auto;
     overscroll-behavior: contain;
+    scrollbar-gutter: stable;
 }
 
 .dialog-header {

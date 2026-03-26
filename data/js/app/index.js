@@ -64,6 +64,11 @@ export function initApp() {
             state.logsTimer = null;
         }
 
+        if (state.logsClockTimer) {
+            clearInterval(state.logsClockTimer);
+            state.logsClockTimer = null;
+        }
+
         if (state.usersTimer) {
             clearTimeout(state.usersTimer);
             state.usersTimer = null;

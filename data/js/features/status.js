@@ -2,9 +2,15 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
     let lastDiagnosticsFetchMs = 0;
     let lastDiagnosticsText = 'Diagnostics: initializing...';
 
+    function applyStatusBadgeVariant(online) {
+        DOM.statusBadge.classList.toggle('badge-success', Boolean(online));
+        DOM.statusBadge.classList.toggle('badge-danger', !online);
+    }
+
     function setConnectionState(online) {
         state.connected = online;
         DOM.statusBadge.dataset.status = online ? 'online' : 'offline';
+        applyStatusBadgeVariant(online);
         DOM.statusText.textContent = online ? 'Online' : 'Offline';
     }
 
@@ -23,7 +29,7 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
 
         if (state.authPrompt) {
             DOM.lockStatusSub.textContent = state.authPrompt;
-            DOM.lockStatusSub.style.color = 'var(--accent)';
+            DOM.lockStatusSub.style.color = 'var(--accent, #60A5FA)';
             return;
         }
 
@@ -106,17 +112,35 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
         if (state.emergencyRequestInFlight) {
             DOM.btnEmergency.disabled = true;
             DOM.btnEmergency.textContent = 'Unlocking...';
+            DOM.btnEmergency.dataset.state = 'busy';
+            DOM.btnEmergency.classList.remove('btn-danger');
+            DOM.btnEmergency.classList.add('btn-ghost');
+            return;
+        }
+
+        if (state.emergencyGuestLock > 0) {
+            DOM.btnEmergency.disabled = true;
+            DOM.btnEmergency.textContent = `Guest code active (${state.emergencyGuestLock}s)`;
+            DOM.btnEmergency.dataset.state = 'guest-lock';
+            DOM.btnEmergency.classList.remove('btn-danger');
+            DOM.btnEmergency.classList.add('btn-ghost');
             return;
         }
 
         if (state.emergencyCooldown > 0) {
             DOM.btnEmergency.disabled = true;
             DOM.btnEmergency.textContent = `Emergency Override (${state.emergencyCooldown}s)`;
+            DOM.btnEmergency.dataset.state = 'cooldown';
+            DOM.btnEmergency.classList.remove('btn-danger');
+            DOM.btnEmergency.classList.add('btn-ghost');
             return;
         }
 
         DOM.btnEmergency.disabled = false;
         DOM.btnEmergency.textContent = 'Emergency Override';
+        DOM.btnEmergency.dataset.state = 'ready';
+        DOM.btnEmergency.classList.add('btn-danger');
+        DOM.btnEmergency.classList.remove('btn-ghost');
     }
 
     function setEmergencyBusy(isBusy) {
@@ -167,6 +191,10 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
             state.telegramLastCommandResult = String(data.telegramLastCommandResult || '');
             state.telegramPendingApprox = Number(data.telegramPendingApprox || 0);
             state.telegramPollErrors = Number(data.telegramPollErrors || 0);
+            state.emergencyGuestLock = Math.max(
+                0,
+                Math.ceil(Number(data.emergencyGuestLockRemainingMs || 0) / 1000)
+            );
 
             const emergencyCooldownRemainingMs = Number(data.emergencyCooldownRemainingMs);
             if (Number.isFinite(emergencyCooldownRemainingMs) && emergencyCooldownRemainingMs > 0) {
@@ -193,6 +221,7 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
 
             updateLockUI(state.locked);
             updateAlarmState(state.alarm);
+            updateEmergencyButton();
 
             if (DOM.diagStatus) {
                 try {
@@ -266,6 +295,20 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
                     }
                     onLogsUpdated();
                 } catch (error) {
+                    if (String(error?.payload?.errorCode || '') === 'GUEST_CODE_ACTIVE') {
+                        const retryAfter = Number(error?.payload?.retryAfterSec || 0);
+                        if (retryAfter > 0) {
+                            state.emergencyGuestLock = retryAfter;
+                            updateEmergencyButton();
+                        }
+                        feedback.showToast(
+                            error?.payload?.message || 'Emergency override is unavailable while guest code is active',
+                            'info'
+                        );
+                        onLogsUpdated();
+                        return;
+                    }
+
                     const retryAfter = Number(error?.payload?.retryAfterSec || 0);
                     if (retryAfter > 0) {
                         startEmergencyCooldown(retryAfter);

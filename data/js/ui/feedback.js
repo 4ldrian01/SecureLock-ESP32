@@ -1,5 +1,6 @@
 export function createFeedback({ DOM, CONFIG }) {
     let modalConfirmCallback = null;
+    let toastTimer = null;
 
     function showModal(title, message, type, onConfirm) {
         DOM.modalTitle.textContent = title;
@@ -15,12 +16,20 @@ export function createFeedback({ DOM, CONFIG }) {
     }
 
     function showToast(message, type) {
+        if (toastTimer) {
+            clearTimeout(toastTimer);
+            toastTimer = null;
+        }
+
+        DOM.toast.hidden = false;
         DOM.toastMessage.textContent = message;
         DOM.toast.dataset.type = type || 'info';
         DOM.toast.dataset.visible = 'true';
 
-        setTimeout(() => {
+        toastTimer = setTimeout(() => {
             DOM.toast.dataset.visible = 'false';
+            DOM.toast.hidden = true;
+            toastTimer = null;
         }, CONFIG.TOAST_DURATION);
     }
 

@@ -2,6 +2,7 @@
     display: flex;
     flex-direction: column;
     gap: 0.8rem;
+    min-width: 0;
 }
 
 .form-group {
@@ -33,6 +34,7 @@
     font-family: var(--font-sans);
     font-size: 0.9375rem;
     transition: all var(--transition-fast);
+    width: 100%;
 }
 
 .form-input::placeholder {

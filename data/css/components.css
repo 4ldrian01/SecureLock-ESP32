@@ -1,0 +1,157 @@
+/* ============================================================
+   Reusable Component Primitives (Phase 1 Foundation)
+   ============================================================ */
+
+.card {
+    background: color-mix(in srgb, var(--surface) 92%, #ffffff 8%);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+    color: var(--text-main);
+}
+
+.glass-panel,
+.glass-card {
+    background: var(--surface-glass);
+    border: 1px solid var(--border-glass);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+
+.btn {
+    --btn-bg: color-mix(in srgb, var(--surface) 88%, #ffffff 12%);
+    --btn-fg: var(--text-main);
+    --btn-border: var(--border-strong);
+
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-height: 2.45rem;
+    padding: 0.58rem 0.95rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--btn-border);
+    background: var(--btn-bg);
+    color: var(--btn-fg);
+    font-size: 0.875rem;
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
+    user-select: none;
+    transition:
+        background var(--transition-fast),
+        border-color var(--transition-fast),
+        color var(--transition-fast),
+        transform var(--transition-fast),
+        box-shadow var(--transition-fast);
+}
+
+.btn:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--btn-bg) 84%, #ffffff 16%);
+    transform: translateY(-1px);
+}
+
+.btn:active:not(:disabled) {
+    transform: translateY(0);
+}
+
+.btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+    transform: none;
+}
+
+.btn-primary {
+    --btn-bg: linear-gradient(180deg, color-mix(in srgb, var(--primary) 90%, #ffffff 10%), var(--primary));
+    --btn-fg: var(--primary-foreground);
+    --btn-border: color-mix(in srgb, var(--primary) 78%, #ffffff 22%);
+}
+
+.btn-danger {
+    --btn-bg: linear-gradient(180deg, color-mix(in srgb, var(--danger) 88%, #ffffff 12%), var(--danger));
+    --btn-fg: var(--danger-foreground);
+    --btn-border: color-mix(in srgb, var(--danger) 78%, #ffffff 22%);
+}
+
+.btn-ghost {
+    --btn-bg: transparent;
+    --btn-fg: var(--text-main);
+    --btn-border: color-mix(in srgb, var(--border) 72%, #ffffff 28%);
+}
+
+.btn-ghost:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--surface) 90%, #ffffff 10%);
+}
+
+.input,
+.select,
+.textarea {
+    width: 100%;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: color-mix(in srgb, var(--surface) 92%, #ffffff 8%);
+    color: var(--text-main);
+    padding: 0.62rem 0.8rem;
+    font-size: 0.9rem;
+    line-height: 1.25;
+    transition:
+        border-color var(--transition-fast),
+        background var(--transition-fast),
+        box-shadow var(--transition-fast);
+}
+
+.input::placeholder,
+.textarea::placeholder {
+    color: var(--text-subtle);
+}
+
+.input:hover,
+.select:hover,
+.textarea:hover {
+    border-color: var(--border-strong);
+}
+
+.input:focus,
+.select:focus,
+.textarea:focus {
+    outline: none;
+    border-color: color-mix(in srgb, var(--primary) 76%, #ffffff 24%);
+    box-shadow: 0 0 0 3px var(--ring);
+}
+
+.badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 1.4rem;
+    padding: 0.2rem 0.55rem;
+    border-radius: var(--radius-full);
+    border: 1px solid color-mix(in srgb, var(--border-strong) 78%, #ffffff 22%);
+    background: color-mix(in srgb, var(--surface) 84%, #ffffff 16%);
+    color: var(--text-main);
+    font-size: 0.72rem;
+    line-height: 1;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+
+.badge-success {
+    border-color: color-mix(in srgb, var(--success) 70%, #ffffff 30%);
+    background: color-mix(in srgb, var(--success) 22%, transparent 78%);
+    color: var(--success-light);
+}
+
+.badge-warning {
+    border-color: color-mix(in srgb, var(--warning) 70%, #ffffff 30%);
+    background: color-mix(in srgb, var(--warning) 22%, transparent 78%);
+    color: var(--warning);
+}
+
+.badge-danger {
+    border-color: color-mix(in srgb, var(--danger) 70%, #ffffff 30%);
+    background: color-mix(in srgb, var(--danger) 22%, transparent 78%);
+    color: var(--danger-light);
+}

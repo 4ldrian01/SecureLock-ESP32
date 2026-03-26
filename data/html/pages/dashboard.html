@@ -34,11 +34,11 @@
             </div>
 
             <div class="header-actions">
-                <div class="status-badge" id="statusBadge" data-status="offline" role="status" aria-live="polite">
+                <div class="badge status-badge" id="statusBadge" data-status="offline" role="status" aria-live="polite">
                     <span class="status-indicator" aria-hidden="true"></span>
                     <span id="statusText">Connecting</span>
                 </div>
-                <button type="button" class="btn-logout" id="btnLogout" hidden>
+                <button type="button" class="btn btn-ghost btn-logout" id="btnLogout" hidden>
                     Logout
                 </button>
             </div>
@@ -46,7 +46,7 @@
 
         <!-- ===== Hero Section: Lock Status ===== -->
         <section class="hero-section" aria-labelledby="lockStatusLabel">
-            <article class="glass-card hero-card" id="lockVisual" data-lock-state="locked">
+            <article class="card glass-panel glass-card hero-card" id="lockVisual" data-lock-state="locked">
                 <!-- Animated Lock Visual -->
                 <figure class="lock-visual">
                     <div class="lock-ring" aria-hidden="true"></div>
@@ -80,7 +80,7 @@
                 <!-- Emergency Override Button -->
                 <button
                     type="button"
-                    class="btn-emergency"
+                    class="btn btn-danger btn-emergency"
                     id="btnEmergency"
                     aria-describedby="emergencyDesc"
                 >
@@ -94,7 +94,7 @@
 
         <!-- ===== Guest Access Section ===== -->
         <section class="guest-section" aria-labelledby="guestTitle">
-            <article class="glass-card">
+            <article class="card glass-panel glass-card">
                 <header class="section-header">
                     <h2 class="section-title" id="guestTitle">
                         <svg class="section-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -121,7 +121,7 @@
 
         <!-- ===== Activity Logs Section ===== -->
         <section class="logs-section" aria-labelledby="logsTitle">
-            <article class="glass-card">
+            <article class="card glass-panel glass-card">
                 <header class="section-header">
                     <h2 class="section-title" id="logsTitle">
                         <svg class="section-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -129,7 +129,7 @@
                         </svg>
                         Activity Logs
                     </h2>
-                    <button type="button" class="btn-clear-logs" id="btnClearLogs" aria-label="Clear all activity logs">
+                    <button type="button" class="btn btn-ghost btn-clear-logs" id="btnClearLogs" aria-label="Clear all activity logs">
                         Clear Logs
                     </button>
                 </header>
@@ -139,8 +139,8 @@
                     <table class="logs-table" role="grid">
                         <thead>
                             <tr>
-                                <th scope="col">Time</th>
-                                <th scope="col">User</th>
+                                <th scope="col" class="col-time">Time</th>
+                                <th scope="col" class="col-user">User</th>
                                 <th scope="col" class="col-method">Method</th>
                                 <th scope="col" class="col-status">Status</th>
                             </tr>
@@ -152,16 +152,16 @@
                 </div>
 
                 <nav class="logs-pagination" id="logsPagination" aria-label="Activity logs pagination">
-                    <button type="button" class="pagination-btn" id="logsPrevPage">Previous</button>
+                    <button type="button" class="btn btn-ghost pagination-btn" id="logsPrevPage">Previous</button>
                     <span class="pagination-info" id="logsPageInfo">Page 1 of 1</span>
-                    <button type="button" class="pagination-btn" id="logsNextPage">Next</button>
+                    <button type="button" class="btn btn-ghost pagination-btn" id="logsNextPage">Next</button>
                 </nav>
             </article>
         </section>
 
         <!-- ===== User Management Section ===== -->
         <section class="users-section" aria-labelledby="usersTitle">
-            <article class="glass-card">
+            <article class="card glass-panel glass-card">
                 <header class="section-header section-header-actions">
                     <h2 class="section-title" id="usersTitle">
                         <svg class="section-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -169,15 +169,17 @@
                         </svg>
                         User Management
                     </h2>
-                    <button type="button" class="btn-clear-logs" id="btnResetUsers" aria-label="Reset all users from storage">
-                        Reset Users
-                    </button>
-                    <button type="button" class="btn-add-user" id="btnAddUser" aria-label="Add new user">
-                        <svg viewBox="0 0 24 24" aria-hidden="true">
-                            <path d="M15 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm-9-2V7H4v3H1v2h3v3h2v-3h3v-2H6zm9 4c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
-                        </svg>
-                        Add User
-                    </button>
+                    <div class="section-header-controls">
+                        <button type="button" class="btn btn-ghost btn-clear-logs" id="btnResetUsers" aria-label="Reset all users from storage">
+                            Reset Users
+                        </button>
+                        <button type="button" class="btn btn-primary btn-add-user" id="btnAddUser" aria-label="Add new user">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M15 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm-9-2V7H4v3H1v2h3v3h2v-3h3v-2H6zm9 4c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
+                            </svg>
+                            Add User
+                        </button>
+                    </div>
                 </header>
 
                 <!-- Users Grid -->
@@ -225,10 +227,10 @@
                 Are you sure you want to perform this action? This cannot be undone.
             </p>
             <div class="modal-actions">
-                <button type="button" class="btn-modal-cancel" id="btnModalCancel">
+                <button type="button" class="btn btn-ghost btn-modal-cancel" id="btnModalCancel">
                     Cancel
                 </button>
-                <button type="button" class="btn-modal-confirm" id="btnModalConfirm">
+                <button type="button" class="btn btn-danger btn-modal-confirm" id="btnModalConfirm">
                     Confirm
                 </button>
             </div>
@@ -244,7 +246,7 @@
         <div class="dialog-content">
             <div class="dialog-header">
                 <h3 class="dialog-title" id="editUserTitle">Edit User Details</h3>
-                <button type="button" class="btn-dialog-close" id="btnCloseEditDialog" aria-label="Close dialog">
+                <button type="button" class="btn btn-ghost btn-dialog-close" id="btnCloseEditDialog" aria-label="Close dialog">
                     <svg viewBox="0 0 24 24" aria-hidden="true">
                         <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
                     </svg>
@@ -259,7 +261,7 @@
                         type="text"
                         id="editUserName"
                         name="editUserName"
-                        class="form-input"
+                        class="input form-input"
                         placeholder="e.g., John Doe"
                         pattern="[A-Za-z .'-]+"
                         title="Name can include letters, spaces, apostrophes, dots, and hyphens"
@@ -277,7 +279,7 @@
                         type="text"
                         id="editUserChatId"
                         name="editUserChatId"
-                        class="form-input"
+                        class="input form-input"
                         placeholder="e.g., 123456789"
                         inputmode="numeric"
                         autocomplete="off"
@@ -294,7 +296,7 @@
                         type="text"
                         id="editUserBackupPin"
                         name="editUserBackupPin"
-                        class="form-input form-input-pin"
+                        class="input form-input form-input-pin"
                         placeholder="1234"
                         maxlength="4"
                         pattern="[0-9]{4}"
@@ -314,12 +316,12 @@
                             type="text"
                             id="editUserRfid"
                             name="editUserRfid"
-                            class="form-input form-input-readonly"
+                            class="input form-input form-input-readonly"
                             placeholder="Current RFID tag..."
                             readonly
                             required
                         />
-                        <button type="button" class="btn-replace" id="btnReplaceCard">
+                        <button type="button" class="btn btn-ghost btn-replace" id="btnReplaceCard">
                             <svg viewBox="0 0 24 24" aria-hidden="true">
                                 <path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/>
                             </svg>
@@ -332,10 +334,10 @@
 
                 <!-- Form Actions -->
                 <div class="dialog-actions">
-                    <button type="button" class="btn-dialog-cancel" id="btnCancelEdit">
+                    <button type="button" class="btn btn-ghost btn-dialog-cancel" id="btnCancelEdit">
                         Cancel
                     </button>
-                    <button type="submit" class="btn-dialog-submit" id="btnSubmitEdit">
+                    <button type="submit" class="btn btn-primary btn-dialog-submit" id="btnSubmitEdit">
                         <svg viewBox="0 0 24 24" aria-hidden="true">
                             <path d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"/>
                         </svg>
@@ -355,7 +357,7 @@
         <div class="dialog-content">
             <div class="dialog-header">
                 <h3 class="dialog-title" id="addUserTitle">Add New User</h3>
-                <button type="button" class="btn-dialog-close" id="btnCloseDialog" aria-label="Close dialog">
+                <button type="button" class="btn btn-ghost btn-dialog-close" id="btnCloseDialog" aria-label="Close dialog">
                     <svg viewBox="0 0 24 24" aria-hidden="true">
                         <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
                     </svg>
@@ -370,7 +372,7 @@
                         type="text"
                         id="userName"
                         name="userName"
-                        class="form-input"
+                        class="input form-input"
                         placeholder="e.g., Sarah Johnson"
                         pattern="[A-Za-z .'-]+"
                         title="Name can include letters, spaces, apostrophes, dots, and hyphens"
@@ -388,7 +390,7 @@
                         type="text"
                         id="userChatId"
                         name="userChatId"
-                        class="form-input"
+                        class="input form-input"
                         placeholder="e.g., 123456789"
                         inputmode="numeric"
                         autocomplete="off"
@@ -405,7 +407,7 @@
                         type="text"
                         id="userBackupPin"
                         name="userBackupPin"
-                        class="form-input form-input-pin"
+                        class="input form-input form-input-pin"
                         placeholder="1234"
                         maxlength="4"
                         pattern="[0-9]{4}"
@@ -425,12 +427,12 @@
                             type="text"
                             id="userRfid"
                             name="userRfid"
-                            class="form-input form-input-readonly"
+                            class="input form-input form-input-readonly"
                             placeholder="Waiting for card tap..."
                             readonly
                             required
                         />
-                        <button type="button" class="btn-scan" id="btnScanCard">
+                        <button type="button" class="btn btn-primary btn-scan" id="btnScanCard">
                             <svg viewBox="0 0 24 24" aria-hidden="true">
                                 <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
                             </svg>
@@ -443,10 +445,10 @@
 
                 <!-- Form Actions -->
                 <div class="dialog-actions">
-                    <button type="button" class="btn-dialog-cancel" id="btnCancelAdd">
+                    <button type="button" class="btn btn-ghost btn-dialog-cancel" id="btnCancelAdd">
                         Cancel
                     </button>
-                    <button type="submit" class="btn-dialog-submit" id="btnSubmitAdd">
+                    <button type="submit" class="btn btn-primary btn-dialog-submit" id="btnSubmitAdd">
                         <svg viewBox="0 0 24 24" aria-hidden="true">
                             <path d="M15 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm-9-2V7H4v3H1v2h3v3h2v-3h3v-2H6zm9 4c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
                         </svg>
@@ -458,7 +460,7 @@
     </dialog>
 
     <!-- ===== Toast Notification ===== -->
-    <output class="toast" id="toast" data-visible="false" data-type="info" role="status" aria-live="polite">
+    <output class="toast" id="toast" data-visible="false" data-type="info" role="status" aria-live="polite" hidden>
         <span class="toast-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24">
                 <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
@@ -487,6 +489,7 @@
                         type="text"
                         id="adminLoginUsername"
                         name="adminLoginUsername"
+                        class="input"
                         autocomplete="username"
                         required
                     />
@@ -498,6 +501,7 @@
                         type="password"
                         id="adminLoginPassword"
                         name="adminLoginPassword"
+                        class="input"
                         autocomplete="current-password"
                         required
                     />
@@ -506,7 +510,7 @@
                 <p class="auth-error" id="adminLoginError" role="alert" aria-live="assertive"></p>
                 <p class="auth-lockout" id="adminLockoutMessage" aria-live="polite"></p>
 
-                <button type="submit" class="btn-auth-login" id="btnAdminLogin">Login</button>
+                <button type="submit" class="btn btn-primary btn-auth-login" id="btnAdminLogin">Login</button>
             </form>
         </div>
     </aside>

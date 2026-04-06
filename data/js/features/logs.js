@@ -30,7 +30,13 @@ export function createLogsFeature({ CONFIG, state, DOM, apiFetch, feedback }) {
             state.logsClockTimer = null;
         }
 
+        const tickMs = Math.max(5000, Number(CONFIG.LOGS_CLOCK_TICK_MS || 10000));
+
         state.logsClockTimer = setInterval(() => {
+            if (document.hidden) {
+                return;
+            }
+
             if (!Array.isArray(state.allLogs) || state.allLogs.length === 0) {
                 return;
             }
@@ -38,7 +44,7 @@ export function createLogsFeature({ CONFIG, state, DOM, apiFetch, feedback }) {
             // Force row HTML refresh so relative time labels stay fresh.
             state.renderedLogsPageFingerprint = '';
             renderCurrentLogsPage();
-        }, 1000);
+        }, tickMs);
     }
 
     function createLogSignature(log) {

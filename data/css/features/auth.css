@@ -2,7 +2,7 @@ body[data-authenticated="false"] .dashboard,
 body[data-authenticated="false"] .dashboard-footer {
     pointer-events: none;
     user-select: none;
-    filter: blur(1.4px) saturate(0.88);
+    opacity: 0.78;
 }
 
 body[data-authenticated="true"] .dashboard,

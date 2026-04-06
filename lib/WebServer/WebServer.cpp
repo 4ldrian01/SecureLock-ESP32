@@ -443,14 +443,14 @@ void WebServer::_handleRoot(AsyncWebServerRequest* request) {
 void WebServer::_handleCSS(AsyncWebServerRequest* request) {
     if (LittleFS.exists("/css/style.css")) {
         AsyncWebServerResponse* response = request->beginResponse(LittleFS, "/css/style.css", "text/css");
-        _addNoCacheHeaders(response);
+        _addStaticCacheHeaders(response);
         request->send(response);
         if (kVerboseHttpLogs) {
             Serial.println("[WEB] GET /css/style.css -> OK");
         }
     } else if (LittleFS.exists("/style.css")) {
         AsyncWebServerResponse* response = request->beginResponse(LittleFS, "/style.css", "text/css");
-        _addNoCacheHeaders(response);
+        _addStaticCacheHeaders(response);
         request->send(response);
         if (kVerboseHttpLogs) {
             Serial.println("[WEB] GET /css/style.css -> fallback /style.css");
@@ -477,9 +477,7 @@ void WebServer::_handleNotFound(AsyncWebServerRequest* request) {
 
     if (!staticPath.startsWith("/api/") && LittleFS.exists(staticPath)) {
         AsyncWebServerResponse* response = request->beginResponse(LittleFS, staticPath, _getMimeType(staticPath));
-        const bool noCacheUiAsset = staticPath.endsWith(".html")
-            || staticPath.endsWith(".css")
-            || staticPath.endsWith(".js");
+        const bool noCacheUiAsset = staticPath.endsWith(".html");
 
         if (noCacheUiAsset) {
             _addNoCacheHeaders(response);
@@ -542,7 +540,7 @@ void WebServer::_addSecurityHeaders(AsyncWebServerResponse* response) {
 void WebServer::_addStaticCacheHeaders(AsyncWebServerResponse* response) {
     _addSecurityHeaders(response);
 
-    response->addHeader("Cache-Control", "public, max-age=600, stale-while-revalidate=120");
+    response->addHeader("Cache-Control", "public, max-age=86400, stale-while-revalidate=86400");
     response->addHeader("Vary", "Accept-Encoding");
 }
 

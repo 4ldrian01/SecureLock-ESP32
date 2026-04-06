@@ -51,7 +51,7 @@ The system is designed around non-blocking patterns (`millis()` timers + async H
 - 2FA flow after valid RFID:
   - Primary: **Telegram OTP (4 digits, 30s TTL)**
   - Fallback: **Offline Backup PIN (4 digits)**
-- Guest PIN support via Telegram admin command (`/guest_code`, 5 minutes)
+- Guest PIN support via Telegram admin command (`/guest_code`, 30 seconds)
 - Duress code support (`2580`) with unlock + silent escalation path
 
 ### Security & Alarming
@@ -70,7 +70,7 @@ The system is designed around non-blocking patterns (`millis()` timers + async H
 
 ### Telegram Integration
 - Alerts for duress/theft/RFID events
-- Admin control commands (status/open/lockdown/etc.)
+- Admin control commands (`/status`, `/my_info`, `/admin_open`, lockdown controls)
 - User informational commands (`/help`, `/my_info`)
 
 ---
@@ -97,7 +97,7 @@ SecureLock uses a 4-component modular firmware design:
    - Token-based API auth
    - Logs/users synchronization utilities
 
-`src/main.cpp` orchestrates runtime flows, including Telegram bot logic and cross-component events.
+`src/main_runtime.cpp` orchestrates runtime flows, including Telegram bot logic and cross-component events.
 
 ---
 
@@ -128,7 +128,8 @@ SecureLock uses a 4-component modular firmware design:
 ```text
 SecureLock/
 ├─ src/
-│  └─ main.cpp
+│  ├─ main_runtime.cpp
+│  └─ main.cpp (placeholder)
 ├─ lib/
 │  ├─ LockManager/
 │  ├─ SecurityManager/
@@ -224,11 +225,11 @@ Main UI file: `data/html/pages/dashboard.html`
 ### Notable dashboard behavior
 - Admin overlay lock until authenticated
 - Polling intervals (from `data/js/core/config.js`):
-  - Status: 1s
-  - Logs: 5s
-  - Users: 7s
-  - Diagnostics: 3s
-  - RFID enrollment poll: 120ms
+   - Status: 2.5s desktop / 3.2s mobile (with hidden-tab backoff)
+   - Logs: 10s (20s when tab hidden)
+   - Users: 15s (30s when tab hidden)
+   - Diagnostics: 3s desktop / 8s mobile (12s when hidden)
+   - RFID enrollment poll: 400ms (adaptive backoff under errors/hidden tab)
 - Responsive logs pagination
 - Add/Edit user dialogs with live RFID scan polling and duplicate checks
 
@@ -274,8 +275,9 @@ Most endpoints require `Authorization: Bearer <token>` from `/api/auth/login`.
 ### Admin commands
 - `/help`
 - `/start`
+- `/my_info`
 - `/status`
-- `/open` or `/admin_open`
+- `/admin_open`
 - `/guest_code`
 - `/lockdown`
 - `/unlockdown`

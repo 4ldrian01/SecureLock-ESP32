@@ -196,4 +196,14 @@
     .lock-status-sub {
         font-size: 0.85rem;
     }
+
+    .lock-ring {
+        animation: none;
+        opacity: 0.16;
+    }
+
+    [data-lock-state="locked"] .lock-shackle,
+    [data-lock-state="unlocked"] .lock-shackle {
+        filter: none;
+    }
 }

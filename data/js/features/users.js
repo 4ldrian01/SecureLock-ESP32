@@ -102,7 +102,7 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
 
     function isValidChatId(value) {
         const v = String(value || '').trim();
-        return /^-?\d+$/.test(v);
+        return /^\d{10}$/.test(v);
     }
     function isDuplicateChatId(chatId, excludeUid = '') {
         const normalizedChatId = String(chatId || '').trim();
@@ -124,12 +124,22 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
 
     function bindNameInputRestrictions() {
         const fields = [DOM.userName, DOM.editUserName].filter(Boolean);
+        const chatIdFields = [DOM.userChatId, DOM.editUserChatId].filter(Boolean);
 
         fields.forEach((field) => {
             field.addEventListener('input', () => {
                 const sanitized = sanitizeAlphabeticName(field.value);
                 if (field.value !== sanitized) {
                     field.value = sanitized;
+                }
+            });
+        });
+
+        chatIdFields.forEach((field) => {
+            field.addEventListener('input', () => {
+                const digitsOnly = String(field.value || '').replace(/\D+/g, '').slice(0, 10);
+                if (field.value !== digitsOnly) {
+                    field.value = digitsOnly;
                 }
             });
         });
@@ -617,7 +627,7 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             setFormError('userChatIdError', 'Telegram Chat ID is required');
             valid = false;
         } else if (!isValidChatId(chatId)) {
-            setFormError('userChatIdError', 'Telegram Chat ID must be numeric');
+            setFormError('userChatIdError', 'Telegram Chat ID must be exactly 10 digits');
             valid = false;
         } else if (isDuplicateChatId(chatId)) {
             setFormError('userChatIdError', 'Telegram Chat ID already linked to another user');
@@ -729,7 +739,7 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             valid = false;
         }
         if (chatId && !isValidChatId(chatId)) {
-            setFormError('editUserChatIdError', 'Telegram Chat ID must be numeric');
+            setFormError('editUserChatIdError', 'Telegram Chat ID must be exactly 10 digits');
             valid = false;
         } else if (!chatId) {
             setFormError('editUserChatIdError', 'Telegram Chat ID is required');

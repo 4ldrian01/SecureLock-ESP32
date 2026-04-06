@@ -1,6 +1,8 @@
 #include "WebServer.h"
 #include <time.h>
 
+extern void forwardWebAdminActivityToTelegram(const String& user, const String& method, const String& status);
+
 namespace {
 String normalizeMethodCode(const String& methodRaw) {
     String method = methodRaw;
@@ -94,6 +96,8 @@ void WebServer::_handleAPIClearLogs(AsyncWebServerRequest* request) {
     response["success"] = cleared;
     response["message"] = cleared ? "All logs cleared" : "Failed to clear logs";
 
+    forwardWebAdminActivityToTelegram("Admin (Web)", "Clear Logs", cleared ? "success" : "fail");
+
     _sendJSON(request, cleared ? 200 : 500, response);
 }
 
@@ -165,4 +169,8 @@ void WebServer::_addLogEntry(const String& user, const String& method, const Str
     Serial.print(method);
     Serial.print(" | ");
     Serial.println(status);
+
+    if (user == "Admin (Web)") {
+        forwardWebAdminActivityToTelegram(user, method, status);
+    }
 }

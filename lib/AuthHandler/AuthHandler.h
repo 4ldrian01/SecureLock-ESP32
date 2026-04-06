@@ -75,6 +75,8 @@ public:
     bool isKeypadReady() const;
     bool isKeypadMuted() const;
     unsigned long getKeypadMuteRemainingMs() const;
+    char getLastAcceptedKey() const;
+    unsigned long getLastAcceptedKeyMs() const;
     void startRFIDCooldown(unsigned long cooldownMs = RFID_COOLDOWN_MS);
     bool isRFIDCooldownActive() const;
     
@@ -151,6 +153,9 @@ private:
     static const int KEYPAD_NOISE_THRESHOLD = 20;
     static const unsigned long KEYPAD_MUTE_DURATION_MS = 3000;
     static const unsigned long KEYPAD_STARTUP_SETTLE_MS = 600;
+    static const unsigned long KEYPAD_STABLE_PRESS_MS = 12;
+    static const unsigned long KEYPAD_STABLE_RELEASE_MS = 10;
+    static const unsigned long KEYPAD_SAME_KEY_REPRESS_MS = 140;
     
     // Hardware objects
     MFRC522 _rfid;
@@ -164,6 +169,10 @@ private:
     unsigned long _rfidCooldownDurationMs;
     unsigned long _lastRFIDRecoverAttemptMs;
     unsigned long _lastAcceptedKeyMs;
+    char _lastAcceptedKeyChar;
+    char _lastRawKey;
+    unsigned long _lastRawKeyChangeMs;
+    bool _sameKeyRetriggerUsed;
     unsigned long _keypadNoiseWindowStartMs;
     int _keypadNoiseCount;
     unsigned long _keypadMutedUntilMs;

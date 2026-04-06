@@ -212,7 +212,7 @@ void WebServer::_handleAPIAddUser(AsyncWebServerRequest* request, uint8_t* data,
         JsonDocument doc;
         doc["success"] = false;
         doc["field"] = "telegramChatID";
-        doc["message"] = "Telegram Chat ID is too long";
+        doc["message"] = "Telegram Chat ID must be exactly 10 digits";
         _sendJSON(request, 400, doc);
         return;
     }
@@ -242,7 +242,7 @@ void WebServer::_handleAPIAddUser(AsyncWebServerRequest* request, uint8_t* data,
         JsonDocument doc;
         doc["success"] = false;
         doc["field"] = "telegramChatID";
-        doc["message"] = "A valid Telegram Chat ID is required for OTP delivery";
+        doc["message"] = "Telegram Chat ID must be exactly 10 digits for OTP delivery";
         _sendJSON(request, 400, doc);
         return;
     }
@@ -369,7 +369,7 @@ void WebServer::_handleAPIAddUser(AsyncWebServerRequest* request, uint8_t* data,
         _syncUsersFileFromAuth();
     }
 
-    _addLogEntry(name, "Add User", added ? "success" : "fail");
+    _addLogEntry("Admin (Web)", "Add User (" + name + ")", added ? "success" : "fail");
 
     JsonDocument doc;
     doc["success"] = added;
@@ -439,7 +439,7 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
         JsonDocument doc;
         doc["success"] = false;
         doc["field"] = "telegramChatID";
-        doc["message"] = "Telegram Chat ID is too long";
+        doc["message"] = "Telegram Chat ID must be exactly 10 digits";
         _sendJSON(request, 400, doc);
         return;
     }
@@ -460,7 +460,7 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
         JsonDocument doc;
         doc["success"] = false;
         doc["field"] = "telegramChatID";
-        doc["message"] = "Telegram Chat ID must be numeric when provided";
+        doc["message"] = "Telegram Chat ID must be exactly 10 digits";
         _sendJSON(request, 400, doc);
         return;
     }
@@ -619,7 +619,7 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
         JsonDocument doc;
         doc["success"] = false;
         doc["field"] = "telegramChatID";
-        doc["message"] = "Telegram Chat ID must be numeric when provided";
+        doc["message"] = "Telegram Chat ID must be exactly 10 digits";
         _sendJSON(request, 400, doc);
         return;
     }
@@ -716,7 +716,7 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
     doc["uid"] = targetUid;
 
     _syncUsersFileFromAuth();
-    _addLogEntry(name, uidChanged ? "Edit User (RFID Replaced)" : "Edit User", "success");
+    _addLogEntry("Admin (Web)", uidChanged ? ("Edit User (RFID Replaced: " + name + ")") : ("Edit User (" + name + ")"), "success");
     _sendJSON(request, 200, doc);
 }
 

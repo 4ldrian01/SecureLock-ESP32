@@ -1,6 +1,7 @@
 export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, onLogsUpdated }) {
     let lastDiagnosticsFetchMs = 0;
     let lastDiagnosticsText = 'Diagnostics: initializing...';
+    let diagnosticsRequestInFlight = false;
 
     function applyStatusBadgeVariant(online) {
         DOM.statusBadge.classList.toggle('badge-success', Boolean(online));
@@ -143,6 +144,80 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
         DOM.btnEmergency.classList.remove('btn-ghost');
     }
 
+    function getDiagnosticsIntervalMs() {
+        const base = Math.max(3000, Number(CONFIG.DIAGNOSTICS_INTERVAL || 3000));
+        const hidden = Math.max(base, Number(CONFIG.DIAGNOSTICS_INTERVAL_HIDDEN || 12000));
+        const mobile = Math.max(base, Number(CONFIG.DIAGNOSTICS_INTERVAL_MOBILE || 8000));
+
+        if (document.hidden) {
+            return hidden;
+        }
+
+        if (window.matchMedia('(max-width: 768px)').matches) {
+            return mobile;
+        }
+
+        return base;
+    }
+
+    function refreshDiagnosticsAsync() {
+        if (!DOM.diagStatus) {
+            return;
+        }
+
+        DOM.diagStatus.textContent = lastDiagnosticsText;
+
+        const now = Date.now();
+        const diagIntervalMs = getDiagnosticsIntervalMs();
+        if (diagnosticsRequestInFlight || (now - lastDiagnosticsFetchMs) < diagIntervalMs) {
+            return;
+        }
+
+        diagnosticsRequestInFlight = true;
+
+        apiFetch(CONFIG.API.DIAGNOSTICS)
+            .then((diag) => {
+                const compactMobile = window.matchMedia('(max-width: 640px)').matches;
+                const rfidText = diag.rfidReady ? 'RFID OK' : 'RFID WAIT';
+                const keypadText = diag.keypadReady
+                    ? (diag.keypadMuted ? `KEYPAD MUTED ${Math.ceil((Number(diag.keypadMuteRemainingMs) || 0) / 1000)}s` : 'KEYPAD OK')
+                    : 'KEYPAD INIT';
+                const keyText = diag.keypadLastKey ? `Last key: ${diag.keypadLastKey}` : 'Last key: -';
+                const tgAge = state.telegramLastCommandAgeMs >= 0
+                    ? `${Math.ceil(state.telegramLastCommandAgeMs / 1000)}s`
+                    : '-';
+                const tgCmd = state.telegramLastCommandText
+                    ? `${state.telegramLastCommandRole || 'user'}:${state.telegramLastCommandText}(${state.telegramLastCommandResult || 'ok'})`
+                    : 'none';
+                const tgText = `TG ${state.telegramLastPollDurationMs}ms@${state.telegramPollIntervalMs}ms, cmd ${tgAge}, q${state.telegramPendingApprox}, e${state.telegramPollErrors}, last ${tgCmd}`;
+                const activeUsers = Number(diag.activeUsers || 0);
+                const rawUsers = Number(diag.rawUsers || 0);
+                const badUsers = Number(diag.invalidUsers || 0) + Number(diag.duplicateUsers || 0);
+                const usersFlag = diag.usersStorageMismatch ? `MISMATCH(${badUsers})` : 'OK';
+                const usersText = `USERS ${activeUsers}/${rawUsers} ${usersFlag}`;
+
+                if (compactMobile) {
+                    const tgCompact = `TG q${state.telegramPendingApprox} e${state.telegramPollErrors}`;
+                    lastDiagnosticsText = `Diagnostics: ${rfidText} • ${keypadText} • ${usersText} • ${tgCompact}`;
+                } else {
+                    lastDiagnosticsText = `Diagnostics: ${rfidText} • ${keypadText} • ${keyText} • ${usersText} • ${tgText}`;
+                }
+
+                lastDiagnosticsFetchMs = Date.now();
+            })
+            .catch(() => {
+                if ((Date.now() - lastDiagnosticsFetchMs) > Math.max(diagIntervalMs * 2, 30000)) {
+                    lastDiagnosticsText = 'Diagnostics: unavailable';
+                }
+            })
+            .finally(() => {
+                diagnosticsRequestInFlight = false;
+                if (DOM.diagStatus) {
+                    DOM.diagStatus.textContent = lastDiagnosticsText;
+                }
+            });
+    }
+
     function setEmergencyBusy(isBusy) {
         state.emergencyRequestInFlight = isBusy;
         updateEmergencyButton();
@@ -223,37 +298,7 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
             updateAlarmState(state.alarm);
             updateEmergencyButton();
 
-            if (DOM.diagStatus) {
-                try {
-                    const now = Date.now();
-                    if ((now - lastDiagnosticsFetchMs) >= Number(CONFIG.DIAGNOSTICS_INTERVAL || 3000)) {
-                        const diag = await apiFetch(CONFIG.API.DIAGNOSTICS);
-                        const rfidText = diag.rfidReady ? 'RFID OK' : 'RFID WAIT';
-                        const keypadText = diag.keypadReady
-                            ? (diag.keypadMuted ? `KEYPAD MUTED ${Math.ceil((Number(diag.keypadMuteRemainingMs) || 0) / 1000)}s` : 'KEYPAD OK')
-                            : 'KEYPAD INIT';
-                        const keyText = diag.keypadLastKey ? `Last key: ${diag.keypadLastKey}` : 'Last key: -';
-                        const tgAge = state.telegramLastCommandAgeMs >= 0
-                            ? `${Math.ceil(state.telegramLastCommandAgeMs / 1000)}s`
-                            : '-';
-                        const tgCmd = state.telegramLastCommandText
-                            ? `${state.telegramLastCommandRole || 'user'}:${state.telegramLastCommandText}(${state.telegramLastCommandResult || 'ok'})`
-                            : 'none';
-                        const tgText = `TG ${state.telegramLastPollDurationMs}ms@${state.telegramPollIntervalMs}ms, cmd ${tgAge}, q${state.telegramPendingApprox}, e${state.telegramPollErrors}, last ${tgCmd}`;
-                        const activeUsers = Number(diag.activeUsers || 0);
-                        const rawUsers = Number(diag.rawUsers || 0);
-                        const badUsers = Number(diag.invalidUsers || 0) + Number(diag.duplicateUsers || 0);
-                        const usersFlag = diag.usersStorageMismatch ? `MISMATCH(${badUsers})` : 'OK';
-                        const usersText = `USERS ${activeUsers}/${rawUsers} ${usersFlag}`;
-                        lastDiagnosticsText = `Diagnostics: ${rfidText} • ${keypadText} • ${keyText} • ${usersText} • ${tgText}`;
-                        lastDiagnosticsFetchMs = now;
-                    }
-
-                    DOM.diagStatus.textContent = lastDiagnosticsText;
-                } catch {
-                    DOM.diagStatus.textContent = 'Diagnostics: unavailable';
-                }
-            }
+            refreshDiagnosticsAsync();
 
             return data;
         } catch {

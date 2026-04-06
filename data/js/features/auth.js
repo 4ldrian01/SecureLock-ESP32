@@ -40,6 +40,7 @@ export function createAuthFeature({
     let authenticated = false;
     let sessionTimer = null;
     let lockoutTimer = null;
+    let preAuthHealthTimer = null;
     let lockoutUntilMs = 0;
 
     const authConfig = CONFIG.ADMIN_AUTH || {};
@@ -68,17 +69,64 @@ export function createAuthFeature({
         return token.length > 0 && Number.isFinite(expiresAt) && expiresAt > nowMs();
     }
 
-    function setAuthenticatedUI(isAuthenticated) {
+    function setAuthenticatedUI(isAuthenticated, options = {}) {
+        const reachable = (typeof options.reachable === 'boolean') ? options.reachable : true;
+
         document.body.dataset.authenticated = isAuthenticated ? 'true' : 'false';
         DOM.authOverlay.dataset.visible = isAuthenticated ? 'false' : 'true';
         DOM.authOverlay.hidden = Boolean(isAuthenticated);
         DOM.btnLogout.hidden = !isAuthenticated;
 
-        if (!isAuthenticated) {
-            DOM.statusBadge.dataset.status = 'offline';
-            DOM.statusBadge.classList.remove('badge-success');
-            DOM.statusBadge.classList.add('badge-danger');
-            DOM.statusText.textContent = 'Locked';
+        DOM.statusBadge.classList.remove('badge-success', 'badge-danger', 'badge-warning');
+
+        if (isAuthenticated) {
+            DOM.statusBadge.dataset.status = 'online';
+            DOM.statusBadge.classList.add('badge-success');
+            return;
+        }
+
+        DOM.statusBadge.dataset.status = reachable ? 'online' : 'offline';
+        DOM.statusBadge.classList.add(reachable ? 'badge-warning' : 'badge-danger');
+        DOM.statusText.textContent = reachable ? 'Login Required' : 'Offline';
+    }
+
+    async function probeBackendReachability() {
+        try {
+            await apiFetch(CONFIG.API.AUTH_STATUS, {
+                method: 'GET',
+                skipAuthHandling: true,
+                timeoutMs: 5000
+            });
+            if (!authenticated) {
+                setAuthenticatedUI(false, { reachable: true });
+            }
+            return true;
+        } catch {
+            if (!authenticated) {
+                setAuthenticatedUI(false, { reachable: false });
+            }
+            return false;
+        }
+    }
+
+    function startPreAuthHealthPolling() {
+        if (preAuthHealthTimer) {
+            clearInterval(preAuthHealthTimer);
+            preAuthHealthTimer = null;
+        }
+
+        preAuthHealthTimer = setInterval(() => {
+            if (authenticated) {
+                return;
+            }
+            probeBackendReachability();
+        }, 10000);
+    }
+
+    function stopPreAuthHealthPolling() {
+        if (preAuthHealthTimer) {
+            clearInterval(preAuthHealthTimer);
+            preAuthHealthTimer = null;
         }
     }
 
@@ -154,6 +202,7 @@ export function createAuthFeature({
 
         authenticated = true;
         lockoutUntilMs = 0;
+        stopPreAuthHealthPolling();
         setApiAuthToken(session.token);
         writeSession(session);
 
@@ -206,7 +255,8 @@ export function createAuthFeature({
 
         clearApiAuthToken();
         clearSession();
-        setAuthenticatedUI(false);
+        setAuthenticatedUI(false, { reachable: true });
+        startPreAuthHealthPolling();
         DOM.adminLoginPassword.value = '';
         DOM.adminLoginError.textContent = reason || '';
         updateLockoutUI();
@@ -286,6 +336,7 @@ export function createAuthFeature({
             }
 
             DOM.adminLoginError.textContent = payload.message || error?.message || 'Unable to verify login right now. Try again.';
+            probeBackendReachability();
         } finally {
             DOM.btnAdminLogin.textContent = 'Login';
             DOM.btnAdminLogin.dataset.state = 'ready';
@@ -298,7 +349,7 @@ export function createAuthFeature({
         if (!isSessionValid(session)) {
             clearApiAuthToken();
             clearSession();
-            setAuthenticatedUI(false);
+            setAuthenticatedUI(false, { reachable: true });
             return false;
         }
 
@@ -317,7 +368,7 @@ export function createAuthFeature({
             if (!status?.authenticated) {
                 clearApiAuthToken();
                 clearSession();
-                setAuthenticatedUI(false);
+                setAuthenticatedUI(false, { reachable: true });
                 return false;
             }
 
@@ -328,7 +379,7 @@ export function createAuthFeature({
         } catch {
             clearApiAuthToken();
             clearSession();
-            setAuthenticatedUI(false);
+            setAuthenticatedUI(false, { reachable: false });
             return false;
         }
     }
@@ -343,9 +394,12 @@ export function createAuthFeature({
 
     function initialize() {
         startLockoutTimer();
+        setAuthenticatedUI(false, { reachable: true });
+        startPreAuthHealthPolling();
 
         restoreSession().then((restored) => {
             if (!restored) {
+                probeBackendReachability();
                 DOM.adminLoginUsername.focus();
             }
         });
@@ -368,6 +422,7 @@ export function createAuthFeature({
         dispose: () => {
             stopSessionTimer();
             stopLockoutTimer();
+            stopPreAuthHealthPolling();
         }
     };
 }

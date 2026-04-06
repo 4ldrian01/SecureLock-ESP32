@@ -81,19 +81,11 @@ inline bool isFourDigitCode(const String& code) {
 inline bool isValidTelegramChatId(const String& chatId) {
     String value = chatId;
     value.trim();
-    if (value.length() == 0) {
+    if (value.length() != 10) {
         return false;
     }
 
-    size_t start = 0;
-    if (value.charAt(0) == '-') {
-        if (value.length() == 1) {
-            return false;
-        }
-        start = 1;
-    }
-
-    for (size_t i = start; i < value.length(); i++) {
+    for (size_t i = 0; i < value.length(); i++) {
         if (!isDigit(value.charAt(i))) {
             return false;
         }

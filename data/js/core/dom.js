@@ -21,6 +21,9 @@ export function getDOM() {
         pinCode: document.getElementById('pinCode'),
         pinTimer: document.getElementById('pinTimer'),
 
+        logsSection: document.querySelector('.logs-section'),
+        usersSection: document.querySelector('.users-section'),
+
         logsTableBody: document.getElementById('logsTableBody'),
         logsPagination: document.getElementById('logsPagination'),
         logsPrevPage: document.getElementById('logsPrevPage'),

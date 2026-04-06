@@ -43,14 +43,18 @@ AuthHandler::AuthHandler()
     _lastRFIDScanMs(0),
       _rfidCooldownStartMs(0),
       _rfidCooldownDurationMs(0),
-            _lastRFIDRecoverAttemptMs(0),
+    _lastRFIDRecoverAttemptMs(0),
       _lastAcceptedKeyMs(0),
+    _lastAcceptedKeyChar('\0'),
+    _lastRawKey('\0'),
+    _lastRawKeyChangeMs(0),
+    _sameKeyRetriggerUsed(false),
       _keypadNoiseWindowStartMs(0),
       _keypadNoiseCount(0),
       _keypadMutedUntilMs(0),
       _keypadReadyAtMs(0),
       _keypadRuntimeSettlingStarted(false),
-            _heldKey('\0'),
+    _heldKey('\0'),
       _activeRfidRstPin(PIN_RFID_RST),
     _rfidReady(false),
       _factoryPressStart(0),
@@ -312,6 +316,14 @@ unsigned long AuthHandler::getKeypadMuteRemainingMs() const {
     return _keypadMutedUntilMs - now;
 }
 
+char AuthHandler::getLastAcceptedKey() const {
+    return _lastAcceptedKeyChar;
+}
+
+unsigned long AuthHandler::getLastAcceptedKeyMs() const {
+    return _lastAcceptedKeyMs;
+}
+
 char AuthHandler::getKeypadKey() {
     const unsigned long now = millis();
 
@@ -326,19 +338,37 @@ char AuthHandler::getKeypadKey() {
     }
 
     const char rawKey = _scanKeypadRaw();
-    if (rawKey == '\0') {
-        _heldKey = '\0';
+    if (rawKey != _lastRawKey) {
+        _lastRawKey = rawKey;
+        _lastRawKeyChangeMs = now;
         return '\0';
     }
+
+    if (rawKey == '\0') {
+        if ((now - _lastRawKeyChangeMs) >= KEYPAD_STABLE_RELEASE_MS) {
+            _heldKey = '\0';
+            _sameKeyRetriggerUsed = false;
+        }
+        return '\0';
+    }
+
+    if ((now - _lastRawKeyChangeMs) < KEYPAD_STABLE_PRESS_MS) {
+        return '\0';
+    }
+
+    const bool sameKeyAsHeld = (_heldKey == rawKey);
 
     // Emit one key event per physical press; ignore repeats while held.
-    if (_heldKey == rawKey) {
-        return '\0';
-    }
-    _heldKey = rawKey;
+    if (sameKeyAsHeld) {
+        const unsigned long sinceLastAccepted = now - _lastAcceptedKeyMs;
+        if (_sameKeyRetriggerUsed || sinceLastAccepted < KEYPAD_SAME_KEY_REPRESS_MS) {
+            return '\0';
+        }
 
-    if (rawKey == '\0') {
-        return '\0';
+        // Rescue path for repeated identical digits when release edge is noisy/missed.
+        _sameKeyRetriggerUsed = true;
+    } else {
+        _sameKeyRetriggerUsed = false;
     }
 
     const bool supported = ((rawKey >= '0' && rawKey <= '9') || rawKey == '*' || rawKey == '#'
@@ -369,33 +399,53 @@ char AuthHandler::getKeypadKey() {
         return '\0';
     }
 
+    _heldKey = rawKey;
     _lastAcceptedKeyMs = now;
+    _lastAcceptedKeyChar = rawKey;
     return rawKey;
 }
 
 char AuthHandler::_scanKeypadRaw() {
-    // Drive one column LOW at a time and read rows.
-    // On some ESP32 boards row pins may be input-only without internal pull-ups,
-    // so we require a stable single-key detection across two scans.
-    auto scanOnce = [this]() -> char {
+    // Differential scan for noisy/input-only row pins:
+    // toggle one column HIGH->LOW and detect rows that follow that edge.
+    // This is resilient when row pins (e.g. GPIO34-39) have no internal pull-ups.
+    auto scanOnce = [this](unsigned int settleUs, unsigned int edgeUs) -> char {
+        int highRead[ROWS];
+        int lowRead[ROWS];
+
         for (byte c = 0; c < COLS; c++) {
-            digitalWrite(_colPins[c], HIGH);
+            digitalWrite(_colPins[c], LOW);
         }
+        delayMicroseconds(settleUs);
 
         char detected = '\0';
         int hits = 0;
 
         for (byte c = 0; c < COLS; c++) {
-            digitalWrite(_colPins[c], LOW);
-            delayMicroseconds(25);
+            digitalWrite(_colPins[c], HIGH);
+            delayMicroseconds(edgeUs);
 
             for (byte r = 0; r < ROWS; r++) {
-                if (digitalRead(_rowPins[r]) == LOW) {
+                highRead[r] = digitalRead(_rowPins[r]);
+            }
+
+            digitalWrite(_colPins[c], LOW);
+            delayMicroseconds(edgeUs);
+
+            for (byte r = 0; r < ROWS; r++) {
+                lowRead[r] = digitalRead(_rowPins[r]);
+            }
+
+            for (byte r = 0; r < ROWS; r++) {
+                // Pressed key bridges row<->column so row tracks HIGH->LOW edge.
+                if (highRead[r] == HIGH && lowRead[r] == LOW) {
                     detected = _keys[r][c];
                     hits++;
                 }
             }
+        }
 
+        for (byte c = 0; c < COLS; c++) {
             digitalWrite(_colPins[c], HIGH);
         }
 
@@ -406,15 +456,43 @@ char AuthHandler::_scanKeypadRaw() {
         return detected;
     };
 
-    const char first = scanOnce();
-    if (first == '\0') {
+    auto majorityVote = [](char a, char b, char c) -> char {
+        if (a != '\0' && (a == b || a == c)) {
+            return a;
+        }
+
+        if (b != '\0' && b == c) {
+            return b;
+        }
+
+        return '\0';
+    };
+
+    const char sample1 = scanOnce(55, 80);
+    const char sample2 = scanOnce(40, 70);
+    const char sample3 = scanOnce(40, 70);
+
+    const char voted = majorityVote(sample1, sample2, sample3);
+    if (voted != '\0') {
+        return voted;
+    }
+
+    if (sample1 == '\0' && sample2 == '\0' && sample3 == '\0') {
         return '\0';
     }
 
-    delayMicroseconds(600);
-    const char second = scanOnce();
-    if (second == first) {
-        return second;
+    // If only one sample is non-empty, require immediate reconfirmation.
+    const char candidate = (sample1 != '\0')
+        ? sample1
+        : ((sample2 != '\0') ? sample2 : sample3);
+    if (candidate == '\0') {
+        return '\0';
+    }
+
+    delayMicroseconds(450);
+    const char confirmation = scanOnce(45, 75);
+    if (confirmation == candidate) {
+        return candidate;
     }
 
     return '\0';
@@ -563,6 +641,18 @@ bool AuthHandler::setUserTelegramChatId(const String& uid, const String& chatId)
 
     String normalizedChat = chatId;
     normalizedChat.trim();
+
+    if (normalizedChat.length() > 0) {
+        if (normalizedChat.length() != 10) {
+            return false;
+        }
+
+        for (size_t i = 0; i < normalizedChat.length(); i++) {
+            if (!isDigit(normalizedChat.charAt(i))) {
+                return false;
+            }
+        }
+    }
 
     if (normalizedChat.length() == 0) {
         user.remove(USERS_CHAT_ID_KEY);

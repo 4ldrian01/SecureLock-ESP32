@@ -56,6 +56,26 @@
     padding: var(--space-6);
 }
 
+.guest-section > .card,
+.logs-section > .card {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.guest-section .pin-helper {
+    margin-top: auto;
+}
+
+.logs-section .logs-table-wrapper {
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.logs-section .logs-pagination {
+    margin-top: var(--space-4);
+}
+
 .section-header {
     display: flex;
     align-items: center;
@@ -103,6 +123,7 @@
             "guest logs"
             "users users";
         gap: var(--space-5);
+        align-items: stretch;
     }
 }
 

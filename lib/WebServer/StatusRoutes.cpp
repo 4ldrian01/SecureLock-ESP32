@@ -19,6 +19,15 @@ extern int getTelegramPendingApprox();
 extern String getTelegramLastCommandText();
 extern String getTelegramLastCommandRole();
 extern String getTelegramLastCommandResult();
+extern int getTelegramNotificationQueueDepth();
+extern int getTelegramNotificationQueueCapacity();
+extern unsigned long getTelegramNotificationQueueOldestAgeMs();
+extern unsigned long getTelegramNotificationQueuedTotal();
+extern unsigned long getTelegramNotificationDeliveredTotal();
+extern unsigned long getTelegramNotificationDeliveryFailures();
+extern unsigned long getTelegramNotificationDroppedFullTotal();
+extern unsigned long getTelegramNotificationDroppedRetryTotal();
+extern bool requestWebGuestCode(String* issuedCode, unsigned long* remainingMs, bool* reusedExisting);
 
 void WebServer::_handleAPIStatus(AsyncWebServerRequest* request) {
     if (!_requireApiAuth(request)) {
@@ -75,6 +84,14 @@ void WebServer::_handleAPIStatus(AsyncWebServerRequest* request) {
     doc["telegramLastCommandText"] = getTelegramLastCommandText();
     doc["telegramLastCommandRole"] = getTelegramLastCommandRole();
     doc["telegramLastCommandResult"] = getTelegramLastCommandResult();
+    doc["telegramNotifyQueueDepth"] = getTelegramNotificationQueueDepth();
+    doc["telegramNotifyQueueCapacity"] = getTelegramNotificationQueueCapacity();
+    doc["telegramNotifyQueueOldestAgeMs"] = getTelegramNotificationQueueOldestAgeMs();
+    doc["telegramNotifyQueuedTotal"] = getTelegramNotificationQueuedTotal();
+    doc["telegramNotifyDeliveredTotal"] = getTelegramNotificationDeliveredTotal();
+    doc["telegramNotifyDeliveryFailures"] = getTelegramNotificationDeliveryFailures();
+    doc["telegramNotifyDroppedFullTotal"] = getTelegramNotificationDroppedFullTotal();
+    doc["telegramNotifyDroppedRetryTotal"] = getTelegramNotificationDroppedRetryTotal();
     doc["telegramLastCommandAgeMs"] = (lastTgCommandMs > 0) ? (nowMs - lastTgCommandMs) : -1;
     doc["telegramLastErrorAgeMs"] = (lastTgErrorMs > 0) ? (nowMs - lastTgErrorMs) : -1;
 
@@ -125,7 +142,7 @@ void WebServer::_handleAPIUnlock(AsyncWebServerRequest* request) {
         _security->clearAlarm();
     }
 
-    _security->beep(1);
+    _security->beep(2);
 
     _lastEmergencyUnlockMs = millis();
     _addLogEntry("Admin (Web)", "Emergency Override", "success");
@@ -148,10 +165,32 @@ void WebServer::_handleAPIGuestCode(AsyncWebServerRequest* request) {
 
     Serial.println("[API] POST /api/guest-code");
 
-    _addLogEntry("Admin (Web)", "Guest Code API Disabled", "fail");
+    String issuedCode = "";
+    unsigned long remainingMs = 0;
+    bool reusedExisting = false;
+    const bool generated = requestWebGuestCode(&issuedCode, &remainingMs, &reusedExisting);
+
+    if (!generated || issuedCode.length() != 4) {
+        _addLogEntry("Admin (Web)", "Guest PIN Generation", "fail");
+
+        JsonDocument doc;
+        doc["success"] = false;
+        doc["message"] = "Unable to generate guest code";
+        _sendJSON(request, 500, doc);
+        return;
+    }
+
+    _addLogEntry("Admin (Web)", reusedExisting ? "Guest PIN Reused" : "Guest PIN Generated", "success");
 
     JsonDocument doc;
-    doc["success"] = false;
-    doc["message"] = "Guest code generation is managed via Telegram command /guest_code";
-    _sendJSON(request, 403, doc);
+    doc["success"] = true;
+    doc["guestCode"] = issuedCode;
+    doc["guestCodeRemainingMs"] = remainingMs;
+    doc["expiresInMs"] = remainingMs;
+    doc["cooldownRemainingMs"] = getGuestCodeCommandCooldownRemainingMs();
+    doc["reused"] = reusedExisting;
+    doc["message"] = reusedExisting
+        ? "Active guest code returned"
+        : "Guest code generated";
+    _sendJSON(request, 200, doc);
 }

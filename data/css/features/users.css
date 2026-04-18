@@ -85,6 +85,16 @@
     background: color-mix(in srgb, var(--danger) 8%, var(--surface) 92%);
 }
 
+.user-card-seeded-admin {
+    border-color: color-mix(in srgb, var(--warning) 46%, var(--border-strong) 54%);
+    background: color-mix(in srgb, var(--warning) 9%, var(--surface) 91%);
+}
+
+.user-card-seeded-admin:hover {
+    border-color: color-mix(in srgb, var(--warning) 60%, var(--border-strong) 40%);
+    background: color-mix(in srgb, var(--warning) 12%, var(--surface-hover) 88%);
+}
+
 .user-card-locked:hover {
     border-color: color-mix(in srgb, var(--danger) 54%, var(--border-strong) 46%);
     background: color-mix(in srgb, var(--danger) 10%, var(--surface-hover) 90%);
@@ -127,6 +137,16 @@
     border-radius: var(--radius-sm);
 }
 
+.user-chat {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    background: color-mix(in srgb, var(--surface-active) 72%, transparent 28%);
+    border: 1px solid color-mix(in srgb, var(--border) 70%, transparent 30%);
+    padding: 0.22rem 0.48rem;
+    border-radius: var(--radius-sm);
+}
+
 .user-badge {
     display: inline-flex;
     align-items: center;
@@ -164,6 +184,10 @@
     gap: var(--space-2);
     align-items: center;
     flex-shrink: 0;
+}
+
+.user-actions .user-badge {
+    margin-left: 0.15rem;
 }
 
 .btn-edit,

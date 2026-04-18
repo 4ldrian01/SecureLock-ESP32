@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#111827">
     <meta name="description" content="SecureLock ESP32 Smart Lock Dashboard - Secure Access Management">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'">
@@ -15,13 +15,46 @@
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%233B82F6'%3E%3Cpath d='M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z'/%3E%3C/svg%3E">
 
     <!-- Stylesheet -->
-    <link rel="preload" href="../../css/critical.css?v=20260328r4" as="style">
-    <link rel="stylesheet" href="../../css/critical.css?v=20260328r4">
-    <link rel="preload" href="../../css/style.css?v=20260328r4" as="style">
-    <link rel="stylesheet" href="../../css/style.css?v=20260328r4" media="print" id="dashboardStyle">
-    <noscript><link rel="stylesheet" href="../../css/style.css?v=20260328r4"></noscript>
+    <link rel="preload" href="../../css/critical.css?v=20260418r5" as="style">
+    <link rel="stylesheet" href="../../css/critical.css?v=20260418r5">
+
+    <!-- Preload modular CSS chunks to reduce @import waterfall on first load -->
+    <link rel="preload" href="../../css/style.css?v=20260418r5" as="style">
+    <link rel="preload" href="../../css/tokens.css?v=20260418r5" as="style">
+    <link rel="preload" href="../../css/base.css?v=20260418r5" as="style">
+    <link rel="preload" href="../../css/components.css?v=20260418r5" as="style">
+    <link rel="preload" href="../../css/layout.css?v=20260418r5" as="style">
+    <link rel="preload" href="../../css/components/brand.css?v=20260418r5" as="style">
+    <link rel="preload" href="../../css/components/lock.css?v=20260418r5" as="style">
+    <link rel="preload" href="../../css/components/modal.css?v=20260418r5" as="style">
+    <link rel="preload" href="../../css/components/forms.css?v=20260418r5" as="style">
+    <link rel="preload" href="../../css/components/toast.css?v=20260418r5" as="style">
+    <link rel="preload" href="../../css/components/footer.css?v=20260418r5" as="style">
+    <link rel="preload" href="../../css/features/auth.css?v=20260418r5" as="style">
+    <link rel="preload" href="../../css/features/guest.css?v=20260418r5" as="style">
+    <link rel="preload" href="../../css/features/logs.css?v=20260418r5" as="style">
+    <link rel="preload" href="../../css/features/users.css?v=20260418r5" as="style">
+    <link rel="preload" href="../../css/features/pagination.css?v=20260418r5" as="style">
+
+    <link rel="stylesheet" href="../../css/style.css?v=20260418r5" media="print" id="dashboardStyle">
+    <noscript><link rel="stylesheet" href="../../css/style.css?v=20260418r5"></noscript>
+
+    <!-- Preload critical ES modules to reduce startup request waterfall -->
+    <link rel="modulepreload" href="../../js/entry/main.js?v=20260418r5">
+    <link rel="modulepreload" href="../../js/app/index.js?v=20260418r5">
+    <link rel="modulepreload" href="../../js/core/api.js?v=20260418r5">
+    <link rel="modulepreload" href="../../js/core/config.js?v=20260418r5">
+    <link rel="modulepreload" href="../../js/core/dom.js?v=20260418r5">
+    <link rel="modulepreload" href="../../js/core/helpers.js?v=20260418r5">
+    <link rel="modulepreload" href="../../js/core/state.js?v=20260418r5">
+    <link rel="modulepreload" href="../../js/features/auth.js?v=20260418r5">
+    <link rel="modulepreload" href="../../js/features/status.js?v=20260418r5">
+    <link rel="modulepreload" href="../../js/features/guest.js?v=20260418r5">
+    <link rel="modulepreload" href="../../js/features/logs.js?v=20260418r5">
+    <link rel="modulepreload" href="../../js/features/users.js?v=20260418r5">
+    <link rel="modulepreload" href="../../js/ui/feedback.js?v=20260418r5">
 </head>
-<body data-authenticated="pending">
+<body data-authenticated="pending" data-app-ready="false">
     <main class="dashboard">
         <!-- ===== Header Section ===== -->
         <header class="header">
@@ -82,6 +115,12 @@
                         <span class="badge badge-warning diagnostics-label">Diagnostics</span>
                         <p class="lock-status-sub diag-status diagnostics-text" id="diagStatus">initializing...</p>
                     </div>
+
+                    <div class="telemetry-panel" id="telemetryPanel" role="status" aria-live="polite">
+                        <span class="telemetry-chip">API RTT <strong id="telemetryApiRtt">--</strong></span>
+                        <span class="telemetry-chip">Notify Queue <strong id="telemetryQueue">--</strong></span>
+                        <span class="telemetry-chip">TG Poll <strong id="telemetryPoll">--</strong></span>
+                    </div>
                 </div>
 
                 <!-- Emergency Override Button -->
@@ -122,7 +161,11 @@
                     <p class="pin-timer" id="pinTimer">No active code</p>
                 </div>
 
-                <p class="pin-helper">Guest code is managed via Telegram command <strong>/guest_code</strong>.</p>
+                <div class="guest-actions">
+                    <button type="button" class="btn btn-primary btn-guest-code" id="btnGuestCode">
+                        Generate Guest Code
+                    </button>
+                </div>
             </article>
         </section>
 
@@ -141,12 +184,63 @@
                     </button>
                 </header>
 
+                <div class="logs-toolbar" role="search" aria-label="Activity logs filters">
+                    <div class="logs-search-wrap">
+                        <label class="sr-only" for="logsSearchInput">Search activity logs</label>
+                        <input
+                            type="search"
+                            id="logsSearchInput"
+                            class="input logs-search-input"
+                            placeholder="Search user, role, method, source, status..."
+                            autocomplete="off"
+                            spellcheck="false"
+                        />
+                    </div>
+
+                    <div class="logs-filter-wrap">
+                        <label for="logsStatusFilter" class="logs-filter-label">Status</label>
+                        <select id="logsStatusFilter" class="input logs-status-filter" aria-label="Filter activity logs by status">
+                            <option value="all">All</option>
+                            <option value="success">Success</option>
+                            <option value="fail">Failed</option>
+                            <option value="alarm">Alarm</option>
+                            <option value="info">Info</option>
+                        </select>
+                    </div>
+
+                    <div class="logs-filter-wrap">
+                        <label for="logsDateFrom" class="logs-filter-label">From</label>
+                        <input
+                            type="date"
+                            id="logsDateFrom"
+                            class="input logs-date-filter"
+                            aria-label="Filter activity logs from date"
+                        />
+                    </div>
+
+                    <div class="logs-filter-wrap">
+                        <label for="logsDateTo" class="logs-filter-label">To</label>
+                        <input
+                            type="date"
+                            id="logsDateTo"
+                            class="input logs-date-filter"
+                            aria-label="Filter activity logs to date"
+                        />
+                    </div>
+
+                    <button type="button" class="btn btn-ghost btn-logs-clear-filters" id="btnLogsClearFilters" aria-label="Clear activity logs filters">
+                        Clear Filters
+                    </button>
+                </div>
+
+                <p class="logs-filter-summary" id="logsFilterSummary" aria-live="polite"></p>
+
                 <!-- Logs Table -->
                 <div class="logs-table-wrapper">
                     <table class="logs-table" role="grid">
                         <thead>
                             <tr>
-                                <th scope="col" class="col-time">Time</th>
+                                <th scope="col" class="col-time">Date &amp; Time</th>
                                 <th scope="col" class="col-user">User</th>
                                 <th scope="col" class="col-method">Method</th>
                                 <th scope="col" class="col-status">Status</th>
@@ -159,7 +253,7 @@
                 </div>
 
                 <nav class="logs-pagination" id="logsPagination" aria-label="Activity logs pagination">
-                    <button type="button" class="btn btn-ghost pagination-btn" id="logsPrevPage">Previous</button>
+                    <button type="button" class="btn btn-ghost pagination-btn" id="logsPrevPage" hidden>Previous</button>
                     <span class="pagination-info" id="logsPageInfo">Page 1 of 1</span>
                     <button type="button" class="btn btn-ghost pagination-btn" id="logsNextPage">Next</button>
                 </nav>
@@ -264,21 +358,58 @@
 
             <form class="dialog-form" id="editUserForm" novalidate>
                 <!-- Input 1: Name -->
-                <div class="form-group">
-                    <label for="editUserName" class="form-label">Full Name <span class="required">*</span></label>
-                    <input
-                        type="text"
-                        id="editUserName"
-                        name="editUserName"
-                        class="input form-input"
-                        placeholder="e.g., John Doe"
-                        pattern="[A-Za-z .'-]+"
-                        title="Name can include letters, spaces, apostrophes, dots, and hyphens"
-                        maxlength="48"
-                        required
-                        autocomplete="name"
-                    />
-                    <span class="form-error" id="editUserNameError"></span>
+                <div class="name-fields-grid" role="group" aria-labelledby="editUserNameGroupLabel">
+                    <p class="sr-only" id="editUserNameGroupLabel">Edit user name fields</p>
+
+                    <div class="form-group">
+                        <label for="editUserFirstName" class="form-label">First Name <span class="required">*</span></label>
+                        <input
+                            type="text"
+                            id="editUserFirstName"
+                            name="editUserFirstName"
+                            class="input form-input"
+                            placeholder="e.g., John"
+                            pattern="[A-Za-z .'-]+"
+                            title="First name can include letters, spaces, apostrophes, dots, and hyphens"
+                            maxlength="24"
+                            required
+                            autocomplete="given-name"
+                        />
+                        <span class="form-error" id="editUserFirstNameError"></span>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="editUserMiddleName" class="form-label">Middle Name <span class="optional">(Optional)</span></label>
+                        <input
+                            type="text"
+                            id="editUserMiddleName"
+                            name="editUserMiddleName"
+                            class="input form-input"
+                            placeholder="e.g., Marie"
+                            pattern="[A-Za-z .'-]+"
+                            title="Middle name can include letters, spaces, apostrophes, dots, and hyphens"
+                            maxlength="24"
+                            autocomplete="additional-name"
+                        />
+                        <span class="form-error" id="editUserMiddleNameError"></span>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="editUserLastName" class="form-label">Last Name <span class="required">*</span></label>
+                        <input
+                            type="text"
+                            id="editUserLastName"
+                            name="editUserLastName"
+                            class="input form-input"
+                            placeholder="e.g., Doe"
+                            pattern="[A-Za-z .'-]+"
+                            title="Last name can include letters, spaces, apostrophes, dots, and hyphens"
+                            maxlength="24"
+                            required
+                            autocomplete="family-name"
+                        />
+                        <span class="form-error" id="editUserLastNameError"></span>
+                    </div>
                 </div>
 
                 <!-- Input 2: Telegram Chat ID -->
@@ -332,7 +463,7 @@
                             readonly
                             required
                         />
-                        <button type="button" class="btn btn-ghost btn-replace" id="btnReplaceCard">
+                        <button type="button" class="btn btn-warning btn-replace" id="btnReplaceCard">
                             <svg viewBox="0 0 24 24" aria-hidden="true">
                                 <path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/>
                             </svg>
@@ -377,21 +508,58 @@
 
             <form class="dialog-form" id="addUserForm" novalidate>
                 <!-- Input 1: Name -->
-                <div class="form-group">
-                    <label for="userName" class="form-label">Full Name <span class="required">*</span></label>
-                    <input
-                        type="text"
-                        id="userName"
-                        name="userName"
-                        class="input form-input"
-                        placeholder="e.g., Sarah Johnson"
-                        pattern="[A-Za-z .'-]+"
-                        title="Name can include letters, spaces, apostrophes, dots, and hyphens"
-                        maxlength="48"
-                        required
-                        autocomplete="name"
-                    />
-                    <span class="form-error" id="userNameError"></span>
+                <div class="name-fields-grid" role="group" aria-labelledby="addUserNameGroupLabel">
+                    <p class="sr-only" id="addUserNameGroupLabel">Add user name fields</p>
+
+                    <div class="form-group">
+                        <label for="userFirstName" class="form-label">First Name <span class="required">*</span></label>
+                        <input
+                            type="text"
+                            id="userFirstName"
+                            name="userFirstName"
+                            class="input form-input"
+                            placeholder="e.g., Sarah"
+                            pattern="[A-Za-z .'-]+"
+                            title="First name can include letters, spaces, apostrophes, dots, and hyphens"
+                            maxlength="24"
+                            required
+                            autocomplete="given-name"
+                        />
+                        <span class="form-error" id="userFirstNameError"></span>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="userMiddleName" class="form-label">Middle Name <span class="optional">(Optional)</span></label>
+                        <input
+                            type="text"
+                            id="userMiddleName"
+                            name="userMiddleName"
+                            class="input form-input"
+                            placeholder="e.g., Marie"
+                            pattern="[A-Za-z .'-]+"
+                            title="Middle name can include letters, spaces, apostrophes, dots, and hyphens"
+                            maxlength="24"
+                            autocomplete="additional-name"
+                        />
+                        <span class="form-error" id="userMiddleNameError"></span>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="userLastName" class="form-label">Last Name <span class="required">*</span></label>
+                        <input
+                            type="text"
+                            id="userLastName"
+                            name="userLastName"
+                            class="input form-input"
+                            placeholder="e.g., Johnson"
+                            pattern="[A-Za-z .'-]+"
+                            title="Last name can include letters, spaces, apostrophes, dots, and hyphens"
+                            maxlength="24"
+                            required
+                            autocomplete="family-name"
+                        />
+                        <span class="form-error" id="userLastNameError"></span>
+                    </div>
                 </div>
 
                 <!-- Input 2: Telegram Chat ID -->
@@ -487,6 +655,7 @@
         class="auth-overlay"
         id="authOverlay"
         data-visible="true"
+        data-mode="checking"
         role="dialog"
         aria-modal="true"
         aria-labelledby="authTitle"
@@ -494,6 +663,10 @@
         <div class="auth-card">
             <h2 class="auth-title" id="authTitle">Admin Login Required</h2>
             <p class="auth-subtitle">SecureLock dashboard is restricted to authorized admin only.</p>
+
+            <div class="auth-checking" id="authChecking" role="status" aria-live="polite">
+                Verifying secure session…
+            </div>
 
             <form class="auth-form" id="adminLoginForm" novalidate>
                 <div class="auth-field">
@@ -510,14 +683,29 @@
 
                 <div class="auth-field">
                     <label for="adminLoginPassword">Password</label>
-                    <input
-                        type="password"
-                        id="adminLoginPassword"
-                        name="adminLoginPassword"
-                        class="input"
-                        autocomplete="current-password"
-                        required
-                    />
+                    <div class="auth-password-wrap">
+                        <input
+                            type="password"
+                            id="adminLoginPassword"
+                            name="adminLoginPassword"
+                            class="input"
+                            autocomplete="current-password"
+                            required
+                        />
+                        <button
+                            type="button"
+                            class="btn-password-toggle"
+                            id="btnToggleAdminPassword"
+                            aria-label="Show password"
+                            aria-controls="adminLoginPassword"
+                            aria-pressed="false"
+                            title="Show password"
+                        >
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zm0 12.5a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/>
+                            </svg>
+                        </button>
+                    </div>
                 </div>
 
                 <p class="auth-error" id="adminLoginError" role="alert" aria-live="assertive"></p>
@@ -529,6 +717,6 @@
     </aside>
 
     <!-- JavaScript -->
-    <script type="module" src="../../js/entry/main.js?v=20260328r4"></script>
+    <script type="module" src="../../js/entry/main.js?v=20260418r5"></script>
 </body>
 </html>

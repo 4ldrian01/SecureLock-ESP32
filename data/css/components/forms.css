@@ -24,6 +24,18 @@
     color: var(--danger);
 }
 
+.optional {
+    color: var(--text-subtle);
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.name-fields-grid {
+    display: grid;
+    gap: 0.75rem;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .form-input,
 .form-select {
     padding: 0.68rem 0.92rem;
@@ -102,27 +114,9 @@ textarea:focus,
 
 .btn-scan,
 .btn-replace {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.75rem 1.25rem;
-    border: none;
-    border-radius: var(--radius-sm);
-    color: var(--text-main);
-    font-family: var(--font-sans);
-    font-size: 0.875rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all var(--transition-fast);
+    min-height: 2.45rem;
+    padding: 0.62rem 1rem;
     white-space: nowrap;
-}
-
-.btn-scan {
-    background: linear-gradient(135deg, var(--primary) 0%, #2563EB 100%);
-}
-
-.btn-replace {
-    background: linear-gradient(135deg, var(--warning) 0%, #D97706 100%);
 }
 
 .btn-scan:hover:not(:disabled),
@@ -131,11 +125,11 @@ textarea:focus,
 }
 
 .btn-scan:hover:not(:disabled) {
-    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+    box-shadow: var(--shadow-sm);
 }
 
 .btn-replace:hover:not(:disabled) {
-    box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
+    box-shadow: var(--shadow-sm);
 }
 
 .btn-scan:disabled,
@@ -237,6 +231,10 @@ textarea:focus,
 }
 
 @media (max-width: 768px) {
+    .name-fields-grid {
+        grid-template-columns: 1fr;
+    }
+
     .form-input-group {
         flex-direction: column;
     }

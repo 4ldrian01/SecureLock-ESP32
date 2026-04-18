@@ -15,6 +15,7 @@
 html,
 body {
     min-height: 100%;
+    min-height: var(--app-vh, 100vh);
 }
 
 html {
@@ -37,6 +38,29 @@ body {
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    touch-action: pan-y;
+    overscroll-behavior-y: contain;
+    -webkit-tap-highlight-color: transparent;
+    padding-bottom: max(0px, env(safe-area-inset-bottom));
+}
+
+button,
+a,
+input,
+select,
+textarea {
+    touch-action: manipulation;
+}
+
+/*
+ * First-paint stability guard:
+ * disable transitions/animations until JS marks data-app-ready=true.
+ */
+body[data-app-ready="false"] *,
+body[data-app-ready="false"] *::before,
+body[data-app-ready="false"] *::after {
+    transition: none !important;
+    animation: none !important;
 }
 
 /* Subtle ambient layer, intentionally low contrast */

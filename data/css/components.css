@@ -75,6 +75,12 @@
     --btn-border: color-mix(in srgb, var(--danger) 78%, #ffffff 22%);
 }
 
+.btn-warning {
+    --btn-bg: linear-gradient(180deg, color-mix(in srgb, var(--warning) 88%, #ffffff 12%), var(--warning));
+    --btn-fg: var(--warning-foreground);
+    --btn-border: color-mix(in srgb, var(--warning) 76%, #ffffff 24%);
+}
+
 .btn-ghost {
     --btn-bg: transparent;
     --btn-fg: var(--text-main);

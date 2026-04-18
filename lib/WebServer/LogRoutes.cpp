@@ -22,12 +22,66 @@ String normalizeMethodCode(const String& methodRaw) {
     if (method.indexOf("user") >= 0) return "USER";
     return "SYSTEM";
 }
+
+String normalizeActorRole(const String& userRaw, const String& methodRaw) {
+    String user = userRaw;
+    user.trim();
+    user.toLowerCase();
+
+    String method = methodRaw;
+    method.trim();
+    method.toLowerCase();
+
+    if (user.indexOf("guest") >= 0 || method.indexOf("guest") >= 0) {
+        return "guest";
+    }
+
+    if (user.indexOf("unregistered") >= 0
+        || user.indexOf("unknown rfid") >= 0
+        || method.indexOf("unauthorized") >= 0) {
+        return "guest";
+    }
+
+    if (user.indexOf("(telegram admin)") >= 0) {
+        return "admin";
+    }
+
+    if (user.indexOf("(telegram user)") >= 0) {
+        return "user";
+    }
+
+    if (user.indexOf("admin") >= 0
+        || user.indexOf("(web)") >= 0
+        || method.indexOf("admin") >= 0
+        || method.indexOf("(web)") >= 0) {
+        return "admin";
+    }
+
+    if ((user.indexOf("telegram") >= 0 || method.indexOf("telegram") >= 0)
+        && method.indexOf("command") >= 0) {
+        return "user";
+    }
+
+    if (user.indexOf("user") >= 0
+        || method.indexOf("rfid") >= 0
+        || method.indexOf("otp") >= 0
+        || method.indexOf("pin") >= 0
+        || method.indexOf("keypad") >= 0
+        || method.indexOf("backup") >= 0) {
+        return "user";
+    }
+
+    return "system";
+}
 }
 
 void WebServer::_handleAPILogs(AsyncWebServerRequest* request) {
     if (!_requireApiAuth(request)) {
         return;
     }
+
+    // Force a bounded flush so very recent actions are visible immediately.
+    _flushQueuedLogs(LOG_FLUSH_MAX_BATCH);
 
     JsonDocument storageDoc;
     if (LittleFS.exists("/logs.json")) {
@@ -69,7 +123,20 @@ void WebServer::_handleAPILogs(AsyncWebServerRequest* request) {
         if (methodCode.length() == 0) {
             dst["methodCode"] = normalizeMethodCode(method);
         }
+
+        dst["status"] = _normalizeLogStatus(dst["status"] | "");
+        dst["actorRole"] = normalizeActorRole(user, method);
     }
+
+    size_t queueDepth = 0;
+    unsigned long droppedQueueEntries = 0;
+    portENTER_CRITICAL(&_queuedLogMux);
+    queueDepth = _queuedLogCount;
+    droppedQueueEntries = _droppedQueuedLogs;
+    portEXIT_CRITICAL(&_queuedLogMux);
+
+    responseDoc["pendingQueueDepth"] = queueDepth;
+    responseDoc["droppedQueueEntries"] = droppedQueueEntries;
 
     _sendJSON(request, 200, responseDoc);
 }
@@ -80,6 +147,8 @@ void WebServer::_handleAPIClearLogs(AsyncWebServerRequest* request) {
     }
 
     Serial.println("[API] DELETE /api/logs - Clear all logs");
+
+    _clearQueuedLogs();
 
     JsonDocument logsDoc;
     logsDoc["logs"] = JsonArray();
@@ -102,6 +171,23 @@ void WebServer::_handleAPIClearLogs(AsyncWebServerRequest* request) {
 }
 
 void WebServer::_addLogEntry(const String& user, const String& method, const String& status) {
+    _queueLogEntry(user, method, status);
+}
+
+void WebServer::_writeLogEntryToStorage(const String& user, const String& method, const String& status) {
+    QueuedLogEntry singleEntry{};
+    snprintf(singleEntry.user, sizeof(singleEntry.user), "%s", user.c_str());
+    snprintf(singleEntry.method, sizeof(singleEntry.method), "%s", method.c_str());
+    snprintf(singleEntry.status, sizeof(singleEntry.status), "%s", _normalizeLogStatus(status).c_str());
+
+    _writeLogBatchToStorage(&singleEntry, 1);
+}
+
+void WebServer::_writeLogBatchToStorage(const QueuedLogEntry* entries, size_t count) {
+    if (!entries || count == 0) {
+        return;
+    }
+
     JsonDocument logsDoc;
 
     if (LittleFS.exists("/logs.json")) {
@@ -121,33 +207,49 @@ void WebServer::_addLogEntry(const String& user, const String& method, const Str
 
     JsonArray logs = logsDoc["logs"].as<JsonArray>();
 
-    while (logs.size() >= 50) {
+    while (logs.size() + count > 50) {
         logs.remove(0);
     }
 
-    char timeStr[40];
-    unsigned long long epochMs = 0;
-    time_t now = time(nullptr);
-    if (now > 1700000000) {
-        struct tm utcTime;
-        gmtime_r(&now, &utcTime);
-        strftime(timeStr, sizeof(timeStr), "%Y-%m-%dT%H:%M:%SZ", &utcTime);
-        epochMs = static_cast<unsigned long long>(now) * 1000ULL;
-    } else {
-        unsigned long sec = millis() / 1000;
-        unsigned long m = (sec / 60) % 60;
-        unsigned long h = (sec / 3600) % 24;
-        snprintf(timeStr, sizeof(timeStr), "%02lu:%02lu (uptime)", h, m);
-    }
+    for (size_t i = 0; i < count; i++) {
+        String safeUser = String(entries[i].user);
+        safeUser.trim();
+        if (safeUser.length() == 0) {
+            safeUser = "System";
+        }
 
-    JsonObject entry = logs.add<JsonObject>();
-    entry["time"] = String(timeStr);
-    entry["epochMs"] = epochMs;
-    entry["uptimeMs"] = millis();
-    entry["user"] = user;
-    entry["method"] = method;
-    entry["methodCode"] = normalizeMethodCode(method);
-    entry["status"] = status;
+        String safeMethod = String(entries[i].method);
+        safeMethod.trim();
+        if (safeMethod.length() == 0) {
+            safeMethod = "System";
+        }
+
+        const String safeStatus = _normalizeLogStatus(String(entries[i].status));
+
+        char timeStr[40];
+        unsigned long long epochMs = 0;
+        time_t now = time(nullptr);
+        if (now > 1700000000) {
+            struct tm utcTime;
+            gmtime_r(&now, &utcTime);
+            strftime(timeStr, sizeof(timeStr), "%Y-%m-%dT%H:%M:%SZ", &utcTime);
+            epochMs = static_cast<unsigned long long>(now) * 1000ULL;
+        } else {
+            unsigned long sec = millis() / 1000;
+            unsigned long m = (sec / 60) % 60;
+            unsigned long h = (sec / 3600) % 24;
+            snprintf(timeStr, sizeof(timeStr), "%02lu:%02lu (uptime)", h, m);
+        }
+
+        JsonObject entry = logs.add<JsonObject>();
+        entry["time"] = String(timeStr);
+        entry["epochMs"] = epochMs;
+        entry["uptimeMs"] = millis();
+        entry["user"] = safeUser;
+        entry["method"] = safeMethod;
+        entry["methodCode"] = normalizeMethodCode(safeMethod);
+        entry["status"] = safeStatus;
+    }
 
     File wFile = LittleFS.open("/logs.json", "w");
     if (!wFile) {
@@ -163,14 +265,20 @@ void WebServer::_addLogEntry(const String& user, const String& method, const Str
         return;
     }
 
-    Serial.print("[LOG] ");
-    Serial.print(user);
-    Serial.print(" | ");
-    Serial.print(method);
-    Serial.print(" | ");
-    Serial.println(status);
+    for (size_t i = 0; i < count; i++) {
+        const String user = String(entries[i].user);
+        const String method = String(entries[i].method);
+        const String status = _normalizeLogStatus(String(entries[i].status));
 
-    if (user == "Admin (Web)") {
-        forwardWebAdminActivityToTelegram(user, method, status);
+        Serial.print("[LOG] ");
+        Serial.print(user);
+        Serial.print(" | ");
+        Serial.print(method);
+        Serial.print(" | ");
+        Serial.println(status);
+
+        if (user == "Admin (Web)") {
+            forwardWebAdminActivityToTelegram(user, method, status);
+        }
     }
 }

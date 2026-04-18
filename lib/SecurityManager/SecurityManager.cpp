@@ -6,6 +6,16 @@
 
 #include "SecurityManager.h"
 
+namespace {
+inline bool isVibrationActiveLevel(int rawDigitalState) {
+#if SECURELOCK_VIBRATION_ACTIVE_HIGH
+    return rawDigitalState == HIGH;
+#else
+    return rawDigitalState == LOW;
+#endif
+}
+}
+
 /**
  * Constructor
  */
@@ -33,6 +43,11 @@ SecurityManager::SecurityManager()
 void SecurityManager::init() {
     pinMode(PIN_BUZZER, OUTPUT);
     pinMode(PIN_VIBE, INPUT);
+
+    // Establish current sensor baseline to avoid false first-edge strikes.
+    _lastVibeState = isVibrationActiveLevel(digitalRead(PIN_VIBE));
+    _stableVibeState = _lastVibeState;
+    _lastVibeTime = millis();
     
     _setBuzzer(false);
     
@@ -46,6 +61,12 @@ void SecurityManager::init() {
     Serial.println("ACTIVE-HIGH (HIGH = ON)");
 #else
     Serial.println("ACTIVE-LOW (LOW = ON)");
+#endif
+    Serial.print("[SECURITY] Vibration polarity: ");
+#if SECURELOCK_VIBRATION_ACTIVE_HIGH
+    Serial.println("ACTIVE-HIGH (HIGH = strike)");
+#else
+    Serial.println("ACTIVE-LOW (LOW = strike)");
 #endif
 }
 
@@ -66,7 +87,7 @@ bool SecurityManager::isVibrationDetected() {
 
 bool SecurityManager::pollVibrationStrike() {
     const unsigned long now = millis();
-    const bool rawState = (digitalRead(PIN_VIBE) == HIGH);
+    const bool rawState = isVibrationActiveLevel(digitalRead(PIN_VIBE));
 
     if (rawState != _lastVibeState) {
         _lastVibeTime = now;
@@ -99,7 +120,7 @@ bool SecurityManager::isVibrationLatched() const {
  */
 void SecurityManager::resetVibration() {
     _vibrationDetected = false;
-    _lastVibeState = (digitalRead(PIN_VIBE) == HIGH);
+    _lastVibeState = isVibrationActiveLevel(digitalRead(PIN_VIBE));
     _stableVibeState = _lastVibeState;
 }
 

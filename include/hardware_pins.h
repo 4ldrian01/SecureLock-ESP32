@@ -64,4 +64,64 @@
 #define SECURELOCK_BUZZER_ACTIVE_HIGH  1
 #endif
 
+// ------------------------------------------------------------
+// Vibration sensor digital polarity
+// ------------------------------------------------------------
+// Some SW-420 modules assert HIGH on strike, others assert LOW.
+// 1 = HIGH means vibration event, 0 = LOW means vibration event.
+#ifndef SECURELOCK_VIBRATION_ACTIVE_HIGH
+#define SECURELOCK_VIBRATION_ACTIVE_HIGH 1
+#endif
+
+// ------------------------------------------------------------
+// Compile-time pin-map validation
+// ------------------------------------------------------------
+#define SECURELOCK_IS_INPUT_ONLY_GPIO(gpio) \
+	((gpio) == 34 || (gpio) == 35 || (gpio) == 36 || (gpio) == 39)
+
+#define SECURELOCK_IS_FLASH_BUS_GPIO(gpio) \
+	((gpio) >= 6 && (gpio) <= 11)
+
+static_assert(!SECURELOCK_IS_FLASH_BUS_GPIO(SECURELOCK_PIN_RELAY), "RELAY pin must not use GPIO6-11");
+static_assert(!SECURELOCK_IS_FLASH_BUS_GPIO(SECURELOCK_PIN_LED), "LED pin must not use GPIO6-11");
+static_assert(!SECURELOCK_IS_FLASH_BUS_GPIO(SECURELOCK_PIN_DOOR), "DOOR pin must not use GPIO6-11");
+static_assert(!SECURELOCK_IS_FLASH_BUS_GPIO(SECURELOCK_PIN_VIBRATION), "VIBRATION pin must not use GPIO6-11");
+static_assert(!SECURELOCK_IS_FLASH_BUS_GPIO(SECURELOCK_PIN_BUZZER), "BUZZER pin must not use GPIO6-11");
+static_assert(!SECURELOCK_IS_FLASH_BUS_GPIO(SECURELOCK_PIN_RFID_SS), "RFID SS pin must not use GPIO6-11");
+static_assert(!SECURELOCK_IS_FLASH_BUS_GPIO(SECURELOCK_PIN_RFID_RST), "RFID RST pin must not use GPIO6-11");
+
+static_assert(SECURELOCK_PIN_RELAY != SECURELOCK_PIN_RFID_RST, "RELAY and RFID_RST must be different GPIOs");
+static_assert(SECURELOCK_PIN_RELAY != SECURELOCK_PIN_RFID_SS, "RELAY and RFID_SS must be different GPIOs");
+static_assert(SECURELOCK_PIN_RELAY != SECURELOCK_PIN_BUZZER, "RELAY and BUZZER must be different GPIOs");
+static_assert(SECURELOCK_PIN_DOOR != SECURELOCK_PIN_RELAY, "DOOR and RELAY must be different GPIOs");
+static_assert(SECURELOCK_PIN_DOOR != SECURELOCK_PIN_BUZZER, "DOOR and BUZZER must be different GPIOs");
+static_assert(SECURELOCK_PIN_VIBRATION != SECURELOCK_PIN_RELAY, "VIBRATION and RELAY must be different GPIOs");
+static_assert(SECURELOCK_PIN_VIBRATION != SECURELOCK_PIN_BUZZER, "VIBRATION and BUZZER must be different GPIOs");
+
+static_assert(SECURELOCK_PIN_KEYPAD_R1 != SECURELOCK_PIN_KEYPAD_R2, "KEYPAD rows must be unique");
+static_assert(SECURELOCK_PIN_KEYPAD_R1 != SECURELOCK_PIN_KEYPAD_R3, "KEYPAD rows must be unique");
+static_assert(SECURELOCK_PIN_KEYPAD_R1 != SECURELOCK_PIN_KEYPAD_R4, "KEYPAD rows must be unique");
+static_assert(SECURELOCK_PIN_KEYPAD_R2 != SECURELOCK_PIN_KEYPAD_R3, "KEYPAD rows must be unique");
+static_assert(SECURELOCK_PIN_KEYPAD_R2 != SECURELOCK_PIN_KEYPAD_R4, "KEYPAD rows must be unique");
+static_assert(SECURELOCK_PIN_KEYPAD_R3 != SECURELOCK_PIN_KEYPAD_R4, "KEYPAD rows must be unique");
+
+static_assert(SECURELOCK_PIN_KEYPAD_C1 != SECURELOCK_PIN_KEYPAD_C2, "KEYPAD cols must be unique");
+static_assert(SECURELOCK_PIN_KEYPAD_C1 != SECURELOCK_PIN_KEYPAD_C3, "KEYPAD cols must be unique");
+static_assert(SECURELOCK_PIN_KEYPAD_C1 != SECURELOCK_PIN_KEYPAD_C4, "KEYPAD cols must be unique");
+static_assert(SECURELOCK_PIN_KEYPAD_C2 != SECURELOCK_PIN_KEYPAD_C3, "KEYPAD cols must be unique");
+static_assert(SECURELOCK_PIN_KEYPAD_C2 != SECURELOCK_PIN_KEYPAD_C4, "KEYPAD cols must be unique");
+static_assert(SECURELOCK_PIN_KEYPAD_C3 != SECURELOCK_PIN_KEYPAD_C4, "KEYPAD cols must be unique");
+
+static_assert(SECURELOCK_IS_INPUT_ONLY_GPIO(SECURELOCK_PIN_KEYPAD_R1), "KEYPAD R1 should be input-only GPIO34/35/36/39");
+static_assert(SECURELOCK_IS_INPUT_ONLY_GPIO(SECURELOCK_PIN_KEYPAD_R2), "KEYPAD R2 should be input-only GPIO34/35/36/39");
+static_assert(SECURELOCK_IS_INPUT_ONLY_GPIO(SECURELOCK_PIN_KEYPAD_R3), "KEYPAD R3 should be input-only GPIO34/35/36/39");
+static_assert(SECURELOCK_IS_INPUT_ONLY_GPIO(SECURELOCK_PIN_KEYPAD_R4), "KEYPAD R4 should be input-only GPIO34/35/36/39");
+
+static_assert(!SECURELOCK_IS_INPUT_ONLY_GPIO(SECURELOCK_PIN_KEYPAD_C1), "KEYPAD C1 must be output-capable GPIO");
+static_assert(!SECURELOCK_IS_INPUT_ONLY_GPIO(SECURELOCK_PIN_KEYPAD_C2), "KEYPAD C2 must be output-capable GPIO");
+static_assert(!SECURELOCK_IS_INPUT_ONLY_GPIO(SECURELOCK_PIN_KEYPAD_C3), "KEYPAD C3 must be output-capable GPIO");
+static_assert(!SECURELOCK_IS_INPUT_ONLY_GPIO(SECURELOCK_PIN_KEYPAD_C4), "KEYPAD C4 must be output-capable GPIO");
+
+static_assert(SECURELOCK_PIN_BOOT == 0, "BOOT pin is expected on GPIO0 for factory reset button");
+
 #endif // HARDWARE_PINS_H

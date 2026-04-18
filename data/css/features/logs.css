@@ -57,15 +57,31 @@
     color: var(--text-subtle);
     font-size: 0.84rem;
     white-space: nowrap;
-    width: 32%;
+    width: 38%;
+    font-variant-numeric: tabular-nums;
 }
 
 .col-user {
     font-weight: 500;
     color: var(--text-main);
-    width: 28%;
+    width: 24%;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+.log-user-cell {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.42rem;
+    max-width: 100%;
+}
+
+.log-user-name {
+    display: inline-block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 12.5rem;
 }
 
 .col-method {
@@ -99,6 +115,85 @@
     vertical-align: middle;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+.method-cell {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+}
+
+.source-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 76px;
+    max-width: 100%;
+    padding: 0.24rem 0.48rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid transparent;
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.source-web {
+    background: color-mix(in srgb, var(--primary) 22%, transparent 78%);
+    border-color: color-mix(in srgb, var(--primary) 56%, transparent 44%);
+    color: var(--primary-light);
+}
+
+.source-telegram {
+    background: color-mix(in srgb, #14b8a6 22%, transparent 78%);
+    border-color: color-mix(in srgb, #14b8a6 54%, transparent 46%);
+    color: #5eead4;
+}
+
+.source-device {
+    background: color-mix(in srgb, #8b5cf6 22%, transparent 78%);
+    border-color: color-mix(in srgb, #8b5cf6 54%, transparent 46%);
+    color: #c4b5fd;
+}
+
+.source-system {
+    background: color-mix(in srgb, var(--surface-active) 85%, #ffffff 15%);
+    border-color: color-mix(in srgb, var(--border-strong) 65%, transparent 35%);
+    color: var(--text-muted);
+}
+
+.actor-role-badge {
+    min-width: 64px;
+    padding: 0.2rem 0.46rem;
+    font-size: 0.62rem;
+    letter-spacing: 0.04em;
+    border: 1px solid transparent;
+    white-space: nowrap;
+}
+
+.actor-role-admin {
+    background: color-mix(in srgb, var(--danger) 20%, transparent 80%);
+    border-color: color-mix(in srgb, var(--danger) 52%, transparent 48%);
+    color: var(--danger-light);
+}
+
+.actor-role-user {
+    background: color-mix(in srgb, var(--primary) 20%, transparent 80%);
+    border-color: color-mix(in srgb, var(--primary) 52%, transparent 48%);
+    color: var(--primary-light);
+}
+
+.actor-role-guest {
+    background: color-mix(in srgb, var(--warning) 18%, transparent 82%);
+    border-color: color-mix(in srgb, var(--warning) 48%, transparent 52%);
+    color: var(--warning);
+}
+
+.actor-role-system {
+    background: color-mix(in srgb, var(--surface-active) 84%, #ffffff 16%);
+    border-color: color-mix(in srgb, var(--border-strong) 66%, transparent 34%);
+    color: var(--text-muted);
 }
 
 .method-guest {
@@ -140,6 +235,12 @@
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 48%, transparent 52%);
 }
 
+.status-info {
+    background: color-mix(in srgb, var(--primary) 14%, transparent 86%);
+    color: color-mix(in srgb, var(--primary-light) 75%, #ffffff 25%);
+    border-color: color-mix(in srgb, var(--primary) 40%, transparent 60%);
+}
+
 .logs-empty {
     display: flex;
     flex-direction: column;
@@ -177,17 +278,84 @@
     opacity: 0.5;
 }
 
+.logs-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) repeat(3, minmax(130px, auto)) auto;
+    gap: 0.65rem;
+    margin-bottom: 0.7rem;
+    align-items: end;
+}
+
+.logs-search-wrap,
+.logs-filter-wrap {
+    display: grid;
+    gap: 0.32rem;
+}
+
+.logs-search-input,
+.logs-status-filter,
+.logs-date-filter {
+    min-height: 2.2rem;
+}
+
+.logs-filter-label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-subtle);
+}
+
+.logs-status-filter {
+    min-width: 140px;
+}
+
+.logs-date-filter {
+    min-width: 140px;
+    font-variant-numeric: tabular-nums;
+}
+
+.btn-logs-clear-filters {
+    min-height: 2.2rem;
+    align-self: end;
+    white-space: nowrap;
+}
+
+.logs-filter-summary {
+    margin: 0 0 0.6rem;
+    min-height: 1.1rem;
+    font-size: 0.78rem;
+    color: var(--text-subtle);
+}
+
 @media (max-width: 768px) {
+    .logs-toolbar {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        align-items: stretch;
+    }
+
+    .logs-search-wrap {
+        grid-column: 1 / -1;
+    }
+
+    .btn-logs-clear-filters {
+        grid-column: 1 / -1;
+    }
+
+    .logs-status-filter {
+        min-width: 0;
+    }
+
     .col-method {
         display: none;
     }
 
     .col-time {
-        width: 40%;
+        width: 44%;
     }
 
     .col-user {
-        width: 36%;
+        width: 38%;
     }
 
     .logs-table th,
@@ -197,6 +365,18 @@
 }
 
 @media (max-width: 640px) {
+    .logs-filter-summary {
+        font-size: 0.72rem;
+    }
+
+    .logs-toolbar {
+        grid-template-columns: 1fr;
+    }
+
+    .btn-logs-clear-filters {
+        width: 100%;
+    }
+
     .logs-table-wrapper {
         overflow-x: hidden;
     }
@@ -216,16 +396,30 @@
     }
 
     .logs-table .col-time {
-        width: 34%;
+        width: 46%;
     }
 
     .logs-table .col-user {
-        width: 40%;
+        width: 30%;
+    }
+
+    .log-user-cell {
+        gap: 0.24rem;
+    }
+
+    .log-user-name {
+        max-width: 6rem;
+    }
+
+    .actor-role-badge {
+        min-width: 52px;
+        font-size: 0.58rem;
+        padding: 0.16rem 0.34rem;
     }
 
     .logs-table th:last-child,
     .logs-table td:last-child {
-        width: 26%;
+        width: 24%;
         text-align: center;
     }
 

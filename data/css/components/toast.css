@@ -22,6 +22,11 @@
     max-width: calc(100vw - var(--space-xl));
 }
 
+#toast[hidden],
+.toast[hidden] {
+    display: none !important;
+}
+
 .toast[data-visible="true"] {
     transform: translateX(-50%) translateY(0);
     opacity: 1;

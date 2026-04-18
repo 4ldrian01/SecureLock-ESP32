@@ -1,8 +1,11 @@
+body[data-authenticated="pending"] .dashboard,
+body[data-authenticated="pending"] .dashboard-footer,
 body[data-authenticated="false"] .dashboard,
 body[data-authenticated="false"] .dashboard-footer {
     pointer-events: none;
     user-select: none;
-    opacity: 0.78;
+    opacity: 0;
+    visibility: hidden;
 }
 
 body[data-authenticated="true"] .dashboard,
@@ -10,6 +13,8 @@ body[data-authenticated="true"] .dashboard-footer {
     pointer-events: auto;
     user-select: auto;
     filter: none;
+    opacity: 1;
+    visibility: visible;
 }
 
 .auth-overlay {
@@ -19,18 +24,63 @@ body[data-authenticated="true"] .dashboard-footer {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: var(--space-md);
+    min-height: var(--app-vh, 100vh);
+    padding-top: max(var(--space-md), env(safe-area-inset-top));
+    padding-right: var(--space-md);
+    padding-left: var(--space-md);
+    padding-bottom: max(var(--space-md), env(safe-area-inset-bottom));
     background: color-mix(in srgb, var(--background) 86%, #000000 14%);
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
     opacity: 0;
     visibility: hidden;
     transition: opacity var(--transition-normal), visibility var(--transition-normal);
 }
 
+body[data-keyboard="open"] .auth-overlay[data-visible="true"] {
+    align-items: flex-start;
+}
+
 .auth-overlay[data-visible="true"] {
     opacity: 1;
     visibility: visible;
+}
+
+.auth-checking {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    min-height: 4rem;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    font-weight: 600;
+}
+
+.auth-checking::before {
+    content: "";
+    width: 1rem;
+    height: 1rem;
+    border-radius: 999px;
+    border: 2px solid color-mix(in srgb, var(--primary) 55%, transparent 45%);
+    border-right-color: transparent;
+    animation: auth-spin 0.8s linear infinite;
+}
+
+.auth-overlay[data-mode="checking"] .auth-form {
+    display: none;
+}
+
+.auth-overlay[data-mode="checking"] .auth-checking {
+    display: inline-flex;
+}
+
+@keyframes auth-spin {
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 .auth-card {
@@ -40,8 +90,14 @@ body[data-authenticated="true"] .dashboard-footer {
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-lg);
     padding: var(--space-6);
-    max-height: min(90vh, 90svh);
+    max-height: min(calc(var(--app-vh, 100vh) - (2 * var(--space-md))), 90svh);
     overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+}
+
+body[data-keyboard="open"] .auth-card {
+    margin-top: max(var(--space-2), env(safe-area-inset-top));
 }
 
 .auth-title {
@@ -82,6 +138,55 @@ body[data-authenticated="true"] .dashboard-footer {
     border-color: color-mix(in srgb, var(--primary) 72%, #ffffff 28%);
     box-shadow: 0 0 0 3px var(--ring);
     background: color-mix(in srgb, var(--surface-active) 84%, #ffffff 16%);
+}
+
+.auth-password-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.auth-password-wrap .input {
+    width: 100%;
+    padding-right: 2.6rem;
+}
+
+.btn-password-toggle {
+    position: absolute;
+    right: 0.4rem;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 2rem;
+    height: 2rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.btn-password-toggle:hover {
+    background: color-mix(in srgb, var(--surface-hover) 85%, #ffffff 15%);
+    color: var(--text-main);
+}
+
+.btn-password-toggle:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--ring);
+}
+
+.btn-password-toggle svg {
+    width: 1.05rem;
+    height: 1.05rem;
+    fill: currentColor;
+}
+
+.btn-password-toggle[data-visible="true"] {
+    color: var(--primary-light);
 }
 
 .auth-error {

@@ -7,7 +7,7 @@
 #endif
 
 #ifndef DASHBOARD_ADMIN_PASSWORD
-#define DASHBOARD_ADMIN_PASSWORD "admin123"
+#define DASHBOARD_ADMIN_PASSWORD "CHANGE_ME_NOW"
 #endif
 
 void WebServer::_handleAPIAuthLogin(AsyncWebServerRequest* request, uint8_t* data, size_t len) {
@@ -59,10 +59,21 @@ void WebServer::_handleAPIAuthLogin(AsyncWebServerRequest* request, uint8_t* dat
     }
 
     String expectedUsername = String(DASHBOARD_ADMIN_USERNAME);
+    String expectedPassword = String(DASHBOARD_ADMIN_PASSWORD);
     expectedUsername.trim();
+    expectedPassword.trim();
+
+    if (_secureEquals(expectedPassword, String("CHANGE_ME_NOW"))) {
+        JsonDocument doc;
+        doc["success"] = false;
+        doc["authenticated"] = false;
+        doc["message"] = "Dashboard admin password is not configured. Set DASHBOARD_ADMIN_PASSWORD in include/secrets.h";
+        _sendJSON(request, 503, doc);
+        return;
+    }
 
     const bool authSuccess = _secureEquals(username, expectedUsername)
-        && _secureEquals(password, String(DASHBOARD_ADMIN_PASSWORD));
+        && _secureEquals(password, expectedPassword);
 
     if (!authSuccess) {
         _authFailedAttempts++;

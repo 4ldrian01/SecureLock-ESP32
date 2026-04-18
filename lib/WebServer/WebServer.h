@@ -24,10 +24,10 @@
  *   GET    /api/auth/status → Current API authentication status
  *   GET    /api/status      → System status JSON
  *   POST   /api/unlock      → Remote unlock (emergency override)
- *   POST   /api/guest-code  → Disabled (guest PIN is Telegram-managed)
- *   GET    /api/users       → List all registered users
- *   POST   /api/users       → Add new user (JSON body: name, pin(4-digit), uid)
- *   PUT    /api/users       → Edit existing user (JSON body: uid, name, pin(4-digit))
+ *   POST   /api/guest-code  → Generate/retrieve active guest PIN (web + Telegram synchronized)
+ *   GET    /api/users       → List all registered users (+ first/middle/last name parts, dynamic admin-chat tag)
+ *   POST   /api/users       → Add new user (JSON body: firstName,middleName?,lastName OR name, pin(4-digit), uid)
+ *   PUT    /api/users       → Edit existing user (JSON body: uid, firstName,middleName?,lastName OR name, pin(4-digit))
  *   DELETE /api/users?uid=X → Delete user by UID (admin protected)
  *   GET    /api/logs        → Get activity logs
  *   GET    /api/diagnostics → Hardware diagnostics (RFID/keypad/buzzer)
@@ -38,7 +38,7 @@
  *   - WiFi connection management
  *   - LittleFS file serving with MIME types
  *   - RESTful API with JSON responses
- *   - CORS headers for development
+ *   - Restricted CORS headers for browser clients
  *   - Component integration
  * 
  * USAGE:
@@ -57,6 +57,8 @@
 #include <ESPAsyncWebServer.h>
 #include <LittleFS.h>
 #include <ArduinoJson.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/portmacro.h>
 #include "LockManager.h"
 #include "SecurityManager.h"
 #include "AuthHandler.h"
@@ -130,15 +132,49 @@ private:
     void _handleAPIDiagnostics(AsyncWebServerRequest* request);
     
     // Activity logging
+    struct QueuedLogEntry {
+        char user[48];
+        char method[64];
+        char status[16];
+    };
+
+    static constexpr size_t LOG_QUEUE_CAPACITY = 64;
+    static constexpr uint8_t LOG_FLUSH_BURST = 8;
+    static constexpr uint8_t LOG_FLUSH_MAX_BATCH = 16;
+    static constexpr unsigned long USERS_STATS_CACHE_TTL_MS = 5000UL;
+
+    QueuedLogEntry _queuedLogs[LOG_QUEUE_CAPACITY];
+    size_t _queuedLogHead = 0;
+    size_t _queuedLogTail = 0;
+    size_t _queuedLogCount = 0;
+    unsigned long _droppedQueuedLogs = 0;
+    portMUX_TYPE _queuedLogMux = portMUX_INITIALIZER_UNLOCKED;
+
+    bool _usersStatsCacheValid = false;
+    unsigned long _usersStatsCacheAtMs = 0;
+    int _cachedRawUsers = 0;
+    int _cachedUniqueUsers = 0;
+    int _cachedInvalidUsers = 0;
+    int _cachedDuplicateUsers = 0;
+
     void _addLogEntry(const String& user, const String& method, const String& status);
+    void _queueLogEntry(const String& user, const String& method, const String& status);
+    bool _popQueuedLog(QueuedLogEntry* outEntry);
+    void _clearQueuedLogs();
+    void _flushQueuedLogs(uint8_t maxEntries = LOG_FLUSH_BURST);
+    String _normalizeLogStatus(const String& status) const;
+    void _writeLogEntryToStorage(const String& user, const String& method, const String& status);
+    void _writeLogBatchToStorage(const QueuedLogEntry* entries, size_t count);
+    void _invalidateUsersStatsCache();
     
     // Utilities
     String _getMimeType(const String& filename);
     void _sendJSON(AsyncWebServerRequest* request, int code, const JsonDocument& doc);
-    void _addCORSHeaders(AsyncWebServerResponse* response);
+    void _addCORSHeaders(AsyncWebServerRequest* request, AsyncWebServerResponse* response);
     void _addSecurityHeaders(AsyncWebServerResponse* response);
     void _addStaticCacheHeaders(AsyncWebServerResponse* response);
     void _addNoCacheHeaders(AsyncWebServerResponse* response);
+    bool _isAllowedCORSOrigin(AsyncWebServerRequest* request, const String& origin) const;
     bool _isApiSessionValid() const;
     String _extractBearerToken(AsyncWebServerRequest* request) const;
     bool _requireApiAuth(AsyncWebServerRequest* request);

@@ -6,6 +6,8 @@
 
 #include "WebServer.h"
 
+#include "secrets.h"
+
 #include <time.h>
 #include <StorageService.h>
 
@@ -37,6 +39,77 @@ void releaseRequestBody(AsyncWebServerRequest* request) {
     if (body) {
         delete body;
         request->_tempObject = nullptr;
+    }
+}
+
+bool isConfiguredAdminChatId(const String& chatId) {
+    String normalizedChatId = chatId;
+    normalizedChatId.trim();
+
+    if (normalizedChatId.length() == 0) {
+        return false;
+    }
+
+    for (int i = 0; i < NUM_ADMINS; i++) {
+        String configuredChatId = ADMIN_CHAT_IDS[i];
+        configuredChatId.trim();
+        if (configuredChatId.length() == 0) {
+            continue;
+        }
+
+        if (configuredChatId == normalizedChatId) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void splitNameParts(const String& fullName, String* firstName, String* middleName, String* lastName) {
+    if (firstName) {
+        *firstName = "";
+    }
+    if (middleName) {
+        *middleName = "";
+    }
+    if (lastName) {
+        *lastName = "";
+    }
+
+    String normalized = fullName;
+    normalized.trim();
+
+    while (normalized.indexOf("  ") >= 0) {
+        normalized.replace("  ", " ");
+    }
+
+    if (normalized.length() == 0) {
+        return;
+    }
+
+    const int firstSpace = normalized.indexOf(' ');
+    if (firstSpace < 0) {
+        if (firstName) {
+            *firstName = normalized;
+        }
+        return;
+    }
+
+    const int lastSpace = normalized.lastIndexOf(' ');
+
+    if (firstName) {
+        *firstName = normalized.substring(0, firstSpace);
+        firstName->trim();
+    }
+
+    if (lastName) {
+        *lastName = normalized.substring(lastSpace + 1);
+        lastName->trim();
+    }
+
+    if (middleName && lastSpace > firstSpace) {
+        *middleName = normalized.substring(firstSpace + 1, lastSpace);
+        middleName->trim();
     }
 }
 }
@@ -102,6 +175,8 @@ void WebServer::init() {
 }
 
 void WebServer::update() {
+    _flushQueuedLogs(LOG_FLUSH_BURST);
+
     const bool connectedNow = (WiFi.status() == WL_CONNECTED);
 
     if (connectedNow != _wifiConnected) {
@@ -146,6 +221,135 @@ unsigned long WebServer::getEmergencyCooldownRemainingMs() const {
 
 void WebServer::logActivity(const String& user, const String& method, const String& status) {
     _addLogEntry(user, method, status);
+}
+
+void WebServer::_queueLogEntry(const String& user, const String& method, const String& status) {
+    String safeUser = user;
+    safeUser.trim();
+    if (safeUser.length() == 0) {
+        safeUser = "System";
+    }
+
+    String safeMethod = method;
+    safeMethod.trim();
+    if (safeMethod.length() == 0) {
+        safeMethod = "System";
+    }
+
+    String safeStatus = _normalizeLogStatus(status);
+
+    QueuedLogEntry nextEntry{};
+    snprintf(nextEntry.user, sizeof(nextEntry.user), "%s", safeUser.c_str());
+    snprintf(nextEntry.method, sizeof(nextEntry.method), "%s", safeMethod.c_str());
+    snprintf(nextEntry.status, sizeof(nextEntry.status), "%s", safeStatus.c_str());
+
+    bool dropped = false;
+    unsigned long droppedCount = 0;
+
+    portENTER_CRITICAL(&_queuedLogMux);
+    if (_queuedLogCount >= LOG_QUEUE_CAPACITY) {
+        _queuedLogHead = (_queuedLogHead + 1) % LOG_QUEUE_CAPACITY;
+        _queuedLogCount--;
+        _droppedQueuedLogs++;
+        dropped = true;
+        droppedCount = _droppedQueuedLogs;
+    }
+
+    _queuedLogs[_queuedLogTail] = nextEntry;
+    _queuedLogTail = (_queuedLogTail + 1) % LOG_QUEUE_CAPACITY;
+    _queuedLogCount++;
+    portEXIT_CRITICAL(&_queuedLogMux);
+
+    if (dropped && (droppedCount == 1 || (droppedCount % 8UL) == 0UL)) {
+        Serial.print("[LOG][WARN] Pending log queue overflow; dropped oldest entries: ");
+        Serial.println(droppedCount);
+    }
+}
+
+bool WebServer::_popQueuedLog(QueuedLogEntry* outEntry) {
+    if (!outEntry) {
+        return false;
+    }
+
+    bool hasItem = false;
+
+    portENTER_CRITICAL(&_queuedLogMux);
+    if (_queuedLogCount > 0) {
+        *outEntry = _queuedLogs[_queuedLogHead];
+        _queuedLogHead = (_queuedLogHead + 1) % LOG_QUEUE_CAPACITY;
+        _queuedLogCount--;
+        hasItem = true;
+    }
+    portEXIT_CRITICAL(&_queuedLogMux);
+
+    return hasItem;
+}
+
+void WebServer::_clearQueuedLogs() {
+    portENTER_CRITICAL(&_queuedLogMux);
+    _queuedLogHead = 0;
+    _queuedLogTail = 0;
+    _queuedLogCount = 0;
+    portEXIT_CRITICAL(&_queuedLogMux);
+}
+
+void WebServer::_flushQueuedLogs(uint8_t maxEntries) {
+    if (maxEntries == 0) {
+        return;
+    }
+
+    const uint8_t targetCount = (maxEntries > LOG_FLUSH_MAX_BATCH)
+        ? LOG_FLUSH_MAX_BATCH
+        : maxEntries;
+
+    QueuedLogEntry pendingEntries[LOG_FLUSH_MAX_BATCH]{};
+    size_t pendingCount = 0;
+
+    while (pendingCount < targetCount) {
+        if (!_popQueuedLog(&pendingEntries[pendingCount])) {
+            break;
+        }
+        pendingCount++;
+    }
+
+    if (pendingCount == 0) {
+        return;
+    }
+
+    _writeLogBatchToStorage(pendingEntries, pendingCount);
+}
+
+void WebServer::_invalidateUsersStatsCache() {
+    _usersStatsCacheValid = false;
+    _usersStatsCacheAtMs = 0;
+}
+
+String WebServer::_normalizeLogStatus(const String& status) const {
+    String normalized = status;
+    normalized.trim();
+    normalized.toLowerCase();
+
+    if (normalized == "ok" || normalized == "pass") {
+        return "success";
+    }
+
+    if (normalized == "error" || normalized == "failed" || normalized == "deny" || normalized == "denied") {
+        return "fail";
+    }
+
+    if (normalized == "warn" || normalized == "warning" || normalized == "alert") {
+        return "alarm";
+    }
+
+    if (normalized == "success" || normalized == "fail" || normalized == "alarm" || normalized == "info") {
+        return normalized;
+    }
+
+    if (normalized.length() == 0) {
+        return "info";
+    }
+
+    return "info";
 }
 
 // ============================================================
@@ -236,7 +440,7 @@ void WebServer::_setupRoutes() {
     // ==================== CORS Preflight ====================
     _server.on("/api/*", HTTP_OPTIONS, [this](AsyncWebServerRequest* request) {
         AsyncWebServerResponse* response = request->beginResponse(204);
-        _addCORSHeaders(response);
+        _addCORSHeaders(request, response);
         _addNoCacheHeaders(response);
         request->send(response);
     });
@@ -475,6 +679,23 @@ void WebServer::_handleNotFound(AsyncWebServerRequest* request) {
         staticPath = staticPath.substring(0, fragmentPos);
     }
 
+    if (!staticPath.startsWith("/api/")) {
+        const bool spaAliasRoute = staticPath == "/login"
+            || staticPath == "/login/"
+            || staticPath == "/dashboard"
+            || staticPath == "/dashboard/"
+            || staticPath.startsWith("/dashboard/");
+
+        if (spaAliasRoute) {
+            _handleRoot(request);
+            if (kVerboseHttpLogs) {
+                Serial.print("[WEB] SPA alias route -> dashboard HTML: ");
+                Serial.println(staticPath);
+            }
+            return;
+        }
+    }
+
     if (!staticPath.startsWith("/api/") && LittleFS.exists(staticPath)) {
         AsyncWebServerResponse* response = request->beginResponse(LittleFS, staticPath, _getMimeType(staticPath));
         const bool noCacheUiAsset = staticPath.endsWith(".html");
@@ -518,15 +739,94 @@ void WebServer::_sendJSON(AsyncWebServerRequest* request, int code, const JsonDo
     String response;
     serializeJson(doc, response);
     AsyncWebServerResponse* resp = request->beginResponse(code, "application/json", response);
-    _addCORSHeaders(resp);
+    _addCORSHeaders(request, resp);
     _addNoCacheHeaders(resp);
     request->send(resp);
 }
 
-void WebServer::_addCORSHeaders(AsyncWebServerResponse* response) {
-    response->addHeader("Access-Control-Allow-Origin", "*");
+void WebServer::_addCORSHeaders(AsyncWebServerRequest* request, AsyncWebServerResponse* response) {
+    if (!response) {
+        return;
+    }
+
     response->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-    response->addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    response->addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
+    response->addHeader("Access-Control-Max-Age", "600");
+
+    if (!request || !request->hasHeader("Origin")) {
+        return;
+    }
+
+    String origin = request->header("Origin");
+    if (!_isAllowedCORSOrigin(request, origin)) {
+        if (kVerboseHttpLogs) {
+            Serial.print("[WEB][CORS] Blocked Origin: ");
+            Serial.println(origin);
+        }
+        return;
+    }
+
+    response->addHeader("Access-Control-Allow-Origin", origin);
+    response->addHeader("Vary", "Origin");
+}
+
+bool WebServer::_isAllowedCORSOrigin(AsyncWebServerRequest* request, const String& origin) const {
+    if (!request) {
+        return false;
+    }
+
+    String normalizedOrigin = origin;
+    normalizedOrigin.trim();
+    normalizedOrigin.toLowerCase();
+
+    if (normalizedOrigin.length() == 0 || normalizedOrigin == "null") {
+        return false;
+    }
+
+    auto isPrefixAllowed = [](const String& value, const String& prefix) -> bool {
+        return value == prefix || value.startsWith(prefix + ":");
+    };
+
+    auto isHostOrigin = [&](const String& hostValue) -> bool {
+        if (hostValue.length() == 0) {
+            return false;
+        }
+
+        const String httpOrigin = String("http://") + hostValue;
+        const String httpsOrigin = String("https://") + hostValue;
+        return normalizedOrigin == httpOrigin || normalizedOrigin == httpsOrigin;
+    };
+
+    String requestHost;
+    if (request->hasHeader("Host")) {
+        requestHost = request->header("Host");
+        requestHost.trim();
+        requestHost.toLowerCase();
+    }
+
+    if (isHostOrigin(requestHost)) {
+        return true;
+    }
+
+    String currentIp = _ipAddress;
+    currentIp.trim();
+    currentIp.toLowerCase();
+    if (isHostOrigin(currentIp)) {
+        return true;
+    }
+
+    if (isPrefixAllowed(normalizedOrigin, "http://securelock.local")
+        || isPrefixAllowed(normalizedOrigin, "https://securelock.local")
+        || isPrefixAllowed(normalizedOrigin, "http://localhost")
+        || isPrefixAllowed(normalizedOrigin, "https://localhost")
+        || isPrefixAllowed(normalizedOrigin, "http://127.0.0.1")
+        || isPrefixAllowed(normalizedOrigin, "https://127.0.0.1")
+        || isPrefixAllowed(normalizedOrigin, "http://[::1]")
+        || isPrefixAllowed(normalizedOrigin, "https://[::1]")) {
+        return true;
+    }
+
+    return false;
 }
 
 void WebServer::_addSecurityHeaders(AsyncWebServerResponse* response) {
@@ -540,7 +840,7 @@ void WebServer::_addSecurityHeaders(AsyncWebServerResponse* response) {
 void WebServer::_addStaticCacheHeaders(AsyncWebServerResponse* response) {
     _addSecurityHeaders(response);
 
-    response->addHeader("Cache-Control", "public, max-age=86400, stale-while-revalidate=86400");
+    response->addHeader("Cache-Control", "public, max-age=1800, stale-while-revalidate=86400");
     response->addHeader("Vary", "Accept-Encoding");
 }
 
@@ -591,29 +891,26 @@ bool WebServer::_syncUsersFileFromAuth(JsonDocument* responseDoc) {
             name = "User";
         }
 
-        String type = "user";
+        String firstName = "";
+        String middleName = "";
+        String lastName = "";
+        splitNameParts(name, &firstName, &middleName, &lastName);
 
-        for (JsonObject existing : existingUsers) {
-            String existingUid = normalizeUID(existing["uid"] | "");
-            if (existingUid != uid) {
-                continue;
-            }
+        String userChatId = _auth->getUserTelegramChatId(uid);
+        const bool isAdminChat = isConfiguredAdminChatId(userChatId);
 
-            String existingType = existing["type"] | "";
-            existingType.trim();
-            existingType.toLowerCase();
-            if (!existingType.isEmpty()) {
-                type = existingType;
-            }
-            break;
-        }
+        String type = isAdminChat ? "admin" : "user";
 
         JsonObject user = outUsers.add<JsonObject>();
         user["cardUID"] = uid;
         user["uid"] = uid;
         user["name"] = name;
+        user["firstName"] = firstName;
+        user["middleName"] = middleName;
+        user["lastName"] = lastName;
         user["type"] = type;
-        user["telegramChatID"] = _auth->getUserTelegramChatId(uid);
+        user["telegramChatID"] = userChatId;
+        user["isAdminChat"] = isAdminChat;
         user["backupPIN"] = _auth->getUserBackupPIN(uid);
     }
 
@@ -678,10 +975,32 @@ bool WebServer::_syncUsersFileFromAuth(JsonDocument* responseDoc) {
                 lhsBackup.trim();
                 rhsBackup.trim();
 
+                String lhsFirstName = lhsUser["firstName"] | "";
+                String rhsFirstName = rhsUser["firstName"] | "";
+                lhsFirstName.trim();
+                rhsFirstName.trim();
+
+                String lhsMiddleName = lhsUser["middleName"] | "";
+                String rhsMiddleName = rhsUser["middleName"] | "";
+                lhsMiddleName.trim();
+                rhsMiddleName.trim();
+
+                String lhsLastName = lhsUser["lastName"] | "";
+                String rhsLastName = rhsUser["lastName"] | "";
+                lhsLastName.trim();
+                rhsLastName.trim();
+
+                bool lhsIsAdminChat = lhsUser["isAdminChat"] | false;
+                bool rhsIsAdminChat = rhsUser["isAdminChat"] | false;
+
                 if (lhsName == rhsName
                     && normalizeType(lhsUser) == normalizeType(rhsUser)
                     && lhsChat == rhsChat
-                    && lhsBackup == rhsBackup) {
+                    && lhsBackup == rhsBackup
+                    && lhsFirstName == rhsFirstName
+                    && lhsMiddleName == rhsMiddleName
+                    && lhsLastName == rhsLastName
+                    && lhsIsAdminChat == rhsIsAdminChat) {
                     matched = true;
                 }
                 break;
@@ -712,93 +1031,109 @@ bool WebServer::_syncUsersFileFromAuth(JsonDocument* responseDoc) {
 
     serializeJson(outDoc, file);
     file.close();
+    _invalidateUsersStatsCache();
     Serial.println("[API] users.json synchronized from auth storage");
     return true;
 }
 
 void WebServer::_collectUsersStorageStats(int* rawCount, int* uniqueCount, int* invalidCount, int* duplicateCount) {
+    const unsigned long nowMs = millis();
+    if (_usersStatsCacheValid && (nowMs - _usersStatsCacheAtMs) < USERS_STATS_CACHE_TTL_MS) {
+        if (rawCount) {
+            *rawCount = _cachedRawUsers;
+        }
+        if (uniqueCount) {
+            *uniqueCount = _cachedUniqueUsers;
+        }
+        if (invalidCount) {
+            *invalidCount = _cachedInvalidUsers;
+        }
+        if (duplicateCount) {
+            *duplicateCount = _cachedDuplicateUsers;
+        }
+        return;
+    }
+
+    int computedRaw = 0;
+    int computedUnique = 0;
+    int computedInvalid = 0;
+    int computedDuplicate = 0;
+
+    if (LittleFS.exists("/users.json")) {
+        JsonDocument usersDoc;
+        File file = LittleFS.open("/users.json", "r");
+        if (file) {
+            const DeserializationError err = deserializeJson(usersDoc, file);
+            file.close();
+
+            if (!err && usersDoc["users"].is<JsonArray>()) {
+                JsonArray users = usersDoc["users"].as<JsonArray>();
+                String seen[64];
+                int seenCount = 0;
+
+                for (JsonObject user : users) {
+                    computedRaw++;
+
+                    String uid = normalizeUID(user["cardUID"] | "");
+                    if (uid.length() == 0) {
+                        uid = normalizeUID(user["uid"] | "");
+                    }
+                    if (uid.length() == 0) {
+                        uid = normalizeUID(user["cardUid"] | "");
+                    }
+                    if (uid.length() == 0) {
+                        uid = normalizeUID(user["rfid"] | "");
+                    }
+                    if (uid.length() == 0) {
+                        uid = normalizeUID(user["rfidUID"] | "");
+                    }
+
+                    if (uid.length() == 0) {
+                        computedInvalid++;
+                        continue;
+                    }
+
+                    bool duplicate = false;
+                    for (int i = 0; i < seenCount; i++) {
+                        if (seen[i] == uid) {
+                            duplicate = true;
+                            break;
+                        }
+                    }
+
+                    if (duplicate) {
+                        computedDuplicate++;
+                        continue;
+                    }
+
+                    if (seenCount < 64) {
+                        seen[seenCount++] = uid;
+                    }
+
+                    computedUnique++;
+                }
+            }
+        }
+    }
+
+    _cachedRawUsers = computedRaw;
+    _cachedUniqueUsers = computedUnique;
+    _cachedInvalidUsers = computedInvalid;
+    _cachedDuplicateUsers = computedDuplicate;
+    _usersStatsCacheAtMs = nowMs;
+    _usersStatsCacheValid = true;
+
     if (rawCount) {
-        *rawCount = 0;
+        *rawCount = computedRaw;
     }
     if (uniqueCount) {
-        *uniqueCount = 0;
+        *uniqueCount = computedUnique;
     }
     if (invalidCount) {
-        *invalidCount = 0;
+        *invalidCount = computedInvalid;
     }
     if (duplicateCount) {
-        *duplicateCount = 0;
-    }
-
-    if (!LittleFS.exists("/users.json")) {
-        return;
-    }
-
-    JsonDocument usersDoc;
-    File file = LittleFS.open("/users.json", "r");
-    if (!file) {
-        return;
-    }
-
-    const DeserializationError err = deserializeJson(usersDoc, file);
-    file.close();
-
-    if (err || !usersDoc["users"].is<JsonArray>()) {
-        return;
-    }
-
-    JsonArray users = usersDoc["users"].as<JsonArray>();
-    String seen[64];
-    int seenCount = 0;
-
-    for (JsonObject user : users) {
-        if (rawCount) {
-            (*rawCount)++;
-        }
-
-        String uid = normalizeUID(user["cardUID"] | "");
-        if (uid.length() == 0) {
-            uid = normalizeUID(user["uid"] | "");
-        }
-        if (uid.length() == 0) {
-            uid = normalizeUID(user["cardUid"] | "");
-        }
-        if (uid.length() == 0) {
-            uid = normalizeUID(user["rfid"] | "");
-        }
-        if (uid.length() == 0) {
-            uid = normalizeUID(user["rfidUID"] | "");
-        }
-
-        if (uid.length() == 0) {
-            if (invalidCount) {
-                (*invalidCount)++;
-            }
-            continue;
-        }
-
-        bool duplicate = false;
-        for (int i = 0; i < seenCount; i++) {
-            if (seen[i] == uid) {
-                duplicate = true;
-                break;
-            }
-        }
-
-        if (duplicate) {
-            if (duplicateCount) {
-                (*duplicateCount)++;
-            }
-            continue;
-        }
-
-        if (seenCount < 64) {
-            seen[seenCount++] = uid;
-        }
-
-        if (uniqueCount) {
-            (*uniqueCount)++;
-        }
+        *duplicateCount = computedDuplicate;
     }
 }
 

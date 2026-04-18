@@ -85,6 +85,26 @@
     50% { opacity: 0.4; transform: scale(1.02); }
 }
 
+@media (prefers-reduced-motion: reduce) {
+    .lock-svg {
+        transition: none;
+    }
+
+    .lock-visual:hover .lock-svg {
+        transform: none;
+    }
+
+    .lock-ring {
+        animation: none;
+        opacity: 0.14;
+    }
+
+    [data-lock-state="locked"] .lock-shackle,
+    [data-lock-state="unlocked"] .lock-shackle {
+        filter: none;
+    }
+}
+
 .lock-status {
     margin-bottom: var(--space-lg);
 }
@@ -116,6 +136,33 @@
 .diag-status {
     font-size: 0.82rem;
     opacity: 0.85;
+}
+
+.telemetry-panel {
+    margin-top: 0.55rem;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.45rem;
+}
+
+.telemetry-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.32rem;
+    font-size: 0.72rem;
+    color: var(--text-subtle);
+    background: color-mix(in srgb, var(--surface-active) 78%, transparent 22%);
+    border: 1px solid color-mix(in srgb, var(--border) 72%, transparent 28%);
+    border-radius: 999px;
+    padding: 0.22rem 0.52rem;
+    white-space: nowrap;
+}
+
+.telemetry-chip strong {
+    color: var(--text-main);
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
 }
 
 .btn-emergency {
@@ -195,6 +242,15 @@
 
     .lock-status-sub {
         font-size: 0.85rem;
+    }
+
+    .telemetry-panel {
+        gap: 0.34rem;
+    }
+
+    .telemetry-chip {
+        font-size: 0.68rem;
+        padding: 0.2rem 0.45rem;
     }
 
     .lock-ring {

@@ -1,18 +1,18 @@
-import { CONFIG } from '../core/config.js';
-import { createInitialState } from '../core/state.js';
-import { getDOM } from '../core/dom.js';
+import { CONFIG } from '../core/config.js?v=20260418r5';
+import { createInitialState } from '../core/state.js?v=20260418r5';
+import { getDOM } from '../core/dom.js?v=20260418r5';
 import {
     apiFetch,
     setApiAuthToken,
     clearApiAuthToken,
     setApiUnauthorizedHandler
-} from '../core/api.js';
-import { createFeedback } from '../ui/feedback.js';
-import { createAuthFeature } from '../features/auth.js';
-import { createStatusFeature } from '../features/status.js';
-import { createGuestFeature } from '../features/guest.js';
-import { createLogsFeature } from '../features/logs.js';
-import { createUsersFeature } from '../features/users.js';
+} from '../core/api.js?v=20260418r5';
+import { createFeedback } from '../ui/feedback.js?v=20260418r5';
+import { createAuthFeature } from '../features/auth.js?v=20260418r5';
+import { createStatusFeature } from '../features/status.js?v=20260418r5';
+import { createGuestFeature } from '../features/guest.js?v=20260418r5';
+import { createLogsFeature } from '../features/logs.js?v=20260418r5';
+import { createUsersFeature } from '../features/users.js?v=20260418r5';
 
 export function initApp() {
     const DOM = getDOM();
@@ -52,6 +52,7 @@ export function initApp() {
     let sectionFallbackBound = false;
     let sectionFallbackHandler = null;
     let sectionFallbackRaf = null;
+    let routeSyncRaf = null;
 
     const pollControl = {
         statusErrorCount: 0
@@ -62,8 +63,22 @@ export function initApp() {
         users: { seen: false, loading: false }
     };
 
+    const ROUTE_PATHS = {
+        LOGIN: '/login',
+        DASHBOARD: '/dashboard',
+        GUEST: '/dashboard/guest',
+        LOGS: '/dashboard/logs',
+        USERS: '/dashboard/users'
+    };
+
     function isMobileViewport() {
         return window.matchMedia('(max-width: 768px)').matches;
+    }
+
+    function getSectionPreloadPx() {
+        const desktopPreload = Math.max(80, Number(CONFIG.LAZY_SECTION_PRELOAD_PX || 220));
+        const mobilePreload = Math.max(80, Number(CONFIG.LAZY_SECTION_PRELOAD_PX_MOBILE || desktopPreload));
+        return isMobileViewport() ? mobilePreload : desktopPreload;
     }
 
     function isSectionNearViewport(sectionEl) {
@@ -71,10 +86,56 @@ export function initApp() {
             return true;
         }
 
-        const preloadPx = Math.max(80, Number(CONFIG.LAZY_SECTION_PRELOAD_PX || 220));
+        const preloadPx = getSectionPreloadPx();
         const rect = sectionEl.getBoundingClientRect();
         const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 800;
         return rect.bottom >= -preloadPx && rect.top <= (viewportHeight + preloadPx);
+    }
+
+    function getNetworkPressureMultiplier() {
+        let multiplier = 1;
+
+        const rttSlowMs = Math.max(1, Number(CONFIG.POLL_INTERVAL_RTT_SLOW_MS || 500));
+        const rttCriticalMs = Math.max(rttSlowMs, Number(CONFIG.POLL_INTERVAL_RTT_CRITICAL_MS || 900));
+        const slowMultiplier = Math.max(1, Number(CONFIG.POLL_INTERVAL_SLOW_MULTIPLIER || 1.35));
+        const criticalMultiplier = Math.max(slowMultiplier, Number(CONFIG.POLL_INTERVAL_CRITICAL_MULTIPLIER || 1.85));
+        const saveDataMultiplier = Math.max(1, Number(CONFIG.POLL_INTERVAL_SAVE_DATA_MULTIPLIER || 1.5));
+
+        const rtt = Math.max(0, Number(state.statusApiRttSmoothedMs || state.statusApiRttMs || 0));
+        if (rtt >= rttCriticalMs) {
+            multiplier *= criticalMultiplier;
+        } else if (rtt >= rttSlowMs) {
+            multiplier *= slowMultiplier;
+        }
+
+        if (typeof navigator !== 'undefined' && navigator.connection) {
+            const connection = navigator.connection;
+            const effectiveType = String(connection.effectiveType || '').toLowerCase();
+
+            if (connection.saveData) {
+                multiplier *= saveDataMultiplier;
+            }
+
+            if (effectiveType === 'slow-2g' || effectiveType === '2g') {
+                multiplier *= 1.6;
+            } else if (effectiveType === '3g') {
+                multiplier *= 1.25;
+            }
+        }
+
+        return Math.max(1, multiplier);
+    }
+
+    function applyPollJitter(intervalMs) {
+        const baseMs = Math.max(0, Number(intervalMs) || 0);
+        const jitterPct = Math.max(0, Math.min(0.25, Number(CONFIG.POLL_JITTER_PCT || 0.08)));
+        if (baseMs <= 0 || jitterPct <= 0) {
+            return baseMs;
+        }
+
+        const jitterRangeMs = baseMs * jitterPct;
+        const jitter = (Math.random() * (2 * jitterRangeMs)) - jitterRangeMs;
+        return Math.max(0, Math.round(baseMs + jitter));
     }
 
     function resetLazySectionState() {
@@ -82,6 +143,124 @@ export function initApp() {
         lazySections.logs.loading = false;
         lazySections.users.seen = false;
         lazySections.users.loading = false;
+    }
+
+    function normalizePath(pathname = window.location.pathname) {
+        const raw = String(pathname || '').trim();
+        if (!raw || raw === '/') {
+            return '/';
+        }
+
+        const normalized = raw.replace(/\/+$/, '');
+        return normalized || '/';
+    }
+
+    function isLoginPath(pathname = window.location.pathname) {
+        const path = normalizePath(pathname);
+        return path === ROUTE_PATHS.LOGIN;
+    }
+
+    function isDashboardPath(pathname = window.location.pathname) {
+        const path = normalizePath(pathname);
+        return path === ROUTE_PATHS.DASHBOARD
+            || path === ROUTE_PATHS.GUEST
+            || path === ROUTE_PATHS.LOGS
+            || path === ROUTE_PATHS.USERS
+            || path === '/dashboard/'
+            || path.startsWith('/dashboard/');
+    }
+
+    function replaceRoute(pathname) {
+        const next = normalizePath(pathname);
+        const current = normalizePath(window.location.pathname);
+        if (next === current) {
+            return;
+        }
+
+        window.history.replaceState({ securelockRoute: next }, '', next);
+    }
+
+    function getVisibleSectionRoute() {
+        const scrollTop = window.scrollY || document.documentElement.scrollTop || 0;
+        if (scrollTop <= 80) {
+            return ROUTE_PATHS.DASHBOARD;
+        }
+
+        const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 800;
+        const usersRect = DOM.usersSection?.getBoundingClientRect();
+        if (usersRect && usersRect.top <= viewportHeight * 0.55 && usersRect.bottom > 40) {
+            return ROUTE_PATHS.USERS;
+        }
+
+        const logsRect = DOM.logsSection?.getBoundingClientRect();
+        if (logsRect && logsRect.top <= viewportHeight * 0.6 && logsRect.bottom > 40) {
+            return ROUTE_PATHS.LOGS;
+        }
+
+        const guestRect = DOM.guestSection?.getBoundingClientRect();
+        if (guestRect && guestRect.bottom > 20) {
+            return ROUTE_PATHS.GUEST;
+        }
+
+        return ROUTE_PATHS.DASHBOARD;
+    }
+
+    function scrollToRouteSection(pathname, behavior = 'auto') {
+        const path = normalizePath(pathname);
+
+        if (path === ROUTE_PATHS.USERS) {
+            DOM.usersSection?.scrollIntoView({ behavior, block: 'start' });
+            return;
+        }
+
+        if (path === ROUTE_PATHS.LOGS) {
+            DOM.logsSection?.scrollIntoView({ behavior, block: 'start' });
+            return;
+        }
+
+        if (path === ROUTE_PATHS.GUEST) {
+            DOM.guestSection?.scrollIntoView({ behavior, block: 'start' });
+            return;
+        }
+
+        if (path === ROUTE_PATHS.DASHBOARD || path === '/dashboard/') {
+            window.scrollTo({ top: 0, behavior });
+        }
+    }
+
+    function syncRouteWithState(authFeature, options = {}) {
+        const { fromPopState = false, preserveKnownDashboardRoute = false } = options;
+        const currentPath = normalizePath(window.location.pathname);
+
+        if (!authFeature.isAuthenticated()) {
+            if (!isLoginPath(currentPath)) {
+                replaceRoute(ROUTE_PATHS.LOGIN);
+            }
+            return;
+        }
+
+        if (!isDashboardPath(currentPath)) {
+            replaceRoute(ROUTE_PATHS.DASHBOARD);
+            return;
+        }
+
+        if (fromPopState || preserveKnownDashboardRoute) {
+            scrollToRouteSection(currentPath, 'auto');
+            return;
+        }
+
+        replaceRoute(getVisibleSectionRoute());
+    }
+
+    function scheduleRouteSync(authFeature, options = {}) {
+        if (routeSyncRaf) {
+            return;
+        }
+
+        routeSyncRaf = window.requestAnimationFrame(() => {
+            routeSyncRaf = null;
+            syncRouteWithState(authFeature, options);
+        });
     }
 
     async function loadSectionIfNeeded(sectionKey, authFeature, options = {}) {
@@ -152,7 +331,7 @@ export function initApp() {
             return;
         }
 
-        const preloadPx = Math.max(80, Number(CONFIG.LAZY_SECTION_PRELOAD_PX || 220));
+        const preloadPx = getSectionPreloadPx();
 
         if ('IntersectionObserver' in window) {
             sectionObserver = new IntersectionObserver((entries) => {
@@ -221,12 +400,15 @@ export function initApp() {
         const hiddenDefault = Number(CONFIG.POLL_INTERVAL_HIDDEN || 7000);
         const visibleMobile = Number(CONFIG.POLL_INTERVAL_MOBILE || visibleDefault);
         const hiddenMobile = Number(CONFIG.POLL_INTERVAL_HIDDEN_MOBILE || hiddenDefault);
+        const maxInterval = Math.max(1500, Number(CONFIG.POLL_INTERVAL_MAX || 15000));
+        const pressureMultiplier = getNetworkPressureMultiplier();
 
-        if (document.hidden) {
-            return isMobileViewport() ? hiddenMobile : hiddenDefault;
-        }
+        const preferredBase = document.hidden
+            ? (isMobileViewport() ? hiddenMobile : hiddenDefault)
+            : (isMobileViewport() ? visibleMobile : visibleDefault);
 
-        return isMobileViewport() ? visibleMobile : visibleDefault;
+        const pressureAdjusted = Math.max(900, Math.round(preferredBase * pressureMultiplier));
+        return Math.min(maxInterval, pressureAdjusted);
     }
 
     function stopPollingLoops() {
@@ -253,6 +435,11 @@ export function initApp() {
         if (state.guestTimer) {
             clearInterval(state.guestTimer);
             state.guestTimer = null;
+        }
+
+        if (state.guestCooldownTimer) {
+            clearInterval(state.guestCooldownTimer);
+            state.guestCooldownTimer = null;
         }
 
         if (state.emergencyCooldownTimer) {
@@ -296,7 +483,26 @@ export function initApp() {
                 loadSectionIfNeeded('logs', authFeature);
                 loadSectionIfNeeded('users', authFeature);
                 refreshVisibleSections();
+                scheduleRouteSync(authFeature);
             }
+        });
+
+        window.addEventListener('scroll', () => {
+            if (!runtimeStarted || !authFeature.isAuthenticated()) {
+                return;
+            }
+            scheduleRouteSync(authFeature);
+        }, { passive: true });
+
+        window.addEventListener('resize', () => {
+            if (!runtimeStarted || !authFeature.isAuthenticated()) {
+                return;
+            }
+            scheduleRouteSync(authFeature);
+        });
+
+        window.addEventListener('popstate', () => {
+            syncRouteWithState(authFeature, { fromPopState: true });
         });
 
         featureEventsBound = true;
@@ -345,7 +551,7 @@ export function initApp() {
 
             const elapsed = Date.now() - startedAt;
             const nextDelay = Math.max(350, backoffInterval - elapsed);
-            scheduleStatusPoll(authFeature, nextDelay);
+            scheduleStatusPoll(authFeature, applyPollJitter(nextDelay));
         }, Math.max(0, Number(delayMs) || 0));
     }
 
@@ -373,7 +579,13 @@ export function initApp() {
                 ? Number(hiddenInterval || baseInterval)
                 : Number(baseInterval);
 
-            schedulePeriodicPoll(timerKey, task, baseInterval, hiddenInterval, nextInterval);
+            schedulePeriodicPoll(
+                timerKey,
+                task,
+                baseInterval,
+                hiddenInterval,
+                applyPollJitter(nextInterval)
+            );
         }, Math.max(0, Number(delayMs) || 0));
     }
 
@@ -421,11 +633,9 @@ export function initApp() {
         resetLazySectionState();
         statusFeature.updateEmergencyButton();
         usersFeature.updateAddUserSubmitButton();
-
-        statusFeature.pollStatus().then((data) => {
-            if (data) {
-                guestFeature.syncFromStatus(data);
-            }
+        syncRouteWithState(authFeature, {
+            preserveKnownDashboardRoute: true,
+            fromPopState: true
         });
 
         setTimeout(() => {
@@ -443,12 +653,17 @@ export function initApp() {
         }, 200);
 
         startPollingLoops(authFeature);
+        scheduleRouteSync(authFeature);
     }
 
     function stopProtectedRuntime() {
         runtimeStarted = false;
         stopPollingLoops();
         resetLazySectionState();
+        if (routeSyncRaf) {
+            window.cancelAnimationFrame(routeSyncRaf);
+            routeSyncRaf = null;
+        }
     }
 
     const authFeature = createAuthFeature({
@@ -463,6 +678,7 @@ export function initApp() {
         },
         onLogout: () => {
             stopProtectedRuntime();
+            syncRouteWithState(authFeature);
         }
     });
 
@@ -470,6 +686,11 @@ export function initApp() {
 
     function init() {
         console.log('[SecureLock] Dashboard modular app initializing...');
+
+        const initialPath = normalizePath(window.location.pathname);
+        if (!isLoginPath(initialPath) && !isDashboardPath(initialPath)) {
+            replaceRoute(ROUTE_PATHS.LOGIN);
+        }
 
         logsFeature.initializePageSize();
         bindEvents();

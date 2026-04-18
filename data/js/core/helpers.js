@@ -48,6 +48,14 @@ export function formatLogTime(logOrTimeValue, compact) {
     }
 
     if (date) {
+        const dateLabel = date.toLocaleDateString();
+        const timeLabel = date.toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: compact ? undefined : '2-digit'
+        });
+        const dateTimeLabel = `${dateLabel} ${timeLabel}`;
+
         const now = Date.now();
         const deltaMs = now - date.getTime();
 
@@ -57,20 +65,17 @@ export function formatLogTime(logOrTimeValue, compact) {
             const deltaHr = Math.floor(deltaMin / 60);
 
             if (compact) {
-                if (deltaSec < 60) return `${deltaSec}s ago`;
-                if (deltaMin < 60) return `${deltaMin}m ago`;
-                if (deltaHr < 24) return `${deltaHr}h ago`;
+                if (deltaSec < 60) return `${dateTimeLabel} (${deltaSec}s)`;
+                if (deltaMin < 60) return `${dateTimeLabel} (${deltaMin}m)`;
+                if (deltaHr < 24) return `${dateTimeLabel} (${deltaHr}h)`;
             } else {
-                if (deltaSec < 60) return `${date.toLocaleTimeString()} (${deltaSec}s ago)`;
-                if (deltaMin < 60) return `${date.toLocaleTimeString()} (${deltaMin}m ago)`;
-                if (deltaHr < 24) return `${date.toLocaleString()} (${deltaHr}h ago)`;
+                if (deltaSec < 60) return `${dateTimeLabel} (${deltaSec}s ago)`;
+                if (deltaMin < 60) return `${dateTimeLabel} (${deltaMin}m ago)`;
+                if (deltaHr < 24) return `${dateTimeLabel} (${deltaHr}h ago)`;
             }
         }
 
-        if (compact) {
-            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        }
-        return date.toLocaleString();
+        return dateTimeLabel;
     }
 
     if (!compact) return String(rawTime || '--');

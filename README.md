@@ -225,13 +225,16 @@ Main UI file: `data/html/pages/dashboard.html`
 ### Notable dashboard behavior
 - Admin overlay lock until authenticated
 - Polling intervals (from `data/js/core/config.js`):
-   - Status: 2.5s desktop / 3.2s mobile (with hidden-tab backoff)
+   - Status: 2.8s desktop / 3.6s mobile (adaptive backoff + jitter)
    - Logs: 10s (20s when tab hidden)
    - Users: 15s (30s when tab hidden)
-   - Diagnostics: 3s desktop / 8s mobile (12s when hidden)
+   - Diagnostics: 5s desktop / 9s mobile (12s when hidden)
    - RFID enrollment poll: 400ms (adaptive backoff under errors/hidden tab)
+ - Role-aware logs (source badges + actor role badges + search/status/date filters)
+ - Lock telemetry chips (API RTT, Telegram queue depth, Telegram polling cadence)
+ - Guest code generation from dashboard (`/api/guest-code`) with cooldown awareness
 - Responsive logs pagination
-- Add/Edit user dialogs with live RFID scan polling and duplicate checks
+- Add/Edit user dialogs with split name fields and seeded-admin safeguards
 
 ---
 
@@ -251,20 +254,20 @@ Most endpoints require `Authorization: Bearer <token>` from `/api/auth/login`.
 | GET | `/api/auth/status` | Validate session state |
 | GET | `/api/status` | Realtime system status |
 | POST | `/api/unlock` | Emergency unlock (cooldown protected) |
-| POST | `/api/guest-code` | Disabled path (guest code is Telegram-managed) |
-| GET | `/api/users` | List users |
-| POST | `/api/users` | Add user |
-| PUT | `/api/users` | Edit user |
+| POST | `/api/guest-code` | Generate/reuse guest PIN (same policy and cooldown rules as Telegram admin flow) |
+| GET | `/api/users` | List users (includes split names + seeded-admin metadata) |
+| POST | `/api/users` | Add user (supports split name fields) |
+| PUT | `/api/users` | Edit user / seeded-admin profile |
 | DELETE | `/api/users?uid=<UID>` | Delete user |
 | POST | `/api/users/reset` | Reset all users (explicit confirmation body) |
-| GET | `/api/logs` | Get logs |
+| GET | `/api/logs` | Get logs (normalized status/methodCode/actorRole) |
 | DELETE | `/api/logs` | Clear logs |
 | GET | `/api/rfid/scan` | Last RFID scan state (for enrollment flow) |
 | GET | `/api/diagnostics` | Runtime hardware/storage diagnostics |
 | POST | `/api/addUser` | Alias of add-user endpoint |
 
 ### Notes
-- CORS headers are enabled for API responses.
+- CORS is origin-restricted (device host/IP, `securelock.local`, localhost loopbacks).
 - Logs are persisted to LittleFS and returned newest-first.
 - `users.json` is synchronized from auth storage to avoid drift.
 
@@ -273,20 +276,22 @@ Most endpoints require `Authorization: Bearer <token>` from `/api/auth/login`.
 ## 🤖 Telegram Commands
 
 ### Admin commands
-- `/help`
-- `/start`
-- `/my_info`
-- `/status`
-- `/admin_open`
-- `/guest_code`
-- `/lockdown`
-- `/unlockdown`
-- `/reboot`
+- `/help` — full admin command guide
+- `/start` — admin session heartbeat/verification
+- `/my_info` — admin account + device link summary
+- `/status` — live lock/alarm/WiFi status snapshot
+- `/admin_open` — policy-protected emergency unlock
+- `/guest_code` — generate/reuse 30-second guest PIN
+- `/buzzer_test` — buzzer diagnostic command
+- `/keypad_echo` — return last keypad key + age
+- `/lockdown` — disable local RFID/keypad authentication
+- `/unlockdown` — re-enable local RFID/keypad authentication
+- `/reboot` — controlled device reboot
 
 ### User commands
-- `/help`
-- `/start`
-- `/my_info`
+- `/help` — standard user access instructions + allowed commands
+- `/start` — user connectivity check
+- `/my_info` — linked account summary
 
 Unknown or unauthorized command attempts are logged and handled explicitly.
 
@@ -300,6 +305,7 @@ LittleFS files:
 
 Runtime behavior:
 - User records are compacted/self-healed for schema consistency
+- Seeded admin display-name overrides are stored under `settings.seededAdminProfiles`
 - Log list is capped to prevent uncontrolled growth
 
 ---
@@ -307,13 +313,13 @@ Runtime behavior:
 ## 🔐 Security Notes
 
 - `include/secrets.h` is sensitive and should remain private.
-- Keep `include/secrets.h` out of version control.
+- Use `include/secrets.h.example` as the template for fresh setup.
+- Keep `include/secrets.h` out of version control (already covered by `.gitignore`).
 - Rotate WiFi and Telegram credentials if leaked.
-- Change default admin credentials before deployment.
+- Set a strong `DASHBOARD_ADMIN_PASSWORD` before deployment (login is blocked when left as `CHANGE_ME_NOW`).
 - Prefer isolated network/VLAN for production devices.
 - Do not expose device API directly to public internet.
-
-`.env` exists for local placeholder hygiene, but firmware currently reads credentials from `include/secrets.h`.
+- Firmware credentials are sourced from `include/secrets.h`.
 
 ---
 

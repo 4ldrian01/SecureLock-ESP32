@@ -111,10 +111,14 @@ static const unsigned long TELEGRAM_DANGEROUS_COMMAND_COOLDOWN_MS = 5000;
 static const unsigned long TELEGRAM_UNKNOWN_NOTICE_COOLDOWN_MS = 15000;
 static const unsigned long TELEGRAM_UNAUTHORIZED_ALERT_COOLDOWN_MS = 60000;
 static const int TELEGRAM_TRACKED_CHATS_MAX = 24;
-static const int TELEGRAM_MAX_PROCESS_PER_CYCLE = 3;
-static const int TELEGRAM_SAFE_MESSAGE_SLOTS = 3;
-static const int TELEGRAM_WEB_ACTIVITY_QUEUE_MAX = 16;
-static const unsigned long TELEGRAM_WEB_ACTIVITY_MIN_INTERVAL_MS = 1500;
+static const int TELEGRAM_MAX_PROCESS_PER_CYCLE = 5;
+static const int TELEGRAM_SAFE_MESSAGE_SLOTS = 5;
+static const int TELEGRAM_WEB_ACTIVITY_QUEUE_MAX = 32;
+static const int TELEGRAM_DIRECT_MESSAGE_QUEUE_MAX = 16;
+static const int TELEGRAM_ADMIN_METRICS_MAX = 16;
+static const unsigned long TELEGRAM_WEB_ACTIVITY_MIN_INTERVAL_MS = 900;
+static const unsigned long TELEGRAM_DIRECT_MESSAGE_MIN_INTERVAL_MS = 700;
+static const unsigned long TELEGRAM_POLLING_MODE_RETRY_MS = 8000;
 unsigned long telegramPollIntervalMs = TELEGRAM_POLL_FAST_MS;
 unsigned long telegramReadyAfterMs = 0;
 unsigned long telegramLastPollDurationMs = 0;
@@ -135,11 +139,37 @@ unsigned long telegramTrackedLastDangerousMs[TELEGRAM_TRACKED_CHATS_MAX];
 unsigned long telegramTrackedLastUnknownNoticeMs[TELEGRAM_TRACKED_CHATS_MAX];
 unsigned long telegramTrackedLastUnauthorizedAlertMs[TELEGRAM_TRACKED_CHATS_MAX];
 String telegramWebActivityQueue[TELEGRAM_WEB_ACTIVITY_QUEUE_MAX];
+unsigned long telegramWebActivityQueuedAtMs[TELEGRAM_WEB_ACTIVITY_QUEUE_MAX];
 volatile int telegramWebActivityHead = 0;
 volatile int telegramWebActivityTail = 0;
 volatile int telegramWebActivityCount = 0;
+String telegramDirectMessageChatQueue[TELEGRAM_DIRECT_MESSAGE_QUEUE_MAX];
+String telegramDirectMessageBodyQueue[TELEGRAM_DIRECT_MESSAGE_QUEUE_MAX];
+unsigned long telegramDirectMessageQueuedAtMs[TELEGRAM_DIRECT_MESSAGE_QUEUE_MAX];
+uint8_t telegramDirectMessageRetries[TELEGRAM_DIRECT_MESSAGE_QUEUE_MAX];
+volatile int telegramDirectMessageHead = 0;
+volatile int telegramDirectMessageTail = 0;
+volatile int telegramDirectMessageCount = 0;
 unsigned long telegramLastWebActivityForwardMs = 0;
+unsigned long telegramLastDirectMessageForwardMs = 0;
+unsigned long lastTelegramQueueFullLogMs = 0;
+unsigned long lastTelegramDirectQueueFullLogMs = 0;
+unsigned long telegramNotifyQueuedTotal = 0;
+unsigned long telegramNotifyDeliveredTotal = 0;
+unsigned long telegramNotifyDeliveryFailures = 0;
+unsigned long telegramNotifyDroppedFullTotal = 0;
+unsigned long telegramNotifyDroppedRetryTotal = 0;
+unsigned long telegramDirectNotifyDroppedFullTotal = 0;
+unsigned long telegramDirectNotifyDroppedRetryTotal = 0;
+unsigned long telegramAdminSendAttempts[TELEGRAM_ADMIN_METRICS_MAX];
+unsigned long telegramAdminSendSuccess[TELEGRAM_ADMIN_METRICS_MAX];
+unsigned long telegramAdminSendFailures[TELEGRAM_ADMIN_METRICS_MAX];
+unsigned long telegramAdminLastSuccessMs[TELEGRAM_ADMIN_METRICS_MAX];
+unsigned long telegramAdminLastFailureMs[TELEGRAM_ADMIN_METRICS_MAX];
 portMUX_TYPE telegramWebActivityMux = portMUX_INITIALIZER_UNLOCKED;
+portMUX_TYPE telegramDirectMessageMux = portMUX_INITIALIZER_UNLOCKED;
+bool telegramPollingConfigured = false;
+unsigned long telegramLastPollingModeAttemptMs = 0;
 static const unsigned long EMERGENCY_LOCKOUT_MS = 5000;
 int lastHandledTelegramUpdateId = 0;
 unsigned long lastTelegramRfidAlertScanMs = 0;
@@ -179,8 +209,11 @@ bool previousLockedState = true;
 unsigned long theftWindowStartMs = 0;
 int theftStrikeCount = 0;
 bool theftAlertSent = false;
+bool tamperAlertSent = false;
+unsigned long lastTheftAlertMs = 0;
 static const unsigned long THEFT_WINDOW_MS = 2000;
 static const int THEFT_STRIKE_THRESHOLD = 5;
+static const unsigned long THEFT_ALERT_COOLDOWN_MS = 30000;
 
 void clearPending2FA(const String& reason, bool logFailure);
 void clearBackupOnlyMode(const String& reason, bool logFailure);
@@ -205,21 +238,32 @@ void handleUserCommand(const String& chatId, const String& text);
 bool sendTelegramText(const String& chatId, const String& message);
 void forwardWebAdminActivityToTelegram(const String& user, const String& method, const String& status);
 void processQueuedWebAdminActivityTelegram();
+bool enqueueTelegramUserNotification(const String& chatId, const String& message);
+void processQueuedUserNotificationTelegram();
 bool configureTelegramPollingMode();
+bool ensureTelegramPollingMode();
 void sendDuressAlert(String userName);
 void sendTheftAlert();
+void sendTamperAlert();
 bool sendOTP(String chatID, String otp);
 void sendRfidScanAlert(String uid, bool known, const String& userName);
 String normalizeTelegramCommand(const String& rawText);
 bool enqueueAdminNotification(const String& message);
 void queueAccessEventForAdmins(const String& actor, const String& method);
 const char* keypadStateToText(KeypadState state);
+String normalizeDisplayNameForLogs(const String& rawName, const String& fallback);
+String formatChatIdForLogs(const String& chatId);
+String getSeededAdminOverrideNameByChatId(const String& chatId);
+String getSeededAdminNameByChatId(const String& chatId);
+bool resolveEnrolledUserIdentityByChatId(const String& chatId, String* matchedName, String* matchedUid = nullptr);
+String getTelegramActorLabel(const String& chatId, TelegramRole role);
 int getTelegramChatSlot(const String& chatId, bool createIfMissing = true);
 bool isDangerousAdminCommand(const String& command);
 bool shouldThrottleTelegramCommand(const String& chatId, bool dangerous, unsigned long* retryAfterMs = nullptr);
 bool shouldThrottleUnknownNotice(const String& chatId, unsigned long* retryAfterMs = nullptr);
 bool shouldThrottleUnauthorizedAdminAlert(const String& chatId, unsigned long* retryAfterMs = nullptr);
 String roleToText(TelegramRole role);
+bool requestWebGuestCode(String* issuedCode, unsigned long* remainingMs, bool* reusedExisting);
 
 String getActiveGuestCode();
 bool isTemporaryGuestCodeActive();
@@ -241,6 +285,21 @@ int getTelegramPendingApprox();
 String getTelegramLastCommandText();
 String getTelegramLastCommandRole();
 String getTelegramLastCommandResult();
+int getTelegramNotificationQueueDepth();
+int getTelegramNotificationQueueCapacity();
+unsigned long getTelegramNotificationQueueOldestAgeMs();
+unsigned long getTelegramNotificationQueuedTotal();
+unsigned long getTelegramNotificationDeliveredTotal();
+unsigned long getTelegramNotificationDeliveryFailures();
+unsigned long getTelegramNotificationDroppedFullTotal();
+unsigned long getTelegramNotificationDroppedRetryTotal();
+int getTelegramAdminMetricsSlots();
+String getTelegramAdminChatIdAt(int index);
+unsigned long getTelegramAdminSendAttemptsAt(int index);
+unsigned long getTelegramAdminSendSuccessAt(int index);
+unsigned long getTelegramAdminSendFailuresAt(int index);
+unsigned long getTelegramAdminLastSuccessMsAt(int index);
+unsigned long getTelegramAdminLastFailureMsAt(int index);
 
 void trackTelegramCommand(const String& role, const String& command, const String& result, unsigned long latencyMs);
 
@@ -284,7 +343,29 @@ bool configureTelegramPollingMode() {
         Serial.println("[TELEGRAM][WARN] Bot API not reachable during startup check");
     }
 
-    return deleteWebhookOk && getMeOk;
+    // Polling can still work when deleteWebhook confirmation is not explicit,
+    // so rely on Bot API reachability as readiness gate.
+    return getMeOk;
+}
+
+bool ensureTelegramPollingMode() {
+    if (!bot) {
+        return false;
+    }
+
+    if (telegramPollingConfigured) {
+        return true;
+    }
+
+    const unsigned long now = millis();
+    if (telegramLastPollingModeAttemptMs > 0
+        && (now - telegramLastPollingModeAttemptMs) < TELEGRAM_POLLING_MODE_RETRY_MS) {
+        return false;
+    }
+
+    telegramLastPollingModeAttemptMs = now;
+    telegramPollingConfigured = configureTelegramPollingMode();
+    return telegramPollingConfigured;
 }
 
 void updateNetworkServices() {
@@ -318,12 +399,13 @@ void initializeTelegramBotIfNeeded() {
     }
 
     telegramClient.setInsecure();
-    telegramClient.setTimeout(250);
+    telegramClient.setTimeout(1200);
     bot = new UniversalTelegramBot(BOT_TOKEN, telegramClient);
     bot->longPoll = 0;
     telegramReadyAfterMs = millis() + TELEGRAM_STARTUP_GRACE_MS;
+    telegramPollingConfigured = false;
+    telegramLastPollingModeAttemptMs = 0;
     Serial.println("[TELEGRAM] Bot initialized");
-    configureTelegramPollingMode();
 }
 
 int getTelegramChatSlot(const String& chatId, bool createIfMissing) {
@@ -546,6 +628,18 @@ void loop() {
     previousDoorOpen = currentDoorOpen;
     previousLockedState = currentLockedState;
 
+    const bool doorTampered = lockManager.isDoorTampered();
+    if (doorTampered && !tamperAlertSent) {
+        if (!securityManager.isAlarming()) {
+            securityManager.startAlarm();
+        }
+        webServer.logActivity("System", "Door Tamper Detected", "alarm");
+        sendTamperAlert();
+        tamperAlertSent = true;
+    } else if (!doorTampered) {
+        tamperAlertSent = false;
+    }
+
     if (lockManager.isLocked()) {
         const bool vibrationStrike = securityManager.pollVibrationStrike();
         if (vibrationStrike) {
@@ -558,9 +652,16 @@ void loop() {
 
             theftStrikeCount++;
             if (theftStrikeCount > THEFT_STRIKE_THRESHOLD && !theftAlertSent) {
-                securityManager.startAlarm();
-                webServer.logActivity("System", "Theft Attempt Detected", "alarm");
-                sendTheftAlert();
+                if (!securityManager.isAlarming()) {
+                    securityManager.startAlarm();
+                }
+
+                if (lastTheftAlertMs == 0 || (now - lastTheftAlertMs) >= THEFT_ALERT_COOLDOWN_MS) {
+                    webServer.logActivity("System", "Theft Attempt Detected", "alarm");
+                    sendTheftAlert();
+                    lastTheftAlertMs = now;
+                }
+
                 theftAlertSent = true;
             }
         }
@@ -597,7 +698,7 @@ void loop() {
                 if (shouldEnter2FA) {
                     authHandler.startRFIDCooldown();
                     if ((nowMs - lastPending2FAConflictFeedbackMs) >= PENDING_2FA_CONFLICT_FEEDBACK_MS) {
-                        securityManager.beep(2);
+                        securityManager.beep(1);
                         lastPending2FAConflictFeedbackMs = nowMs;
                     }
 
@@ -649,8 +750,16 @@ void loop() {
             if (deniedFeedbackAllowed) {
                 lastRfidDeniedFeedbackMs = nowMs;
 
-                securityManager.beep(2);
-                webServer.logActivity("Unknown RFID", "RFID Access Denied", "fail");
+                securityManager.beep(3);
+                String unknownCardLabel = "Unregistered RFID";
+                if (uid.length() > 0) {
+                    String uidSuffix = uid;
+                    if (uidSuffix.length() > 8) {
+                        uidSuffix = uidSuffix.substring(uidSuffix.length() - 8);
+                    }
+                    unknownCardLabel += " " + uidSuffix;
+                }
+                webServer.logActivity(unknownCardLabel, "RFID Access Denied", "fail");
 
                 if (scanMs > 0 && scanMs != lastTelegramRfidAlertScanMs) {
                     const bool newUid = uid != lastTelegramRfidAlertUid;
@@ -669,14 +778,14 @@ void loop() {
 
     if (keypadState == STATE_AWAITING_2FA && pendingOtpIssuedAtMs > 0) {
         if ((millis() - pendingOtpIssuedAtMs) >= OTP_TTL_MS) {
-            securityManager.beep(2);
+            securityManager.beep(3);
             clearPending2FA("OTP timeout", true);
         }
     }
 
     if (keypadState == STATE_BACKUP_ONLY && backupOnlyModeStartedAtMs > 0) {
         if ((millis() - backupOnlyModeStartedAtMs) >= BACKUP_ONLY_MODE_TIMEOUT_MS) {
-            securityManager.beep(2);
+            securityManager.beep(3);
             clearBackupOnlyMode("Backup PIN timeout", false);
         }
     }
@@ -694,6 +803,7 @@ void loop() {
         keypadBuffer = "";
         authHandler.clearBuffer();
         handleTelegramCommands();
+        processQueuedUserNotificationTelegram();
         processQueuedWebAdminActivityTelegram();
         yield();
         return;
@@ -701,6 +811,7 @@ void loop() {
 
     processKeypad();
     handleTelegramCommands();
+    processQueuedUserNotificationTelegram();
     processQueuedWebAdminActivityTelegram();
     yield();
 }
@@ -781,7 +892,7 @@ void processKeypad() {
                     guestPinFailureCount = 0;
                     Serial.println("[KEYPAD] Guest PIN accepted via # submit");
                 } else {
-                    securityManager.beep(2);
+                    securityManager.beep(3);
                     webServer.logActivity("Guest", "Guest PIN Failed", "fail");
 
                     const unsigned long nowMs = millis();
@@ -887,7 +998,7 @@ void processKeypad() {
             return;
         }
 
-        securityManager.beep(2);
+        securityManager.beep(3);
         webServer.logActivity("Guest", "Guest PIN Failed", "fail");
 
         const unsigned long nowMs = millis();
@@ -943,7 +1054,7 @@ bool evaluateAwaiting2FABuffer(bool explicitSubmit) {
         }
 
         if (awaitingOfflineBackupMode && explicitSubmit) {
-            securityManager.beep(2);
+            securityManager.beep(3);
             clearPending2FA("Backup PIN failed", true);
             Serial.println("[AUTH] RFID + Backup PIN failed");
             return true;
@@ -955,7 +1066,7 @@ bool evaluateAwaiting2FABuffer(bool explicitSubmit) {
             grantAccess(pendingUserName, "RFID + Telegram OTP", pendingUserChatId);
             Serial.println("[AUTH] RFID + Telegram OTP accepted");
         } else {
-            securityManager.beep(2);
+            securityManager.beep(3);
             clearPending2FA("OTP failed", true);
             Serial.println("[AUTH] RFID + Telegram OTP failed");
         }
@@ -963,7 +1074,7 @@ bool evaluateAwaiting2FABuffer(bool explicitSubmit) {
     }
 
     if (explicitSubmit) {
-        securityManager.beep(2);
+        securityManager.beep(3);
         clearPending2FA("Invalid 2FA input length", true);
         return true;
     }
@@ -1099,7 +1210,7 @@ bool evaluateBackupOnlyBuffer(bool explicitSubmit) {
     }
 
     if (explicitSubmit) {
-        securityManager.beep(2);
+        securityManager.beep(3);
         authPrompt = "Backup Access: Enter exactly 4 digits";
         return true;
     }
@@ -1242,6 +1353,54 @@ String generateNumericCode(size_t length) {
     return out;
 }
 
+bool requestWebGuestCode(String* issuedCode, unsigned long* remainingMs, bool* reusedExisting) {
+    if (issuedCode) {
+        *issuedCode = "";
+    }
+    if (remainingMs) {
+        *remainingMs = 0;
+    }
+    if (reusedExisting) {
+        *reusedExisting = false;
+    }
+
+    if (guestCodeActive) {
+        if (issuedCode) {
+            *issuedCode = guestCode;
+        }
+        if (remainingMs) {
+            *remainingMs = getTemporaryGuestCodeRemainingMs();
+        }
+        if (reusedExisting) {
+            *reusedExisting = true;
+        }
+        return guestCode.length() == BACKUP_PIN_LENGTH;
+    }
+
+    guestCode = generateNumericCode(BACKUP_PIN_LENGTH);
+    guestCodeActive = true;
+    guestCodeIssuedAtMs = millis();
+    guestPinFailureCount = 0;
+    lastGuestPinFailureMs = 0;
+
+    if (keypadState == STATE_IDLE) {
+        keypadBuffer = "";
+        keypadIdleBufferLastInputMs = 0;
+        authHandler.clearBuffer();
+    }
+
+    securityManager.beep(1);
+
+    if (issuedCode) {
+        *issuedCode = guestCode;
+    }
+    if (remainingMs) {
+        *remainingMs = getTemporaryGuestCodeRemainingMs();
+    }
+
+    return guestCode.length() == BACKUP_PIN_LENGTH;
+}
+
 void handleTelegramCommands() {
     if (!bot || !webServer.isConnected()) {
         return;
@@ -1256,6 +1415,11 @@ void handleTelegramCommands() {
         return;
     }
 
+    if (!telegramPollingConfigured && !ensureTelegramPollingMode()) {
+        telegramPollIntervalMs = TELEGRAM_POLL_ERROR_MS;
+        return;
+    }
+
     const unsigned long now = millis();
     if ((now - lastTelegramPollMs) < telegramPollIntervalMs) {
         return;
@@ -1266,44 +1430,59 @@ void handleTelegramCommands() {
     int processedInCycle = 0;
     int consumedUpdatesInCycle = 0;
 
-    int numNewMessages = bot->getUpdates(bot->last_message_received + 1);
-    if (numNewMessages < 0) {
-        telegramPollErrors++;
-        telegramLastErrorMs = millis();
-        telegramPollIntervalMs = TELEGRAM_POLL_ERROR_MS;
-        telegramPendingApprox = 0;
-        telegramLastPollDurationMs = millis() - pollStartMs;
+    const int safeLimit = (TELEGRAM_MAX_PROCESS_PER_CYCLE < TELEGRAM_SAFE_MESSAGE_SLOTS)
+        ? TELEGRAM_MAX_PROCESS_PER_CYCLE
+        : TELEGRAM_SAFE_MESSAGE_SLOTS;
 
-        const unsigned long nowMs = millis();
-        if (telegramLastErrorLogMs == 0 || (nowMs - telegramLastErrorLogMs) >= 5000UL) {
-            Serial.print("[TELEGRAM][WARN] getUpdates failed, error=");
-            Serial.print(bot->_lastError);
-            Serial.print(", pollErrors=");
-            Serial.println(telegramPollErrors);
-            telegramLastErrorLogMs = nowMs;
+    int nextUpdateOffset = (lastHandledTelegramUpdateId > 0)
+        ? (lastHandledTelegramUpdateId + 1)
+        : (bot->last_message_received + 1);
+
+    int totalFetchedInCycle = 0;
+    bool pendingApproxSet = false;
+
+    while (processedInCycle < safeLimit) {
+        const int numNewMessages = bot->getUpdates(nextUpdateOffset);
+        if (numNewMessages < 0) {
+            telegramPollErrors++;
+            telegramLastErrorMs = millis();
+            telegramPollIntervalMs = TELEGRAM_POLL_ERROR_MS;
+            telegramPendingApprox = 0;
+            telegramLastPollDurationMs = millis() - pollStartMs;
+
+            const unsigned long nowMs = millis();
+            if (telegramLastErrorLogMs == 0 || (nowMs - telegramLastErrorLogMs) >= 5000UL) {
+                Serial.print("[TELEGRAM][WARN] getUpdates failed, error=");
+                Serial.print(bot->_lastError);
+                Serial.print(", pollErrors=");
+                Serial.println(telegramPollErrors);
+                telegramLastErrorLogMs = nowMs;
+            }
+
+            return;
         }
 
-        return;
-    }
+        if (numNewMessages == 0) {
+            break;
+        }
 
-    const unsigned long pollDurationMs = millis() - pollStartMs;
-    if (pollDurationMs > 2500) {
-        telegramPollIntervalMs = TELEGRAM_POLL_ERROR_MS;
-    }
+        totalFetchedInCycle += numNewMessages;
 
-    if (numNewMessages > 0) {
-        const int safeLimit = (TELEGRAM_MAX_PROCESS_PER_CYCLE < TELEGRAM_SAFE_MESSAGE_SLOTS)
-            ? TELEGRAM_MAX_PROCESS_PER_CYCLE
-            : TELEGRAM_SAFE_MESSAGE_SLOTS;
-        const int processLimit = (numNewMessages < safeLimit)
+        const int remainingBudget = safeLimit - processedInCycle;
+        const int processLimit = (numNewMessages < remainingBudget)
             ? numNewMessages
-            : safeLimit;
+            : remainingBudget;
 
         for (int i = 0; i < processLimit; i++) {
             const int updateId = bot->messages[i].update_id;
+            consumedUpdatesInCycle++;
+
             if (updateId <= lastHandledTelegramUpdateId) {
                 continue;
             }
+
+            lastHandledTelegramUpdateId = updateId;
+            nextUpdateOffset = updateId + 1;
 
             String chatId = bot->messages[i].chat_id;
             String text = normalizeTelegramCommand(bot->messages[i].text);
@@ -1311,20 +1490,13 @@ void handleTelegramCommands() {
 
             const TelegramRole role = resolveTelegramRole(chatId);
             if (role == ROLE_UNKNOWN) {
-                lastHandledTelegramUpdateId = updateId;
-                consumedUpdatesInCycle++;
                 handleUnknownTelegramChat(chatId);
                 continue;
             }
 
             if (text.length() == 0) {
-                lastHandledTelegramUpdateId = updateId;
-                consumedUpdatesInCycle++;
                 continue;
             }
-
-            lastHandledTelegramUpdateId = updateId;
-            consumedUpdatesInCycle++;
 
             const bool dangerous = (role == ROLE_ADMIN) && isDangerousAdminCommand(text);
             unsigned long retryAfterMs = 0;
@@ -1348,12 +1520,23 @@ void handleTelegramCommands() {
             processedInCycle++;
         }
 
-        telegramPendingApprox = numNewMessages - consumedUpdatesInCycle;
+        if (numNewMessages > processLimit) {
+            telegramPendingApprox = (numNewMessages - processLimit);
+            pendingApproxSet = true;
+            break;
+        }
+    }
+
+    const unsigned long pollDurationMs = millis() - pollStartMs;
+    if (pollDurationMs > 2500) {
+        telegramPollIntervalMs = TELEGRAM_POLL_ERROR_MS;
+    }
+
+    if (!pendingApproxSet) {
+        telegramPendingApprox = totalFetchedInCycle - consumedUpdatesInCycle;
         if (telegramPendingApprox < 0) {
             telegramPendingApprox = 0;
         }
-    } else {
-        telegramPendingApprox = 0;
     }
 
     telegramLastPollDurationMs = millis() - pollStartMs;
@@ -1361,7 +1544,7 @@ void handleTelegramCommands() {
         telegramCommandsHandled += static_cast<unsigned long>(processedInCycle);
         telegramLastSuccessMs = millis();
         telegramPollIntervalMs = TELEGRAM_POLL_FAST_MS;
-    } else if (numNewMessages > 0) {
+    } else if (totalFetchedInCycle > 0) {
         telegramLastSuccessMs = millis();
         telegramPollIntervalMs = TELEGRAM_POLL_FAST_MS;
     } else {
@@ -1399,6 +1582,190 @@ String normalizeTelegramCommand(const String& rawText) {
     return command;
 }
 
+String normalizeDisplayNameForLogs(const String& rawName, const String& fallback) {
+    String value = rawName;
+    value.trim();
+
+    while (value.indexOf("  ") >= 0) {
+        value.replace("  ", " ");
+    }
+
+    if (value.length() == 0 || value.equalsIgnoreCase("unknown")) {
+        String fb = fallback;
+        fb.trim();
+        return fb.length() > 0 ? fb : "Unknown";
+    }
+
+    return value;
+}
+
+String formatChatIdForLogs(const String& chatId) {
+    String normalizedChatId = chatId;
+    normalizedChatId.trim();
+
+    if (normalizedChatId.length() == 0) {
+        return "#unknown";
+    }
+
+    if (normalizedChatId.length() <= 4) {
+        return "#" + normalizedChatId;
+    }
+
+    return "#" + normalizedChatId.substring(normalizedChatId.length() - 4);
+}
+
+String getSeededAdminOverrideNameByChatId(const String& chatId) {
+    String normalizedChatId = chatId;
+    normalizedChatId.trim();
+
+    if (normalizedChatId.length() == 0 || !LittleFS.exists("/users.json")) {
+        return "";
+    }
+
+    JsonDocument usersDoc;
+    File file = LittleFS.open("/users.json", "r");
+    if (!file) {
+        return "";
+    }
+
+    const DeserializationError readErr = deserializeJson(usersDoc, file);
+    file.close();
+    if (readErr || !usersDoc.is<JsonObject>()) {
+        return "";
+    }
+
+    JsonObject settings = usersDoc["settings"].as<JsonObject>();
+    if (settings.isNull() || !settings["seededAdminProfiles"].is<JsonArray>()) {
+        return "";
+    }
+
+    JsonArray profiles = settings["seededAdminProfiles"].as<JsonArray>();
+    for (JsonObject profile : profiles) {
+        String listedChatId = profile["chatId"] | "";
+        listedChatId.trim();
+        if (listedChatId != normalizedChatId) {
+            continue;
+        }
+
+        String overrideName = profile["name"] | "";
+        overrideName.trim();
+        while (overrideName.indexOf("  ") >= 0) {
+            overrideName.replace("  ", " ");
+        }
+
+        if (overrideName.length() > 0) {
+            return overrideName;
+        }
+
+        return "";
+    }
+
+    return "";
+}
+
+String getSeededAdminNameByChatId(const String& chatId) {
+    String normalizedChatId = chatId;
+    normalizedChatId.trim();
+
+    if (normalizedChatId.length() == 0) {
+        return "Admin";
+    }
+
+    for (int i = 0; i < NUM_ADMINS; i++) {
+        String listedAdminId = ADMIN_CHAT_IDS[i];
+        listedAdminId.trim();
+        if (listedAdminId.length() == 0) {
+            continue;
+        }
+
+        if (listedAdminId == normalizedChatId) {
+            const String overrideName = getSeededAdminOverrideNameByChatId(normalizedChatId);
+            if (overrideName.length() > 0) {
+                return overrideName;
+            }
+
+            if (i == 0) {
+                return "Alsamhel Admin";
+            }
+
+            return "Admin " + String(i + 1);
+        }
+    }
+
+    return "Admin";
+}
+
+bool resolveEnrolledUserIdentityByChatId(const String& chatId, String* matchedName, String* matchedUid) {
+    if (matchedName) {
+        *matchedName = "";
+    }
+    if (matchedUid) {
+        *matchedUid = "";
+    }
+
+    String normalizedChatId = chatId;
+    normalizedChatId.trim();
+    if (normalizedChatId.length() == 0) {
+        return false;
+    }
+
+    const int userCount = authHandler.getUserCount();
+    for (int i = 0; i < userCount; i++) {
+        const String uid = authHandler.getUserUIDAt(i);
+        if (uid.length() == 0) {
+            continue;
+        }
+
+        String listedChatId = authHandler.getUserTelegramChatId(uid);
+        listedChatId.trim();
+        if (listedChatId != normalizedChatId) {
+            continue;
+        }
+
+        const String fallbackName = "User " + formatChatIdForLogs(normalizedChatId);
+        const String resolvedName = normalizeDisplayNameForLogs(authHandler.getUserName(uid), fallbackName);
+
+        if (matchedName) {
+            *matchedName = resolvedName;
+        }
+        if (matchedUid) {
+            *matchedUid = uid;
+        }
+        return true;
+    }
+
+    return false;
+}
+
+String getTelegramActorLabel(const String& chatId, TelegramRole role) {
+    String normalizedChatId = chatId;
+    normalizedChatId.trim();
+
+    String enrolledName = "";
+    const bool enrolled = resolveEnrolledUserIdentityByChatId(normalizedChatId, &enrolledName, nullptr);
+
+    if (role == ROLE_ADMIN) {
+        String adminName = enrolled
+            ? enrolledName
+            : normalizeDisplayNameForLogs(getSeededAdminNameByChatId(normalizedChatId), "Admin");
+        return adminName + " (Telegram Admin)";
+    }
+
+    if (role == ROLE_USER) {
+        if (enrolled) {
+            return enrolledName + " (Telegram User)";
+        }
+
+        return "Unregistered Chat " + formatChatIdForLogs(normalizedChatId) + " (Telegram)";
+    }
+
+    if (enrolled) {
+        return enrolledName + " (Telegram)";
+    }
+
+    return "Unregistered Chat " + formatChatIdForLogs(normalizedChatId) + " (Telegram)";
+}
+
 TelegramRole resolveTelegramRole(const String& chatId) {
     String normalizedChatId = chatId;
     normalizedChatId.trim();
@@ -1433,6 +1800,10 @@ bool isAdmin(String incoming_chat_id) {
 
 bool notifyAdmins(const String& message) {
     bool deliveredToAtLeastOne = false;
+    const int trackedSlots = (NUM_ADMINS < TELEGRAM_ADMIN_METRICS_MAX)
+        ? NUM_ADMINS
+        : TELEGRAM_ADMIN_METRICS_MAX;
+    const unsigned long now = millis();
 
     for (int i = 0; i < NUM_ADMINS; i++) {
         String adminChatId = ADMIN_CHAT_IDS[i];
@@ -1441,7 +1812,19 @@ bool notifyAdmins(const String& message) {
             continue;
         }
 
-        if (sendTelegramText(adminChatId, message)) {
+        const bool sent = sendTelegramText(adminChatId, message);
+        if (i < trackedSlots) {
+            telegramAdminSendAttempts[i]++;
+            if (sent) {
+                telegramAdminSendSuccess[i]++;
+                telegramAdminLastSuccessMs[i] = now;
+            } else {
+                telegramAdminSendFailures[i]++;
+                telegramAdminLastFailureMs[i] = now;
+            }
+        }
+
+        if (sent) {
             deliveredToAtLeastOne = true;
         }
     }
@@ -1450,41 +1833,21 @@ bool notifyAdmins(const String& message) {
 }
 
 String getUserNameByTelegramChatId(const String& chatId) {
-    String normalizedChatId = chatId;
-    normalizedChatId.trim();
-    if (normalizedChatId.length() == 0) {
-        return "User";
+    String matchedName = "";
+    if (resolveEnrolledUserIdentityByChatId(chatId, &matchedName, nullptr)) {
+        return matchedName;
     }
 
-    const int userCount = authHandler.getUserCount();
-    for (int i = 0; i < userCount; i++) {
-        const String uid = authHandler.getUserUIDAt(i);
-        if (uid.length() == 0) {
-            continue;
-        }
-
-        String listedChatId = authHandler.getUserTelegramChatId(uid);
-        listedChatId.trim();
-        if (listedChatId == normalizedChatId) {
-            String userName = authHandler.getUserName(uid);
-            userName.trim();
-            if (userName.length() == 0 || userName == "Unknown") {
-                return "User";
-            }
-
-            return userName;
-        }
-    }
-
-    return "User";
+    return "Unregistered Chat " + formatChatIdForLogs(chatId);
 }
 
 void handleUnknownTelegramChat(const String& chatId) {
     const unsigned long cmdStartMs = millis();
+    const String actorLabel = getTelegramActorLabel(chatId, ROLE_UNKNOWN);
 
     unsigned long retryAfterMs = 0;
     if (shouldThrottleUnknownNotice(chatId, &retryAfterMs)) {
-        webServer.logActivity("Unregistered Telegram", "Unregistered chat throttled", "fail");
+        webServer.logActivity(actorLabel, "Unregistered chat throttled", "fail");
         trackTelegramCommand("unknown", "unregistered", "unregistered_throttled", millis() - cmdStartMs);
         return;
     }
@@ -1493,29 +1856,34 @@ void handleUnknownTelegramChat(const String& chatId) {
         "Please send this Chat ID to your SecureLock admin for approval:\n"
         "🆔 " + chatId;
     const bool sent = sendTelegramText(chatId, message);
-    webServer.logActivity("Unregistered Telegram", "Unregistered chat attempted access", sent ? "alarm" : "fail");
+    webServer.logActivity(actorLabel, "Unregistered chat attempted access", sent ? "alarm" : "fail");
     trackTelegramCommand("unknown", "unregistered", sent ? "unregistered_notified" : "send_fail", millis() - cmdStartMs);
 }
 
 void handleAdminCommand(const String& chatId, const String& text) {
     const unsigned long cmdStartMs = millis();
+    const String actorLabel = getTelegramActorLabel(chatId, ROLE_ADMIN);
 
     if (text == "/help") {
         const bool sent = sendTelegramText(
             chatId,
-            "SecureLock Admin Commands:\n"
-            "🟢 /start - verify admin session\n"
-            "📊 /status - live lock/system status\n"
-            "👤 /my_info - view your admin account summary\n"
-            "🔓 /admin_open - emergency unlock (policy protected)\n"
-            "⏱️ /guest_code - generate a 30-second guest PIN\n"
-            "🔔 /buzzer_test - run buzzer diagnostic\n"
-            "⌨️ /keypad_echo - read last keypad key event\n"
-            "🛡️ /lockdown - disable local auth inputs\n"
-            "✅ /unlockdown - re-enable local auth inputs\n"
-            "♻️ /reboot - restart device"
+            "🛡️ SecureLock Admin Command Guide\n"
+            "Identity: " + actorLabel + "\n\n"
+            "Core control:\n"
+            "• /status - live lock, alarm, WiFi, telemetry\n"
+            "• /admin_open - emergency unlock (cooldown + guest-safe checks)\n"
+            "• /guest_code - generate/reuse 30-second guest PIN\n"
+            "• /lockdown - disable local RFID/keypad auth\n"
+            "• /unlockdown - re-enable local auth\n"
+            "• /reboot - controlled device restart\n\n"
+            "Diagnostics:\n"
+            "• /my_info - admin identity and device link\n"
+            "• /buzzer_test - buzzer diagnostic tone\n"
+            "• /keypad_echo - last keypad key + age\n"
+            "• /start - session heartbeat\n"
+            "• /help - this command guide"
         );
-        webServer.logActivity("Admin (Telegram)", "Help Command", sent ? "success" : "fail");
+        webServer.logActivity(actorLabel, "Help Command", sent ? "success" : "fail");
         trackTelegramCommand("admin", text, sent ? "ok" : "send_fail", millis() - cmdStartMs);
         return;
     }
@@ -1525,7 +1893,7 @@ void handleAdminCommand(const String& chatId, const String& text) {
             chatId,
             "🛡️ Admin session verified. SecureLock is online and ready.\nUse /help to view all commands."
         );
-        webServer.logActivity("Admin (Telegram)", "Start Command", sent ? "success" : "fail");
+        webServer.logActivity(actorLabel, "Start Command", sent ? "success" : "fail");
         trackTelegramCommand("admin", text, sent ? "ok" : "send_fail", millis() - cmdStartMs);
         return;
     }
@@ -1536,6 +1904,7 @@ void handleAdminCommand(const String& chatId, const String& text) {
         const String ipAddress = online ? WiFi.localIP().toString() : String("Unavailable");
         const String infoMessage =
             "👤 Admin Account Summary\n"
+            "• Display Name: " + actorLabel + "\n"
             "• Role: Administrator\n"
             "• Chat ID: " + chatId + "\n"
             "• Admin Verified: " + String(adminVerified ? "Yes" : "No") + "\n"
@@ -1544,14 +1913,14 @@ void handleAdminCommand(const String& chatId, const String& text) {
             "• Device IP: " + ipAddress + "\n"
             "Use /help to view all admin commands.";
         const bool sent = sendTelegramText(chatId, infoMessage);
-        webServer.logActivity("Admin (Telegram)", "My Info Command", sent ? "success" : "fail");
+        webServer.logActivity(actorLabel, "My Info Command", sent ? "success" : "fail");
         trackTelegramCommand("admin", text, sent ? "ok" : "send_fail", millis() - cmdStartMs);
         return;
     }
 
     if (text == "/open") {
         const bool sent = sendTelegramText(chatId, "ℹ️ This command is deprecated. Please use /admin_open.");
-        webServer.logActivity("Admin (Telegram)", "Deprecated Command /open", "fail");
+        webServer.logActivity(actorLabel, "Deprecated Command /open", "fail");
         trackTelegramCommand("admin", text, sent ? "deprecated" : "send_fail", millis() - cmdStartMs);
         return;
     }
@@ -1564,7 +1933,7 @@ void handleAdminCommand(const String& chatId, const String& text) {
                 chatId,
                 "⏳ Emergency unlock is temporarily unavailable while guest access is active. Retry in " + String(retrySec) + "s."
             );
-            webServer.logActivity("Admin (Telegram)", "Emergency Override Blocked (Guest Code Active)", "fail");
+            webServer.logActivity(actorLabel, "Emergency Override Blocked (Guest Code Active)", "fail");
             trackTelegramCommand("admin", text, sent ? "blocked_guest_code" : "send_fail", millis() - cmdStartMs);
             return;
         }
@@ -1576,18 +1945,18 @@ void handleAdminCommand(const String& chatId, const String& text) {
                 chatId,
                 "⏳ Emergency unlock is cooling down. Retry in " + String(retrySec) + "s."
             );
-            webServer.logActivity("Admin (Telegram)", "Emergency Override Cooldown", "fail");
+            webServer.logActivity(actorLabel, "Emergency Override Cooldown", "fail");
             trackTelegramCommand("admin", text, sent ? "cooldown" : "send_fail", millis() - cmdStartMs);
             return;
         }
 
         lockManager.unlock();
         authHandler.startRFIDCooldown();
-        securityManager.beep(1);
+        securityManager.beep(2);
         pendingDoorSecuredLog = true;
         webServer.markEmergencyOverride();
-        webServer.logActivity("Admin (Telegram)", "Emergency Override", "success");
-        queueAccessEventForAdmins("Admin (Telegram)", "Emergency Override");
+        webServer.logActivity(actorLabel, "Emergency Override", "success");
+        queueAccessEventForAdmins(actorLabel, "Emergency Override");
         clearPending2FA("Admin override", false);
         const bool sent = sendTelegramText(chatId, "✅ Emergency unlock executed. Auto-lock timer is active.");
         trackTelegramCommand("admin", text, sent ? "ok" : "send_fail", millis() - cmdStartMs);
@@ -1601,7 +1970,7 @@ void handleAdminCommand(const String& chatId, const String& text) {
                 chatId,
                 "ℹ️ Guest PIN is already active: " + guestCode + " (expires in " + String(remainingSec) + "s)."
             );
-            webServer.logActivity("Admin (Telegram)", "Guest PIN Reused", sent ? "success" : "fail");
+            webServer.logActivity(actorLabel, "Guest PIN Reused", sent ? "success" : "fail");
             trackTelegramCommand("admin", text, sent ? "existing_active" : "send_fail", millis() - cmdStartMs);
             return;
         }
@@ -1619,7 +1988,7 @@ void handleAdminCommand(const String& chatId, const String& text) {
 
         securityManager.beep(1);
         const bool sent = sendTelegramText(chatId, "🔐 Guest PIN: " + guestCode + " (valid for 30 seconds). Share only with authorized visitors.");
-        webServer.logActivity("Admin (Telegram)", "Guest PIN Generated", sent ? "success" : "fail");
+        webServer.logActivity(actorLabel, "Guest PIN Generated", sent ? "success" : "fail");
         trackTelegramCommand("admin", text, sent ? "ok" : "send_fail", millis() - cmdStartMs);
         return;
     }
@@ -1637,7 +2006,7 @@ void handleAdminCommand(const String& chatId, const String& text) {
             "• Buzzer: " + buzzerState + "\n"
             "• WiFi RSSI: " + wifiState;
         const bool sent = sendTelegramText(chatId, statusMsg);
-        webServer.logActivity("Admin (Telegram)", "Status Check", sent ? "success" : "fail");
+        webServer.logActivity(actorLabel, "Status Check", sent ? "success" : "fail");
         trackTelegramCommand("admin", text, sent ? "ok" : "send_fail", millis() - cmdStartMs);
         return;
     }
@@ -1645,7 +2014,7 @@ void handleAdminCommand(const String& chatId, const String& text) {
     if (text == "/buzzer_test") {
         securityManager.beep(2);
         const bool sent = sendTelegramText(chatId, "🔔 Buzzer diagnostic executed (short double tone).");
-        webServer.logActivity("Admin (Telegram)", "Buzzer Test", sent ? "success" : "fail");
+        webServer.logActivity(actorLabel, "Buzzer Test", sent ? "success" : "fail");
         trackTelegramCommand("admin", text, sent ? "ok" : "send_fail", millis() - cmdStartMs);
         return;
     }
@@ -1655,14 +2024,14 @@ void handleAdminCommand(const String& chatId, const String& text) {
         const String keyLabel = getLastKeypadKeyLabel();
         if (keyLabel.length() == 0 || keyMs == 0) {
             const bool sent = sendTelegramText(chatId, "⌨️ No keypad key recorded yet.");
-            webServer.logActivity("Admin (Telegram)", "Keypad Echo", sent ? "success" : "fail");
+            webServer.logActivity(actorLabel, "Keypad Echo", sent ? "success" : "fail");
             trackTelegramCommand("admin", text, sent ? "ok" : "send_fail", millis() - cmdStartMs);
             return;
         }
 
         const unsigned long ageMs = millis() - keyMs;
         const bool sent = sendTelegramText(chatId, "⌨️ Last keypad key: " + keyLabel + " (" + String(ageMs) + " ms ago)");
-        webServer.logActivity("Admin (Telegram)", "Keypad Echo", sent ? "success" : "fail");
+        webServer.logActivity(actorLabel, "Keypad Echo", sent ? "success" : "fail");
         trackTelegramCommand("admin", text, sent ? "ok" : "send_fail", millis() - cmdStartMs);
         return;
     }
@@ -1671,7 +2040,7 @@ void handleAdminCommand(const String& chatId, const String& text) {
         isLockdown = true;
         clearPending2FA("Lockdown activated by admin", false);
         const bool sent = sendTelegramText(chatId, "🛡️ Lockdown enabled. Local RFID/keypad authentication is now disabled.");
-        webServer.logActivity("Admin (Telegram)", "Lockdown Enabled", sent ? "success" : "fail");
+        webServer.logActivity(actorLabel, "Lockdown Enabled", sent ? "success" : "fail");
         trackTelegramCommand("admin", text, sent ? "ok" : "send_fail", millis() - cmdStartMs);
         return;
     }
@@ -1679,14 +2048,14 @@ void handleAdminCommand(const String& chatId, const String& text) {
     if (text == "/unlockdown") {
         isLockdown = false;
         const bool sent = sendTelegramText(chatId, "✅ Lockdown disabled. Local RFID/keypad authentication is enabled.");
-        webServer.logActivity("Admin (Telegram)", "Lockdown Disabled", sent ? "success" : "fail");
+        webServer.logActivity(actorLabel, "Lockdown Disabled", sent ? "success" : "fail");
         trackTelegramCommand("admin", text, sent ? "ok" : "send_fail", millis() - cmdStartMs);
         return;
     }
 
     if (text == "/reboot") {
         const bool sent = sendTelegramText(chatId, "♻️ System rebooting now...");
-        webServer.logActivity("Admin (Telegram)", "Reboot Command", sent ? "success" : "fail");
+        webServer.logActivity(actorLabel, "Reboot Command", sent ? "success" : "fail");
         trackTelegramCommand("admin", text, sent ? "ok" : "send_fail", millis() - cmdStartMs);
         delay(150);
         ESP.restart();
@@ -1694,32 +2063,35 @@ void handleAdminCommand(const String& chatId, const String& text) {
     }
 
     const bool sent = sendTelegramText(chatId, "❓ Unknown admin command. Send /help to view the available command list.");
-    webServer.logActivity("Admin (Telegram)", "Unknown Command", "fail");
+    webServer.logActivity(actorLabel, "Unknown Command", "fail");
     trackTelegramCommand("admin", text, sent ? "unknown" : "send_fail", millis() - cmdStartMs);
 }
 
 void handleUserCommand(const String& chatId, const String& text) {
     const unsigned long cmdStartMs = millis();
+    const String actorLabel = getTelegramActorLabel(chatId, ROLE_USER);
     const String userName = getUserNameByTelegramChatId(chatId);
 
     if (text == "/help") {
         const bool sent = sendTelegramText(
             chatId,
-            "SecureLock User Guide:\n"
-            "Standard entry:\n"
+            "📘 SecureLock User Command Guide\n"
+            "Identity: " + userName + "\n\n"
+            "Standard access flow:\n"
             "1) Tap your registered RFID card\n"
-            "2) Wait for your 4-digit OTP in this chat\n"
-            "3) Enter the OTP on keypad\n\n"
+            "2) Wait for 4-digit OTP in this chat\n"
+            "3) Enter OTP on keypad\n\n"
             "Offline fallback:\n"
             "1) Tap RFID card\n"
             "2) Press '#' or 'B' for Backup PIN mode\n"
             "3) Enter your 4-digit Backup PIN\n\n"
-            "ℹ️ Available commands:\n"
-            "🟢 /start\n"
-            "👤 /my_info\n"
-            "❓ /help"
+            "Allowed commands:\n"
+            "• /start - connection check\n"
+            "• /my_info - your linked account summary\n"
+            "• /help - this user command guide\n\n"
+            "Admin-only commands are restricted and monitored."
         );
-        webServer.logActivity("User (Telegram)", "Help Command", sent ? "success" : "fail");
+        webServer.logActivity(actorLabel, "Help Command", sent ? "success" : "fail");
         trackTelegramCommand("user", text, sent ? "ok" : "send_fail", millis() - cmdStartMs);
         return;
     }
@@ -1729,7 +2101,7 @@ void handleUserCommand(const String& chatId, const String& text) {
             chatId,
             "👋 Welcome, " + userName + ". Your Telegram account is linked for OTP delivery after RFID scan.\nUse /help to view available commands."
         );
-        webServer.logActivity("User (Telegram)", "Start Command", sent ? "success" : "fail");
+        webServer.logActivity(actorLabel, "Start Command", sent ? "success" : "fail");
         trackTelegramCommand("user", text, sent ? "ok" : "send_fail", millis() - cmdStartMs);
         return;
     }
@@ -1742,7 +2114,7 @@ void handleUserCommand(const String& chatId, const String& text) {
             "• RFID: Registered\n"
             "• Backup PIN: Registered"
         );
-        webServer.logActivity("User (Telegram)", "My Info Command", sent ? "success" : "fail");
+        webServer.logActivity(actorLabel, "My Info Command", sent ? "success" : "fail");
         trackTelegramCommand("user", text, sent ? "ok" : "send_fail", millis() - cmdStartMs);
         return;
     }
@@ -1752,25 +2124,26 @@ void handleUserCommand(const String& chatId, const String& text) {
 
         const bool sent = sendTelegramText(
             chatId,
-            "🚫 You are not authorized to use this command. This attempt has been logged."
+            "🚫 You are not authorized to use this command.\n"
+            "Allowed commands for your role: /start, /my_info, /help.\n"
+            "This attempt has been logged."
         );
-        bool adminAlertSent = false;
         if (!throttleAdminAlert) {
-            adminAlertSent = notifyAdmins(
-                "🚨 Security notice: user " + userName + " attempted restricted admin command " + text + "."
+            notifyAdmins(
+                "🚨 Security notice: " + actorLabel + " attempted restricted admin command " + text + "."
             );
         }
 
         const String logMethod = throttleAdminAlert
             ? ("Unauthorized " + text + " (admin alert throttled)")
             : ("Unauthorized " + text);
-        webServer.logActivity("User (Telegram)", logMethod, adminAlertSent ? "alarm" : "fail");
+        webServer.logActivity(actorLabel, logMethod, "alarm");
         trackTelegramCommand("user", text, sent ? "unauthorized" : "send_fail", millis() - cmdStartMs);
         return;
     }
 
     const bool sent = sendTelegramText(chatId, "ℹ️ Use /help to see available commands.");
-    webServer.logActivity("User (Telegram)", "Unsupported message", sent ? "success" : "fail");
+    webServer.logActivity(actorLabel, "Unsupported message", sent ? "success" : "fail");
     trackTelegramCommand("user", text, sent ? "unsupported" : "send_fail", millis() - cmdStartMs);
 }
 
@@ -1792,18 +2165,34 @@ bool sendTelegramText(const String& chatId, const String& message) {
         return false;
     }
 
+    if (bot->sendMessage(normalizedChatId, safeMessage, "")) {
+        return true;
+    }
+
+    if (WiFi.status() != WL_CONNECTED) {
+        return false;
+    }
+
+    // Lightweight retry for transient TLS/API hiccups.
+    yield();
     return bot->sendMessage(normalizedChatId, safeMessage, "");
 }
 
 void sendDuressAlert(String userName) {
-    if (!notifyAdmins("🆘 DURESS ALERT: code used by user [" + userName + "]")) {
-        webServer.logActivity("System", "Duress Alert Send Failed", "fail");
+    if (!enqueueAdminNotification("🆘 DURESS ALERT: code used by user [" + userName + "]")) {
+        webServer.logActivity("System", "Duress Alert Queue Failed", "fail");
     }
 }
 
 void sendTheftAlert() {
-    if (!notifyAdmins("🚨 SECURITY ALERT: theft attempt detected")) {
-        webServer.logActivity("System", "Theft Alert Send Failed", "fail");
+    if (!enqueueAdminNotification("🚨 SECURITY ALERT: theft attempt detected")) {
+        webServer.logActivity("System", "Theft Alert Queue Failed", "fail");
+    }
+}
+
+void sendTamperAlert() {
+    if (!enqueueAdminNotification("🚨 TAMPER ALERT: Door opened while lock was engaged")) {
+        webServer.logActivity("System", "Tamper Alert Queue Failed", "fail");
     }
 }
 
@@ -1828,15 +2217,56 @@ void sendRfidScanAlert(String uid, bool known, const String& userName) {
             label = "Known User";
         }
 
-        notifyAdmins(
+        enqueueAdminNotification(
             "✅ Registered RFID detected: " + label + " [" + cardUid + "]\n2FA flow started."
         );
         return;
     }
 
-    notifyAdmins(
+    enqueueAdminNotification(
         "🚨 Unregistered RFID detected: [" + cardUid + "]\nAccess denied."
     );
+}
+
+bool enqueueTelegramUserNotification(const String& chatId, const String& message) {
+    String normalizedChatId = chatId;
+    normalizedChatId.trim();
+
+    String normalizedMessage = message;
+    normalizedMessage.trim();
+    if (normalizedMessage.length() > 900) {
+        normalizedMessage = normalizedMessage.substring(0, 897) + "...";
+    }
+
+    if (normalizedChatId.length() == 0 || normalizedMessage.length() == 0) {
+        return false;
+    }
+
+    bool queued = false;
+    portENTER_CRITICAL(&telegramDirectMessageMux);
+    if (telegramDirectMessageCount < TELEGRAM_DIRECT_MESSAGE_QUEUE_MAX) {
+        const int enqueueIndex = telegramDirectMessageTail;
+        telegramDirectMessageChatQueue[enqueueIndex] = normalizedChatId;
+        telegramDirectMessageBodyQueue[enqueueIndex] = normalizedMessage;
+        telegramDirectMessageQueuedAtMs[enqueueIndex] = millis();
+        telegramDirectMessageRetries[enqueueIndex] = 0;
+        telegramDirectMessageTail = (telegramDirectMessageTail + 1) % TELEGRAM_DIRECT_MESSAGE_QUEUE_MAX;
+        telegramDirectMessageCount++;
+        queued = true;
+    } else {
+        telegramDirectNotifyDroppedFullTotal++;
+    }
+    portEXIT_CRITICAL(&telegramDirectMessageMux);
+
+    if (!queued) {
+        const unsigned long now = millis();
+        if ((now - lastTelegramDirectQueueFullLogMs) >= 10000UL) {
+            lastTelegramDirectQueueFullLogMs = now;
+            webServer.logActivity("System", "Telegram User Notification Queue Full", "fail");
+        }
+    }
+
+    return queued;
 }
 
 bool enqueueAdminNotification(const String& message) {
@@ -1850,18 +2280,109 @@ bool enqueueAdminNotification(const String& message) {
     bool queued = false;
     portENTER_CRITICAL(&telegramWebActivityMux);
     if (telegramWebActivityCount < TELEGRAM_WEB_ACTIVITY_QUEUE_MAX) {
+        const int enqueueIndex = telegramWebActivityTail;
         telegramWebActivityQueue[telegramWebActivityTail] = payload;
+        telegramWebActivityQueuedAtMs[enqueueIndex] = millis();
         telegramWebActivityTail = (telegramWebActivityTail + 1) % TELEGRAM_WEB_ACTIVITY_QUEUE_MAX;
         telegramWebActivityCount++;
+        telegramNotifyQueuedTotal++;
         queued = true;
+    } else {
+        telegramNotifyDroppedFullTotal++;
     }
     portEXIT_CRITICAL(&telegramWebActivityMux);
 
     if (!queued) {
-        webServer.logActivity("System", "Telegram Notification Queue Full", "fail");
+        const unsigned long now = millis();
+        if ((now - lastTelegramQueueFullLogMs) >= 10000UL) {
+            lastTelegramQueueFullLogMs = now;
+            webServer.logActivity("System", "Telegram Notification Queue Full", "fail");
+        }
     }
 
     return queued;
+}
+
+void processQueuedUserNotificationTelegram() {
+    if (!bot || !webServer.isConnected() || WiFi.status() != WL_CONNECTED) {
+        return;
+    }
+
+    const unsigned long now = millis();
+    if (telegramLastDirectMessageForwardMs > 0
+        && (now - telegramLastDirectMessageForwardMs) < TELEGRAM_DIRECT_MESSAGE_MIN_INTERVAL_MS) {
+        return;
+    }
+
+    String chatId = "";
+    String message = "";
+    uint8_t retries = 0;
+
+    portENTER_CRITICAL(&telegramDirectMessageMux);
+    if (telegramDirectMessageCount > 0) {
+        chatId = telegramDirectMessageChatQueue[telegramDirectMessageHead];
+        message = telegramDirectMessageBodyQueue[telegramDirectMessageHead];
+        retries = telegramDirectMessageRetries[telegramDirectMessageHead];
+    }
+    portEXIT_CRITICAL(&telegramDirectMessageMux);
+
+    if (chatId.length() == 0 || message.length() == 0) {
+        portENTER_CRITICAL(&telegramDirectMessageMux);
+        if (telegramDirectMessageCount > 0
+            && (telegramDirectMessageChatQueue[telegramDirectMessageHead].length() == 0
+                || telegramDirectMessageBodyQueue[telegramDirectMessageHead].length() == 0)) {
+            telegramDirectMessageChatQueue[telegramDirectMessageHead] = "";
+            telegramDirectMessageBodyQueue[telegramDirectMessageHead] = "";
+            telegramDirectMessageQueuedAtMs[telegramDirectMessageHead] = 0;
+            telegramDirectMessageRetries[telegramDirectMessageHead] = 0;
+            telegramDirectMessageHead = (telegramDirectMessageHead + 1) % TELEGRAM_DIRECT_MESSAGE_QUEUE_MAX;
+            telegramDirectMessageCount--;
+        }
+        portEXIT_CRITICAL(&telegramDirectMessageMux);
+        return;
+    }
+
+    if (sendTelegramText(chatId, message)) {
+        portENTER_CRITICAL(&telegramDirectMessageMux);
+        if (telegramDirectMessageCount > 0) {
+            telegramDirectMessageChatQueue[telegramDirectMessageHead] = "";
+            telegramDirectMessageBodyQueue[telegramDirectMessageHead] = "";
+            telegramDirectMessageQueuedAtMs[telegramDirectMessageHead] = 0;
+            telegramDirectMessageRetries[telegramDirectMessageHead] = 0;
+            telegramDirectMessageHead = (telegramDirectMessageHead + 1) % TELEGRAM_DIRECT_MESSAGE_QUEUE_MAX;
+            telegramDirectMessageCount--;
+        }
+        portEXIT_CRITICAL(&telegramDirectMessageMux);
+
+        telegramLastDirectMessageForwardMs = now;
+        return;
+    }
+
+    const uint8_t nextRetry = (retries < 255) ? static_cast<uint8_t>(retries + 1) : retries;
+    bool dropped = false;
+
+    portENTER_CRITICAL(&telegramDirectMessageMux);
+    if (telegramDirectMessageCount > 0) {
+        telegramDirectMessageRetries[telegramDirectMessageHead] = nextRetry;
+
+        if (nextRetry >= 5) {
+            telegramDirectMessageChatQueue[telegramDirectMessageHead] = "";
+            telegramDirectMessageBodyQueue[telegramDirectMessageHead] = "";
+            telegramDirectMessageQueuedAtMs[telegramDirectMessageHead] = 0;
+            telegramDirectMessageRetries[telegramDirectMessageHead] = 0;
+            telegramDirectMessageHead = (telegramDirectMessageHead + 1) % TELEGRAM_DIRECT_MESSAGE_QUEUE_MAX;
+            telegramDirectMessageCount--;
+            telegramDirectNotifyDroppedRetryTotal++;
+            dropped = true;
+        }
+    }
+    portEXIT_CRITICAL(&telegramDirectMessageMux);
+
+    telegramLastDirectMessageForwardMs = now;
+
+    if (dropped) {
+        webServer.logActivity("System", "Telegram User Notification Dropped After Retries", "fail");
+    }
 }
 
 void queueAccessEventForAdmins(const String& actor, const String& method) {
@@ -1934,22 +2455,76 @@ void processQueuedWebAdminActivityTelegram() {
         return;
     }
 
+    static uint8_t consecutiveSendFailures = 0;
+    static String failedFingerprint = "";
+
     String message = "";
     portENTER_CRITICAL(&telegramWebActivityMux);
     if (telegramWebActivityCount > 0) {
         message = telegramWebActivityQueue[telegramWebActivityHead];
-        telegramWebActivityQueue[telegramWebActivityHead] = "";
-        telegramWebActivityHead = (telegramWebActivityHead + 1) % TELEGRAM_WEB_ACTIVITY_QUEUE_MAX;
-        telegramWebActivityCount--;
     }
     portEXIT_CRITICAL(&telegramWebActivityMux);
 
     if (message.length() == 0) {
+        // Heal queue head if an empty payload was ever inserted by legacy code.
+        portENTER_CRITICAL(&telegramWebActivityMux);
+        if (telegramWebActivityCount > 0
+            && telegramWebActivityQueue[telegramWebActivityHead].length() == 0) {
+            telegramWebActivityHead = (telegramWebActivityHead + 1) % TELEGRAM_WEB_ACTIVITY_QUEUE_MAX;
+            telegramWebActivityCount--;
+        }
+        portEXIT_CRITICAL(&telegramWebActivityMux);
         return;
     }
 
     if (notifyAdmins(message)) {
+        portENTER_CRITICAL(&telegramWebActivityMux);
+        if (telegramWebActivityCount > 0) {
+            telegramWebActivityQueue[telegramWebActivityHead] = "";
+            telegramWebActivityQueuedAtMs[telegramWebActivityHead] = 0;
+            telegramWebActivityHead = (telegramWebActivityHead + 1) % TELEGRAM_WEB_ACTIVITY_QUEUE_MAX;
+            telegramWebActivityCount--;
+        }
+        portEXIT_CRITICAL(&telegramWebActivityMux);
+
         telegramLastWebActivityForwardMs = now;
+        telegramNotifyDeliveredTotal++;
+        consecutiveSendFailures = 0;
+        failedFingerprint = "";
+        return;
+    }
+
+    telegramNotifyDeliveryFailures++;
+
+    String fingerprint = message;
+    if (fingerprint.length() > 48) {
+        fingerprint = fingerprint.substring(0, 48);
+    }
+
+    if (fingerprint == failedFingerprint) {
+        if (consecutiveSendFailures < 255) {
+            consecutiveSendFailures++;
+        }
+    } else {
+        failedFingerprint = fingerprint;
+        consecutiveSendFailures = 1;
+    }
+
+    // Prevent a permanently undeliverable message from blocking newer alerts forever.
+    if (consecutiveSendFailures >= 8) {
+        portENTER_CRITICAL(&telegramWebActivityMux);
+        if (telegramWebActivityCount > 0) {
+            telegramWebActivityQueue[telegramWebActivityHead] = "";
+            telegramWebActivityQueuedAtMs[telegramWebActivityHead] = 0;
+            telegramWebActivityHead = (telegramWebActivityHead + 1) % TELEGRAM_WEB_ACTIVITY_QUEUE_MAX;
+            telegramWebActivityCount--;
+        }
+        portEXIT_CRITICAL(&telegramWebActivityMux);
+
+        telegramNotifyDroppedRetryTotal++;
+        webServer.logActivity("System", "Telegram Notification Dropped After Retries", "fail");
+        consecutiveSendFailures = 0;
+        failedFingerprint = "";
     }
 }
 
@@ -2087,4 +2662,108 @@ String getTelegramLastCommandRole() {
 
 String getTelegramLastCommandResult() {
     return telegramLastCommandResult;
+}
+
+int getTelegramNotificationQueueDepth() {
+    int depth = 0;
+    portENTER_CRITICAL(&telegramWebActivityMux);
+    depth = telegramWebActivityCount;
+    portEXIT_CRITICAL(&telegramWebActivityMux);
+    return depth;
+}
+
+int getTelegramNotificationQueueCapacity() {
+    return TELEGRAM_WEB_ACTIVITY_QUEUE_MAX;
+}
+
+unsigned long getTelegramNotificationQueueOldestAgeMs() {
+    unsigned long enqueuedAtMs = 0;
+    portENTER_CRITICAL(&telegramWebActivityMux);
+    if (telegramWebActivityCount > 0) {
+        enqueuedAtMs = telegramWebActivityQueuedAtMs[telegramWebActivityHead];
+    }
+    portEXIT_CRITICAL(&telegramWebActivityMux);
+
+    if (enqueuedAtMs == 0) {
+        return 0;
+    }
+
+    return millis() - enqueuedAtMs;
+}
+
+unsigned long getTelegramNotificationQueuedTotal() {
+    return telegramNotifyQueuedTotal;
+}
+
+unsigned long getTelegramNotificationDeliveredTotal() {
+    return telegramNotifyDeliveredTotal;
+}
+
+unsigned long getTelegramNotificationDeliveryFailures() {
+    return telegramNotifyDeliveryFailures;
+}
+
+unsigned long getTelegramNotificationDroppedFullTotal() {
+    return telegramNotifyDroppedFullTotal;
+}
+
+unsigned long getTelegramNotificationDroppedRetryTotal() {
+    return telegramNotifyDroppedRetryTotal;
+}
+
+int getTelegramAdminMetricsSlots() {
+    return (NUM_ADMINS < TELEGRAM_ADMIN_METRICS_MAX)
+        ? NUM_ADMINS
+        : TELEGRAM_ADMIN_METRICS_MAX;
+}
+
+String getTelegramAdminChatIdAt(int index) {
+    const int slots = getTelegramAdminMetricsSlots();
+    if (index < 0 || index >= slots) {
+        return "";
+    }
+
+    String chatId = ADMIN_CHAT_IDS[index];
+    chatId.trim();
+    return chatId;
+}
+
+unsigned long getTelegramAdminSendAttemptsAt(int index) {
+    const int slots = getTelegramAdminMetricsSlots();
+    if (index < 0 || index >= slots) {
+        return 0;
+    }
+    return telegramAdminSendAttempts[index];
+}
+
+unsigned long getTelegramAdminSendSuccessAt(int index) {
+    const int slots = getTelegramAdminMetricsSlots();
+    if (index < 0 || index >= slots) {
+        return 0;
+    }
+    return telegramAdminSendSuccess[index];
+}
+
+unsigned long getTelegramAdminSendFailuresAt(int index) {
+    const int slots = getTelegramAdminMetricsSlots();
+    if (index < 0 || index >= slots) {
+        return 0;
+    }
+    return telegramAdminSendFailures[index];
+}
+
+unsigned long getTelegramAdminLastSuccessMsAt(int index) {
+    const int slots = getTelegramAdminMetricsSlots();
+    if (index < 0 || index >= slots) {
+        return 0;
+    }
+    return telegramAdminLastSuccessMs[index];
+}
+
+unsigned long getTelegramAdminLastFailureMsAt(int index) {
+    const int slots = getTelegramAdminMetricsSlots();
+    if (index < 0 || index >= slots) {
+        return 0;
+    }
+    return telegramAdminLastFailureMs[index];
 }

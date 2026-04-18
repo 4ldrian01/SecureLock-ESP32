@@ -8,7 +8,11 @@ param(
     [switch]$NoMonitor,
     [switch]$SkipClean,
     [string]$ExpectedIp = "",
-    [int]$EndpointTimeoutSec = 4
+    [int]$EndpointTimeoutSec = 4,
+    [int]$UploadMaxAttempts = 3,
+    [int]$RetryDelaySec = 2,
+    [switch]$InteractiveRetry,
+    [switch]$SkipEndpointChecks
 )
 
 $ErrorActionPreference = "Stop"
@@ -19,7 +23,10 @@ function Invoke-Step {
         [Parameter(Mandatory = $true)][string]$Title,
         [Parameter(Mandatory = $true)][scriptblock]$Action,
         [int]$MaxAttempts = 1,
-        [string]$RetryHint = ""
+        [string]$RetryHint = "",
+        [int]$RetryDelaySec = 2,
+        [switch]$InteractiveRetry,
+        [scriptblock]$BeforeAttempt = $null
     )
 
     Write-Host "`n============================================================" -ForegroundColor DarkGray
@@ -28,6 +35,10 @@ function Invoke-Step {
 
     $attempt = 1
     while ($attempt -le $MaxAttempts) {
+        if ($BeforeAttempt) {
+            & $BeforeAttempt
+        }
+
         $stepStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
         & $Action
         $stepStopwatch.Stop()
@@ -41,15 +52,20 @@ function Invoke-Step {
             Write-Host "[DEPLOY][WARN] Attempt $attempt/$MaxAttempts failed for '$Title' (exit code $LASTEXITCODE)." -ForegroundColor DarkYellow
             if ($RetryHint) {
                 Write-Host "[DEPLOY][HINT] $RetryHint" -ForegroundColor Yellow
+            }
+
+            $safeDelaySec = [Math]::Max(1, $RetryDelaySec)
+            if ($InteractiveRetry) {
                 try {
-                    $null = Read-Host "Press Enter to retry"
+                    $null = Read-Host "Press Enter to retry attempt $($attempt + 1)/$MaxAttempts"
                 }
                 catch {
-                    Start-Sleep -Seconds 2
+                    Start-Sleep -Seconds $safeDelaySec
                 }
             }
             else {
-                Start-Sleep -Seconds 2
+                Write-Host "[DEPLOY] Auto-retrying in ${safeDelaySec}s..." -ForegroundColor DarkGray
+                Start-Sleep -Seconds $safeDelaySec
             }
         }
 
@@ -64,13 +80,26 @@ function Invoke-Step {
 }
 
 function Stop-StalePlatformIOMonitors {
+    param(
+        [string]$Port = ""
+    )
+
     Write-Host "[DEPLOY] Releasing serial port locks (best effort)..." -ForegroundColor Yellow
 
     $killed = 0
     $candidates = Get-CimInstance Win32_Process | Where-Object {
         $_.CommandLine -and
-        $_.CommandLine -match 'device\s+monitor' -and
-        ($_.Name -match 'pio|python' -or $_.CommandLine -match 'platformio')
+        (
+            $_.CommandLine -match 'device\s+monitor' -or
+            $_.CommandLine -match 'esptool\.py' -or
+            $_.CommandLine -match '--target\s+upload' -or
+            $_.CommandLine -match '--target\s+uploadfs'
+        ) -and
+        ($_.Name -match 'pio|python|powershell' -or $_.CommandLine -match 'platformio') -and
+        (
+            -not $Port -or
+            $_.CommandLine -match [Regex]::Escape($Port)
+        )
     }
 
     foreach ($proc in $candidates) {
@@ -103,19 +132,31 @@ function Resolve-UploadPort {
 
     try {
         $serialPorts = Get-CimInstance Win32_SerialPort -ErrorAction Stop
+        $sortByComNumber = @{ Expression = {
+            $raw = $_.DeviceID -replace '[^0-9]', ''
+            if ([string]::IsNullOrWhiteSpace($raw)) { return 9999 }
+            return [int]$raw
+        } }
+
         $usbCandidates = @($serialPorts | Where-Object {
             $_.DeviceID -match '^COM\d+$' -and (
                 $_.Description -match 'CP210|CH340|CH910|FTDI|USB|UART Bridge|Silicon Labs|ESP32'
             )
-        } | Sort-Object DeviceID)
+        } | Sort-Object $sortByComNumber)
 
         if ($usbCandidates.Count -gt 0) {
             return $usbCandidates[0].DeviceID
         }
 
         $fallbackCandidates = @($serialPorts | Where-Object {
-            $_.DeviceID -match '^COM\d+$'
-        } | Sort-Object DeviceID)
+            $_.DeviceID -match '^COM\d+$' -and $_.DeviceID -notmatch '^COM(1|2)$'
+        } | Sort-Object $sortByComNumber)
+
+        if ($fallbackCandidates.Count -eq 0) {
+            $fallbackCandidates = @($serialPorts | Where-Object {
+                $_.DeviceID -match '^COM\d+$'
+            } | Sort-Object $sortByComNumber)
+        }
 
         if ($fallbackCandidates.Count -gt 0) {
             return $fallbackCandidates[0].DeviceID
@@ -128,9 +169,14 @@ function Resolve-UploadPort {
     if ($PioExecutable -and (Test-Path $PioExecutable)) {
         try {
             $deviceListRaw = (& $PioExecutable device list | Out-String)
-            $portMatches = [regex]::Matches($deviceListRaw, 'COM\d+')
-            if ($portMatches.Count -gt 0) {
-                return $portMatches[0].Value
+            $ports = [regex]::Matches($deviceListRaw, 'COM\d+') | ForEach-Object { $_.Value } | Select-Object -Unique
+            if ($ports.Count -gt 0) {
+                $preferred = @($ports | Where-Object { $_ -notmatch '^COM(1|2)$' })
+                if ($preferred.Count -gt 0) {
+                    return $preferred[0]
+                }
+
+                return $ports[0]
             }
         }
         catch {
@@ -226,6 +272,13 @@ function Test-PostDeployEndpoints {
         if ($probe.Reachable) {
             Write-Host "[DEPLOY] OK   $($probe.Url) -> HTTP $($probe.StatusCode) in $($probe.DurationMs) ms" -ForegroundColor Green
         }
+        elseif (
+            $probe.Url -match 'securelock\.local' -and
+            $probe.Error -match 'could not be resolved|No such host is known|remote name could not be resolved'
+        ) {
+            Write-Host "[DEPLOY][INFO] mDNS name is not resolvable from this host right now: $($probe.Url)" -ForegroundColor DarkYellow
+            Write-Host "[DEPLOY][INFO] This does not always mean firmware failure. If available, verify using ExpectedIp." -ForegroundColor DarkGray
+        }
         else {
             Write-Host "[DEPLOY][WARN] FAIL $($probe.Url) -> $($probe.Error)" -ForegroundColor DarkYellow
         }
@@ -245,6 +298,8 @@ if (-not $pioExe) {
 }
 
 $resolvedUploadPort = Resolve-UploadPort -RequestedPort $UploadPort -PioExecutable $pioExe
+$UploadMaxAttempts = [Math]::Max(1, $UploadMaxAttempts)
+$RetryDelaySec = [Math]::Max(1, $RetryDelaySec)
 
 Write-Host "[DEPLOY] Project: $projectRoot" -ForegroundColor Yellow
 Write-Host "[DEPLOY] PlatformIO: $pioExe" -ForegroundColor Yellow
@@ -269,43 +324,94 @@ if ($ExpectedIp) {
     Write-Host "[DEPLOY] Expected dashboard IP: http://$ExpectedIp/" -ForegroundColor Yellow
 }
 
+Write-Host "[DEPLOY] Upload max attempts: $UploadMaxAttempts" -ForegroundColor Yellow
+Write-Host "[DEPLOY] Retry mode: $(if ($InteractiveRetry) { 'interactive' } else { 'automatic' })" -ForegroundColor Yellow
+if (-not $InteractiveRetry) {
+    Write-Host "[DEPLOY] Auto-retry delay: ${RetryDelaySec}s" -ForegroundColor Yellow
+}
+if ($SkipEndpointChecks) {
+    Write-Host "[DEPLOY] Endpoint checks: skipped by -SkipEndpointChecks" -ForegroundColor Yellow
+}
+
 Push-Location $projectRoot
 try {
     $deployStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 
     Test-SecretsReadiness -SecretsPath (Join-Path $projectRoot "include\secrets.h")
 
-    Stop-StalePlatformIOMonitors
+    Stop-StalePlatformIOMonitors -Port $resolvedUploadPort
 
     if (-not $SkipClean) {
         Invoke-Step -Title "Clean" -Action {
             & $pioExe run --target clean
-        }
+        } -RetryDelaySec $RetryDelaySec -InteractiveRetry:$InteractiveRetry
     }
 
     Invoke-Step -Title "Build" -Action {
         & $pioExe run
-    }
+    } -RetryDelaySec $RetryDelaySec -InteractiveRetry:$InteractiveRetry
 
-    Invoke-Step -Title "Upload filesystem (LittleFS)" -MaxAttempts 3 -RetryHint "If flashing fails or says wrong boot mode, hold the BOOT button on ESP32 while retrying." -Action {
-        if ($resolvedUploadPort) {
-            & $pioExe run --target uploadfs --upload-port $resolvedUploadPort
+    $uploadFsStepParams = @{
+        Title = "Upload filesystem (LittleFS)"
+        MaxAttempts = $UploadMaxAttempts
+        RetryDelaySec = $RetryDelaySec
+        RetryHint = "If flashing fails or says wrong boot mode, hold the BOOT button while retrying; release after 'Connecting...'."
+        BeforeAttempt = {
+            $script:resolvedUploadPort = Resolve-UploadPort -RequestedPort $UploadPort -PioExecutable $pioExe
+            Stop-StalePlatformIOMonitors -Port $script:resolvedUploadPort
+            if ($script:resolvedUploadPort) {
+                Write-Host "[DEPLOY] Uploadfs attempt using port: $script:resolvedUploadPort" -ForegroundColor DarkGray
+            }
+            else {
+                Write-Host "[DEPLOY] Uploadfs attempt using auto-detected port" -ForegroundColor DarkGray
+            }
         }
-        else {
-            & $pioExe run --target uploadfs
+        Action = {
+            if ($script:resolvedUploadPort) {
+                & $pioExe run --target uploadfs --upload-port $script:resolvedUploadPort
+            }
+            else {
+                & $pioExe run --target uploadfs
+            }
         }
     }
+    if ($InteractiveRetry) {
+        $uploadFsStepParams.InteractiveRetry = $true
+    }
+    Invoke-Step @uploadFsStepParams
 
-    Invoke-Step -Title "Upload firmware" -MaxAttempts 3 -RetryHint "If flashing fails or says wrong boot mode, hold the BOOT button on ESP32 while retrying." -Action {
-        if ($resolvedUploadPort) {
-            & $pioExe run --target upload --upload-port $resolvedUploadPort
+    $uploadFwStepParams = @{
+        Title = "Upload firmware"
+        MaxAttempts = $UploadMaxAttempts
+        RetryDelaySec = $RetryDelaySec
+        RetryHint = "If flashing fails or says wrong boot mode, hold the BOOT button while retrying; release after 'Connecting...'."
+        BeforeAttempt = {
+            $script:resolvedUploadPort = Resolve-UploadPort -RequestedPort $UploadPort -PioExecutable $pioExe
+            Stop-StalePlatformIOMonitors -Port $script:resolvedUploadPort
+            if ($script:resolvedUploadPort) {
+                Write-Host "[DEPLOY] Upload attempt using port: $script:resolvedUploadPort" -ForegroundColor DarkGray
+            }
+            else {
+                Write-Host "[DEPLOY] Upload attempt using auto-detected port" -ForegroundColor DarkGray
+            }
         }
-        else {
-            & $pioExe run --target upload
+        Action = {
+            if ($script:resolvedUploadPort) {
+                & $pioExe run --target upload --upload-port $script:resolvedUploadPort
+            }
+            else {
+                & $pioExe run --target upload
+            }
         }
     }
+    if ($InteractiveRetry) {
+        $uploadFwStepParams.InteractiveRetry = $true
+    }
+    Invoke-Step @uploadFwStepParams
 
-    Test-PostDeployEndpoints -ExpectedIp $ExpectedIp -TimeoutSec $EndpointTimeoutSec
+    if (-not $SkipEndpointChecks) {
+        Test-PostDeployEndpoints -ExpectedIp $ExpectedIp -TimeoutSec $EndpointTimeoutSec
+    }
 
     $deployStopwatch.Stop()
     Write-Host "`n[DEPLOY] Total pipeline time: $($deployStopwatch.Elapsed.ToString())" -ForegroundColor Green

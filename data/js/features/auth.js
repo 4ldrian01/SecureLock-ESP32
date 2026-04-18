@@ -42,6 +42,8 @@ export function createAuthFeature({
     let lockoutTimer = null;
     let preAuthHealthTimer = null;
     let lockoutUntilMs = 0;
+    let adminPasswordVisible = false;
+    let loginRequestInFlight = false;
 
     const authConfig = CONFIG.ADMIN_AUTH || {};
     const SESSION_TTL_MS = Number(authConfig.SESSION_TTL_MS || (15 * 60 * 1000));
@@ -69,19 +71,31 @@ export function createAuthFeature({
         return token.length > 0 && Number.isFinite(expiresAt) && expiresAt > nowMs();
     }
 
-    function setAuthenticatedUI(isAuthenticated, options = {}) {
+    function setAuthenticatedUI(authState, options = {}) {
         const reachable = (typeof options.reachable === 'boolean') ? options.reachable : true;
+        const isPending = authState === 'pending';
+        const isAuthenticated = authState === true;
 
-        document.body.dataset.authenticated = isAuthenticated ? 'true' : 'false';
+        document.body.dataset.authenticated = isPending ? 'pending' : (isAuthenticated ? 'true' : 'false');
         DOM.authOverlay.dataset.visible = isAuthenticated ? 'false' : 'true';
+        DOM.authOverlay.dataset.mode = isPending ? 'checking' : (isAuthenticated ? 'hidden' : 'login');
+        DOM.authOverlay.setAttribute('aria-busy', isPending ? 'true' : 'false');
         DOM.authOverlay.hidden = Boolean(isAuthenticated);
         DOM.btnLogout.hidden = !isAuthenticated;
 
         DOM.statusBadge.classList.remove('badge-success', 'badge-danger', 'badge-warning');
 
+        if (isPending) {
+            DOM.statusBadge.dataset.status = 'pending';
+            DOM.statusBadge.classList.add('badge-warning');
+            DOM.statusText.textContent = 'Checking Session';
+            return;
+        }
+
         if (isAuthenticated) {
             DOM.statusBadge.dataset.status = 'online';
             DOM.statusBadge.classList.add('badge-success');
+            DOM.statusText.textContent = 'Online';
             return;
         }
 
@@ -95,7 +109,7 @@ export function createAuthFeature({
             await apiFetch(CONFIG.API.AUTH_STATUS, {
                 method: 'GET',
                 skipAuthHandling: true,
-                timeoutMs: 5000
+                timeoutMs: 2500
             });
             if (!authenticated) {
                 setAuthenticatedUI(false, { reachable: true });
@@ -130,6 +144,26 @@ export function createAuthFeature({
         }
     }
 
+    function setAdminPasswordVisibility(visible) {
+        adminPasswordVisible = Boolean(visible);
+
+        if (DOM.adminLoginPassword) {
+            DOM.adminLoginPassword.type = adminPasswordVisible ? 'text' : 'password';
+        }
+
+        if (DOM.btnToggleAdminPassword) {
+            const label = adminPasswordVisible ? 'Hide password' : 'Show password';
+            DOM.btnToggleAdminPassword.dataset.visible = adminPasswordVisible ? 'true' : 'false';
+            DOM.btnToggleAdminPassword.setAttribute('aria-pressed', adminPasswordVisible ? 'true' : 'false');
+            DOM.btnToggleAdminPassword.setAttribute('aria-label', label);
+            DOM.btnToggleAdminPassword.title = label;
+        }
+    }
+
+    function toggleAdminPasswordVisibility() {
+        setAdminPasswordVisibility(!adminPasswordVisible);
+    }
+
     function getLockoutRemainingMs() {
         return Math.max(0, Number(lockoutUntilMs || 0) - nowMs());
     }
@@ -138,7 +172,7 @@ export function createAuthFeature({
         const remainingMs = getLockoutRemainingMs();
         if (remainingMs <= 0) {
             DOM.adminLockoutMessage.textContent = '';
-            DOM.btnAdminLogin.disabled = false;
+            DOM.btnAdminLogin.disabled = loginRequestInFlight;
             return;
         }
 
@@ -209,6 +243,7 @@ export function createAuthFeature({
         DOM.adminLoginError.textContent = '';
         DOM.adminLockoutMessage.textContent = '';
         DOM.adminLoginPassword.value = '';
+        setAdminPasswordVisibility(false);
 
         setAuthenticatedUI(true);
         startSessionTimer();
@@ -249,15 +284,12 @@ export function createAuthFeature({
         authenticated = false;
         stopSessionTimer();
 
-        if (!skipBackendLogout) {
-            await notifyBackendLogout(previousToken);
-        }
-
         clearApiAuthToken();
         clearSession();
         setAuthenticatedUI(false, { reachable: true });
         startPreAuthHealthPolling();
         DOM.adminLoginPassword.value = '';
+        setAdminPasswordVisibility(false);
         DOM.adminLoginError.textContent = reason || '';
         updateLockoutUI();
 
@@ -265,11 +297,21 @@ export function createAuthFeature({
             onLogout();
         }
 
+        if (!skipBackendLogout) {
+            // Fire-and-forget server token revoke so local logout remains instant.
+            notifyBackendLogout(previousToken);
+        }
+
         DOM.adminLoginUsername.focus();
     }
 
     async function handleLoginSubmit(event) {
         event.preventDefault();
+
+        if (loginRequestInFlight) {
+            return;
+        }
+
         updateLockoutUI();
 
         const lockoutRemainingMs = getLockoutRemainingMs();
@@ -289,14 +331,19 @@ export function createAuthFeature({
         }
 
         DOM.btnAdminLogin.disabled = true;
+        DOM.adminLoginUsername.disabled = true;
+        DOM.adminLoginPassword.disabled = true;
         DOM.btnAdminLogin.textContent = 'Verifying...';
         DOM.btnAdminLogin.dataset.state = 'busy';
+        loginRequestInFlight = true;
 
         try {
             const data = await apiFetch(CONFIG.API.AUTH_LOGIN, {
                 method: 'POST',
                 body: JSON.stringify({ username, password }),
-                skipAuthHandling: true
+                skipAuthHandling: true,
+                timeoutMs: Math.max(1800, Number(CONFIG.STATUS_TIMEOUT_MS || 3200)),
+                retries: 0
             });
 
             if (data?.success && data?.authenticated && data?.token) {
@@ -338,6 +385,9 @@ export function createAuthFeature({
             DOM.adminLoginError.textContent = payload.message || error?.message || 'Unable to verify login right now. Try again.';
             probeBackendReachability();
         } finally {
+            loginRequestInFlight = false;
+            DOM.adminLoginUsername.disabled = false;
+            DOM.adminLoginPassword.disabled = false;
             DOM.btnAdminLogin.textContent = 'Login';
             DOM.btnAdminLogin.dataset.state = 'ready';
             updateLockoutUI();
@@ -362,7 +412,7 @@ export function createAuthFeature({
                     Authorization: `Bearer ${token}`
                 },
                 skipAuthHandling: true,
-                timeoutMs: 5000
+                timeoutMs: 2500
             });
 
             if (!status?.authenticated) {
@@ -386,23 +436,64 @@ export function createAuthFeature({
 
     function bindEvents() {
         DOM.adminLoginForm.addEventListener('submit', handleLoginSubmit);
-        DOM.btnLogout.addEventListener('click', async () => {
-            await forceLogout('Logged out. Please login again.');
-            feedback.showToast('Logged out', 'info');
+        if (DOM.btnToggleAdminPassword) {
+            DOM.btnToggleAdminPassword.addEventListener('click', toggleAdminPasswordVisibility);
+        }
+        DOM.btnLogout.addEventListener('click', () => {
+            feedback.showModal(
+                'Confirm Logout',
+                'Are you sure you want to logout from the dashboard?',
+                'warning',
+                async () => {
+                    await forceLogout('Logged out. Please login again.');
+                    feedback.showToast('Logged out', 'info');
+                }
+            );
         });
     }
 
     function initialize() {
         startLockoutTimer();
-        setAuthenticatedUI(false, { reachable: true });
-        startPreAuthHealthPolling();
+        setAdminPasswordVisibility(false);
 
-        restoreSession().then((restored) => {
-            if (!restored) {
-                probeBackendReachability();
+        const bootSession = readSession();
+        if (!isSessionValid(bootSession)) {
+            clearApiAuthToken();
+            clearSession();
+            setAuthenticatedUI(false, { reachable: true });
+            probeBackendReachability();
+            startPreAuthHealthPolling();
+            DOM.adminLoginUsername.focus();
+            return;
+        }
+
+        setAuthenticatedUI('pending', { reachable: true });
+
+        if (DOM.authChecking) {
+            DOM.authChecking.textContent = 'Verifying secure session…';
+        }
+
+        const pendingFallbackTimer = setTimeout(() => {
+            if (!authenticated && document.body.dataset.authenticated === 'pending') {
+                setAuthenticatedUI(false, { reachable: false });
+                DOM.adminLoginError.textContent = 'Session verification timed out. Please login.';
                 DOM.adminLoginUsername.focus();
             }
-        });
+        }, 3200);
+
+        restoreSession()
+            .then((restored) => {
+                if (!restored) {
+                    probeBackendReachability();
+                    DOM.adminLoginUsername.focus();
+                }
+            })
+            .finally(() => {
+                clearTimeout(pendingFallbackTimer);
+                if (!authenticated) {
+                    startPreAuthHealthPolling();
+                }
+            });
     }
 
     async function handleUnauthorized() {

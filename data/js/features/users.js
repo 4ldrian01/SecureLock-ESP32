@@ -1,74 +1,58 @@
-import { clearFormErrors, setFormError, escapeHtml } from '../core/helpers.js';
+import { clearFormErrors, setFormError, escapeHtml } from '../core/helpers.js?v=20260418r5';
 
 export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onLogsUpdated }) {
     const ADD_USER_SUBMIT_IDLE_LABEL = DOM.btnSubmitAdd
         ? DOM.btnSubmitAdd.innerHTML
         : 'Save User';
+    const RESET_USERS_IDLE_LABEL = DOM.btnResetUsers
+        ? DOM.btnResetUsers.textContent
+        : 'Reset Users';
+    let resetUsersInFlight = false;
 
-    function normalizeUsersForDisplay(users) {
-        // Enforce single-admin view: keep first admin only, convert duplicates to regular users.
-        let adminSeen = false;
+    function isTruthyAdminFlag(value) {
+        if (value === true || value === 1) {
+            return true;
+        }
 
-        return (Array.isArray(users) ? users : []).map((user) => {
-            const normalized = { ...user };
-            const role = (normalized.type || normalized.role || 'user').toString().toLowerCase();
-            const uid = (normalized.uid || normalized.cardUID || '').toString().trim().toUpperCase();
-            const isAdmin = role === 'admin' || uid === 'DEFAULT_ADMIN';
-
-            if (isAdmin) {
-                if (!adminSeen) {
-                    normalized.type = 'admin';
-                    adminSeen = true;
-                } else {
-                    normalized.type = 'user';
-                }
-            }
-
-            return normalized;
-        });
+        const normalized = String(value ?? '').trim().toLowerCase();
+        return normalized === 'true' || normalized === '1' || normalized === 'yes';
     }
 
-    function createUserFingerprint(user) {
-        return [
-            String(user?.cardUID || user?.uid || '').trim().toUpperCase(),
-            String(user?.name || '').trim(),
-            String(user?.type || user?.role || 'user').trim().toLowerCase(),
-            String(user?.telegramChatID || user?.chat_id || '').trim(),
-            String(user?.backupPIN || user?.backup_pin || '').trim()
-        ].join('|');
+    function resolveOptionalBoolean(value, fallback) {
+        if (value === undefined || value === null || value === '') {
+            return fallback;
+        }
+
+        return isTruthyAdminFlag(value);
     }
 
-    function buildUserCardInnerHTML(user) {
-        const role = user.type || user.role || 'user';
-        const badgeClass = role === 'admin' ? 'badge-admin'
-            : role === 'guest' ? 'badge-guest'
-                : 'badge-user';
-        const isAdmin = role === 'admin';
-        const uid = String(user.cardUID || user.uid || '').trim().toUpperCase();
-
-        return `<div class="user-info">
-                <div class="user-name-row">
-                    <span class="user-name">${escapeHtml(user.name || 'Unknown')}</span>
-                    <span class="badge user-badge ${badgeClass}">${escapeHtml(role.toUpperCase())}</span>
-                </div>
-                <div class="user-meta">
-                    <span class="user-uid">${escapeHtml(uid || '--')}</span>
-                </div>
-            </div>
-            <div class="user-actions">
-                <button class="btn btn-ghost btn-edit" title="Edit user" data-action="edit" data-uid="${escapeHtml(uid)}">
-                    <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
-                </button>
-                ${isAdmin ? '' : `<button class="btn btn-ghost btn-delete" title="Delete user" data-action="delete" data-uid="${escapeHtml(uid)}">
-                    <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
-                </button>`}
-            </div>`;
+    function isSeededAdminUID(uid) {
+        const normalizedUid = String(uid || '').trim().toUpperCase();
+        return normalizedUid === 'DEFAULT_ADMIN' || /^DEFAULT_ADMIN_\d+$/.test(normalizedUid);
     }
 
-    function isAlphabeticName(name) {
-        const trimmed = String(name || '').trim();
+    function isSeededAdminUser(user) {
+        const uid = String(user?.uid || user?.cardUID || '').trim().toUpperCase();
+        return isTruthyAdminFlag(user?.isSeededAdmin) || isSeededAdminUID(uid);
+    }
+
+    function sanitizeAlphabeticNamePart(value) {
+        const cleaned = String(value || '')
+            .replace(/[^A-Za-z .'-]+/g, '')
+            .replace(/\s{2,}/g, ' ')
+            .replace(/^\s+/, '');
+
+        return cleaned;
+    }
+
+    function normalizeNamePart(value) {
+        return sanitizeAlphabeticNamePart(value).trim();
+    }
+
+    function isAlphabeticNamePart(namePart, { required = true } = {}) {
+        const trimmed = normalizeNamePart(namePart);
         if (!trimmed) {
-            return false;
+            return !required;
         }
 
         if (!/^[A-Za-z .'-]+$/.test(trimmed)) {
@@ -78,12 +62,237 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         return /[A-Za-z]/.test(trimmed);
     }
 
-    function sanitizeAlphabeticName(value) {
-        const cleaned = String(value || '')
-            .replace(/[^A-Za-z .'-]+/g, '')
+    function splitFullName(fullName) {
+        const normalized = sanitizeAlphabeticNamePart(fullName).trim();
+        if (!normalized) {
+            return {
+                firstName: '',
+                middleName: '',
+                lastName: ''
+            };
+        }
+
+        const parts = normalized.split(/\s+/).filter(Boolean);
+        if (parts.length === 1) {
+            return {
+                firstName: parts[0],
+                middleName: '',
+                lastName: ''
+            };
+        }
+
+        return {
+            firstName: parts[0],
+            middleName: parts.slice(1, -1).join(' '),
+            lastName: parts[parts.length - 1]
+        };
+    }
+
+    function resolveNamePartsFromUser(user) {
+        const firstName = normalizeNamePart(user?.firstName || user?.first_name || '');
+        const middleName = normalizeNamePart(user?.middleName || user?.middle_name || '');
+        const lastName = normalizeNamePart(user?.lastName || user?.last_name || '');
+
+        if (firstName || middleName || lastName) {
+            return { firstName, middleName, lastName };
+        }
+
+        return splitFullName(user?.name || '');
+    }
+
+    function composeFullName({ firstName, middleName, lastName }) {
+        return [
+            normalizeNamePart(firstName),
+            normalizeNamePart(middleName),
+            normalizeNamePart(lastName)
+        ]
+            .filter(Boolean)
+            .join(' ')
             .replace(/\s{2,}/g, ' ')
-            .replace(/^\s+/, '');
-        return cleaned;
+            .trim();
+    }
+
+    function normalizeRoleForDisplay(user) {
+        const uid = String(user?.uid || user?.cardUID || '').trim().toUpperCase();
+        const role = String(user?.type || user?.role || 'user').trim().toLowerCase();
+        const isAdminChat = isTruthyAdminFlag(user?.isAdminChat);
+
+        if (role === 'admin' || isSeededAdminUID(uid) || isAdminChat) {
+            return 'admin';
+        }
+
+        if (role === 'guest') {
+            return 'guest';
+        }
+
+        return 'user';
+    }
+
+    function getDisplayName(user) {
+        const nameParts = resolveNamePartsFromUser(user);
+        const composed = composeFullName(nameParts);
+        if (composed) {
+            return composed;
+        }
+
+        const fallback = String(user?.name || '').trim();
+        return fallback || 'Unknown';
+    }
+
+    function getNamePartsFromForm(prefix) {
+        if (prefix === 'edit') {
+            return {
+                firstName: normalizeNamePart(DOM.editUserFirstName?.value || ''),
+                middleName: normalizeNamePart(DOM.editUserMiddleName?.value || ''),
+                lastName: normalizeNamePart(DOM.editUserLastName?.value || '')
+            };
+        }
+
+        return {
+            firstName: normalizeNamePart(DOM.userFirstName?.value || ''),
+            middleName: normalizeNamePart(DOM.userMiddleName?.value || ''),
+            lastName: normalizeNamePart(DOM.userLastName?.value || '')
+        };
+    }
+
+    function validateNameParts(nameParts, prefix) {
+        let valid = true;
+
+        const firstNameErrorId = prefix === 'edit' ? 'editUserFirstNameError' : 'userFirstNameError';
+        const middleNameErrorId = prefix === 'edit' ? 'editUserMiddleNameError' : 'userMiddleNameError';
+        const lastNameErrorId = prefix === 'edit' ? 'editUserLastNameError' : 'userLastNameError';
+
+        if (!nameParts.firstName) {
+            setFormError(firstNameErrorId, 'First name is required');
+            valid = false;
+        } else if (!isAlphabeticNamePart(nameParts.firstName, { required: true })) {
+            setFormError(firstNameErrorId, 'First name can include letters, spaces, apostrophes, dots, and hyphens only');
+            valid = false;
+        }
+
+        if (nameParts.middleName && !isAlphabeticNamePart(nameParts.middleName, { required: false })) {
+            setFormError(middleNameErrorId, 'Middle name can include letters, spaces, apostrophes, dots, and hyphens only');
+            valid = false;
+        }
+
+        if (!nameParts.lastName) {
+            setFormError(lastNameErrorId, 'Last name is required');
+            valid = false;
+        } else if (!isAlphabeticNamePart(nameParts.lastName, { required: true })) {
+            setFormError(lastNameErrorId, 'Last name can include letters, spaces, apostrophes, dots, and hyphens only');
+            valid = false;
+        }
+
+        const fullName = composeFullName(nameParts);
+        if (fullName.length > 48) {
+            setFormError(lastNameErrorId, 'Combined full name is too long (max 48 characters)');
+            valid = false;
+        }
+
+        return {
+            valid,
+            fullName
+        };
+    }
+
+    function normalizeUsersForDisplay(users) {
+        return (Array.isArray(users) ? users : []).map((user) => {
+            const normalized = { ...user };
+            const uid = (normalized.uid || normalized.cardUID || '').toString().trim().toUpperCase();
+
+            const nameParts = resolveNamePartsFromUser(normalized);
+            const fullName = composeFullName(nameParts);
+            const chatId = String(normalized?.telegramChatID || normalized?.chat_id || '').trim();
+            const role = normalizeRoleForDisplay(normalized);
+
+            normalized.uid = uid;
+            normalized.cardUID = uid;
+            normalized.firstName = nameParts.firstName;
+            normalized.middleName = nameParts.middleName;
+            normalized.lastName = nameParts.lastName;
+            normalized.name = fullName || String(normalized.name || '').trim();
+            normalized.telegramChatID = chatId;
+            normalized.chat_id = chatId;
+
+            const seededAdmin = isSeededAdminUser(normalized);
+            const canEdit = resolveOptionalBoolean(normalized?.editable, true);
+            const canDelete = resolveOptionalBoolean(normalized?.deletable, role !== 'admin' && !seededAdmin);
+
+            normalized.type = role;
+            normalized.role = role;
+            normalized.isAdminChat = role === 'admin';
+            normalized.isSeededAdmin = seededAdmin;
+            normalized.editable = canEdit;
+            normalized.deletable = seededAdmin ? false : canDelete;
+
+            return normalized;
+        });
+    }
+
+    function createUserFingerprint(user) {
+        const nameParts = resolveNamePartsFromUser(user);
+        return [
+            String(user?.cardUID || user?.uid || '').trim().toUpperCase(),
+            composeFullName(nameParts),
+            nameParts.firstName,
+            nameParts.middleName,
+            nameParts.lastName,
+            normalizeRoleForDisplay(user),
+            String(user?.telegramChatID || user?.chat_id || '').trim(),
+            String(user?.backupPIN || user?.backup_pin || '').trim(),
+            isTruthyAdminFlag(user?.isAdminChat) ? '1' : '0',
+            isTruthyAdminFlag(user?.isSeededAdmin) ? '1' : '0',
+            resolveOptionalBoolean(user?.editable, true) ? '1' : '0',
+            resolveOptionalBoolean(user?.deletable, true) ? '1' : '0'
+        ].join('|');
+    }
+
+    function buildUserCardInnerHTML(user) {
+        const role = normalizeRoleForDisplay(user);
+        const badgeClass = role === 'admin' ? 'badge-admin'
+            : role === 'guest' ? 'badge-guest'
+                : 'badge-user';
+        const isAdmin = role === 'admin';
+        const seededAdmin = isSeededAdminUser(user);
+        const uid = String(user.cardUID || user.uid || '').trim().toUpperCase();
+        const name = getDisplayName(user);
+        const chatId = String(user?.telegramChatID || user?.chat_id || '').trim();
+
+        const canEdit = resolveOptionalBoolean(user?.editable, true);
+        const canDelete = resolveOptionalBoolean(user?.deletable, role !== 'admin' && !seededAdmin);
+
+        let actionsHtml = '';
+        if (canEdit) {
+            actionsHtml += `<button class="btn btn-ghost btn-edit" title="Edit user" data-action="edit" data-uid="${escapeHtml(uid)}">
+                    <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+                </button>`;
+        }
+
+        if (canDelete) {
+            actionsHtml += `<button class="btn btn-ghost btn-delete" title="Delete user" data-action="delete" data-uid="${escapeHtml(uid)}">
+                    <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+                </button>`;
+        }
+
+        if (seededAdmin) {
+            actionsHtml += '<span class="badge user-badge badge-admin" title="Configured from secrets.h">SEEDED ADMIN</span>';
+        } else if (isAdmin) {
+            actionsHtml += '<span class="badge user-badge badge-admin" title="Admin account">ADMIN</span>';
+        }
+
+        return `<div class="user-info">
+                <div class="user-name-row">
+                    <span class="user-name">${escapeHtml(name)}</span>
+                    <span class="badge user-badge ${badgeClass}">${escapeHtml(role.toUpperCase())}</span>
+                </div>
+                <div class="user-meta">
+                    <span class="user-uid">${escapeHtml(uid || '--')}</span>
+                    <span class="user-chat">TG: ${escapeHtml(chatId || '--')}</span>
+                </div>
+            </div>
+            <div class="user-actions">
+                ${actionsHtml}
+            </div>`;
     }
 
     function sanitizeUID(value) {
@@ -123,12 +332,19 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
     }
 
     function bindNameInputRestrictions() {
-        const fields = [DOM.userName, DOM.editUserName].filter(Boolean);
+        const fields = [
+            DOM.userFirstName,
+            DOM.userMiddleName,
+            DOM.userLastName,
+            DOM.editUserFirstName,
+            DOM.editUserMiddleName,
+            DOM.editUserLastName
+        ].filter(Boolean);
         const chatIdFields = [DOM.userChatId, DOM.editUserChatId].filter(Boolean);
 
         fields.forEach((field) => {
             field.addEventListener('input', () => {
-                const sanitized = sanitizeAlphabeticName(field.value);
+                const sanitized = sanitizeAlphabeticNamePart(field.value);
                 if (field.value !== sanitized) {
                     field.value = sanitized;
                 }
@@ -201,14 +417,37 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         updateAddUserSubmitButton();
     }
 
-    function getUsersEndpointNoCache() {
-        const separator = CONFIG.API.USERS.includes('?') ? '&' : '?';
-        return `${CONFIG.API.USERS}${separator}_ts=${Date.now()}`;
+    function setResetUsersBusy(isBusy) {
+        resetUsersInFlight = Boolean(isBusy);
+        if (!DOM.btnResetUsers) {
+            return;
+        }
+
+        DOM.btnResetUsers.disabled = resetUsersInFlight;
+        DOM.btnResetUsers.textContent = resetUsersInFlight
+            ? 'Resetting...'
+            : RESET_USERS_IDLE_LABEL;
     }
 
     async function loadUsers() {
+        if (state.usersRequestInFlight) {
+            return;
+        }
+
+        state.usersRequestInFlight = true;
+
         try {
-            const data = await apiFetch(getUsersEndpointNoCache());
+            const usersTimeoutMs = Math.max(1200, Number(CONFIG.USERS_TIMEOUT_MS || 4200));
+            const defaultRetryCount = Math.max(0, Number(CONFIG.API_RETRY_COUNT || 0));
+            const retryBaseDelayMs = Math.max(100, Number(CONFIG.API_RETRY_BASE_DELAY_MS || 170));
+            const retryMaxDelayMs = Math.max(retryBaseDelayMs, Number(CONFIG.API_RETRY_MAX_DELAY_MS || 700));
+
+            const data = await apiFetch(CONFIG.API.USERS, {
+                timeoutMs: usersTimeoutMs,
+                retries: defaultRetryCount,
+                retryBaseDelayMs,
+                retryMaxDelayMs
+            });
             const users = data.users || data || [];
             const normalizedUsers = normalizeUsersForDisplay(users);
 
@@ -229,6 +468,8 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             renderUsers(normalizedUsers);
         } catch {
             DOM.usersGrid.innerHTML = '<p class="users-empty">Unable to load users</p>';
+        } finally {
+            state.usersRequestInFlight = false;
         }
     }
 
@@ -284,6 +525,10 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
                 card.dataset.rendered = '1';
             }
 
+            const seededAdmin = isSeededAdminUser(user);
+            card.dataset.seededAdmin = seededAdmin ? 'true' : 'false';
+            card.classList.toggle('user-card-seeded-admin', seededAdmin);
+
             cardsInOrder.push(card);
         });
 
@@ -302,6 +547,17 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
     }
 
     function handleDeleteUser(uid) {
+        const key = String(uid || '').trim().toUpperCase();
+        const user = state.usersByUid?.[key];
+        const seededAdmin = isSeededAdminUser(user);
+        const role = normalizeRoleForDisplay(user || {});
+        const canDelete = resolveOptionalBoolean(user?.deletable, role !== 'admin' && !seededAdmin);
+
+        if (!canDelete || seededAdmin || role === 'admin') {
+            feedback.showToast('Protected admin profile cannot be deleted', 'info');
+            return;
+        }
+
         feedback.showModal(
             'Delete User',
             'Are you sure you want to remove this user? This action cannot be undone.',
@@ -330,9 +586,23 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         const key = String(uid || '').trim().toUpperCase();
         const user = state.usersByUid?.[key];
 
-        DOM.editUserName.value = user?.name || '';
+        if (!user) {
+            feedback.showToast('User details could not be loaded. Please refresh and try again.', 'error');
+            state.editingUserId = null;
+            return;
+        }
+
+        const seededAdmin = isSeededAdminUser(user);
+
+        const nameParts = resolveNamePartsFromUser(user || {});
+
+        setEditDialogMode(seededAdmin, user);
+
+        DOM.editUserFirstName.value = nameParts.firstName || '';
+        DOM.editUserMiddleName.value = nameParts.middleName || '';
+        DOM.editUserLastName.value = nameParts.lastName || '';
         DOM.editUserChatId.value = user?.telegramChatID || '';
-        DOM.editUserBackupPin.value = user?.backupPIN || '';
+        DOM.editUserBackupPin.value = seededAdmin ? '' : (user?.backupPIN || '');
         DOM.editUserRfid.value = user?.cardUID || user?.uid || uid || '';
 
         DOM.editUserRfid.classList.remove('input-error', 'scanned', 'scanning');
@@ -376,6 +646,11 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
     }
 
     function startRfidPoll(targetInput) {
+        if (targetInput === DOM.editUserRfid && state.editingSeededAdmin) {
+            feedback.showToast('Seeded admin RFID is managed by system configuration', 'info');
+            return;
+        }
+
         stopRfidPoll();
         const sessionId = Number(state.rfidPollSession || 0);
         targetInput.value = 'Waiting for card tap...';
@@ -403,7 +678,11 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             }
 
             try {
-                const data = await apiFetch(CONFIG.API.RFID_SCAN);
+                const rfidTimeoutMs = Math.max(600, Number(CONFIG.RFID_TIMEOUT_MS || 1500));
+                const data = await apiFetch(CONFIG.API.RFID_SCAN, {
+                    timeoutMs: rfidTimeoutMs,
+                    retries: 0
+                });
                 const uid = String(data?.uid || data?.lastUid || '').trim();
                 const scanTs = Number(data?.scanTimestamp || data?.lastScanTimestamp || data?.timestamp || 0);
                 const hasFreshScan = Boolean(data?.scanned)
@@ -508,7 +787,11 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         // after this polling session starts.
         (async () => {
             try {
-                const baseline = await apiFetch(CONFIG.API.RFID_SCAN);
+                const rfidTimeoutMs = Math.max(600, Number(CONFIG.RFID_TIMEOUT_MS || 1500));
+                const baseline = await apiFetch(CONFIG.API.RFID_SCAN, {
+                    timeoutMs: rfidTimeoutMs,
+                    retries: 0
+                });
                 const baselineTs = Number(baseline?.scanTimestamp || baseline?.lastScanTimestamp || 0);
                 if (Number.isFinite(baselineTs) && baselineTs > 0) {
                     lastScanTimestamp = baselineTs;
@@ -546,30 +829,108 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         DOM.addUserModal.close();
     }
 
+    function setEditDialogMode(seededAdmin, user = null) {
+        const isSeeded = Boolean(seededAdmin);
+        state.editingSeededAdmin = isSeeded;
+
+        if (DOM.editUserModal) {
+            DOM.editUserModal.dataset.mode = isSeeded ? 'seeded-admin' : 'regular';
+        }
+
+        if (DOM.editUserChatId) {
+            DOM.editUserChatId.readOnly = isSeeded;
+            if (isSeeded && user) {
+                DOM.editUserChatId.value = String(user?.telegramChatID || user?.chat_id || '').trim();
+            }
+        }
+
+        if (DOM.editUserBackupPin) {
+            DOM.editUserBackupPin.disabled = isSeeded;
+            DOM.editUserBackupPin.required = !isSeeded;
+            if (isSeeded) {
+                DOM.editUserBackupPin.value = '';
+                DOM.editUserBackupPin.placeholder = 'Managed by system';
+            } else {
+                DOM.editUserBackupPin.placeholder = '1234';
+            }
+        }
+
+        if (DOM.editUserRfid) {
+            DOM.editUserRfid.readOnly = true;
+            if (isSeeded) {
+                DOM.editUserRfid.value = String(user?.cardUID || user?.uid || state.editingUserId || 'DEFAULT_ADMIN').trim();
+            }
+        }
+
+        if (DOM.btnReplaceCard) {
+            DOM.btnReplaceCard.disabled = isSeeded;
+            DOM.btnReplaceCard.hidden = isSeeded;
+            DOM.btnReplaceCard.setAttribute('aria-hidden', isSeeded ? 'true' : 'false');
+        }
+
+        if (isSeeded) {
+            setFormError('editUserBackupPinError', '');
+            setFormError('editUserRfidError', '');
+        }
+    }
+
     function closeEditUserDialog() {
         stopRfidPoll();
+        setEditDialogMode(false);
         DOM.editUserModal.close();
         state.editingUserId = null;
     }
 
     function handleResetUsers() {
+        if (resetUsersInFlight) {
+            return;
+        }
+
         feedback.showModal(
             'Reset All Users',
             'This will remove all users from device storage. Continue?',
             'danger',
             async () => {
+                if (resetUsersInFlight) {
+                    return;
+                }
+
                 try {
+                    setResetUsersBusy(true);
+
                     const result = await apiFetch(CONFIG.API.USERS_RESET, {
                         method: 'POST',
                         body: JSON.stringify({ confirm: 'RESET_ALL_USERS' })
                     });
 
                     if (result?.success) {
-                        feedback.showToast('All users were reset successfully', 'success');
-                        await loadUsers();
-                        if (typeof onLogsUpdated === 'function') {
-                            onLogsUpdated();
+                        state.lastUsersHash = '';
+                        state.renderedUserFingerprints = {};
+                        state.renderedUserOrder = [];
+                        state.usersByUid = {};
+
+                        if (DOM.usersGrid) {
+                            DOM.usersGrid.innerHTML = '<p class="users-empty">Refreshing users…</p>';
                         }
+
+                        await loadUsers();
+
+                        if (typeof onLogsUpdated === 'function') {
+                            await onLogsUpdated();
+                        }
+
+                        const seededRetained = Math.max(0, Number(result?.seededAdminsRetained || 0));
+                        const remainingUsers = Math.max(0, Number(result?.remainingUsers || 0));
+
+                        if (seededRetained > 0) {
+                            feedback.showToast(
+                                `Users reset complete • ${remainingUsers} active profile(s), ${seededRetained} seeded admin retained`,
+                                'success'
+                            );
+                        } else {
+                            feedback.showToast('All users were reset successfully', 'success');
+                        }
+
                         return;
                     }
 
@@ -579,6 +940,8 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
                         error?.payload?.message || error?.message || 'Connection error - could not reset users',
                         'error'
                     );
+                } finally {
+                    setResetUsersBusy(false);
                 }
             }
         );
@@ -593,7 +956,9 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
 
         clearFormErrors(DOM);
 
-        const name = DOM.userName.value.trim();
+        const nameParts = getNamePartsFromForm('add');
+        const nameValidation = validateNameParts(nameParts, 'add');
+        const name = nameValidation.fullName;
         const chatId = DOM.userChatId.value.trim();
         const backupPin = DOM.userBackupPin.value.trim();
         const rawRfidInput = String(DOM.userRfid.value || '').trim();
@@ -602,7 +967,11 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         // If polling missed a valid tap, recover from latest scan once before blocking submit.
         if (!rfid || isWaitingScanText(rawRfidInput)) {
             try {
-                const scan = await apiFetch(CONFIG.API.RFID_SCAN);
+                const rfidTimeoutMs = Math.max(600, Number(CONFIG.RFID_TIMEOUT_MS || 1500));
+                const scan = await apiFetch(CONFIG.API.RFID_SCAN, {
+                    timeoutMs: rfidTimeoutMs,
+                    retries: 0
+                });
                 const scannedUid = sanitizeUID(scan?.uid || scan?.lastUid || '');
                 if (scan?.scanned && scannedUid.length > 0) {
                     rfid = scannedUid;
@@ -616,11 +985,7 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         }
 
         let valid = true;
-        if (!name) {
-            setFormError('userNameError', 'Name is required');
-            valid = false;
-        } else if (!isAlphabeticName(name)) {
-            setFormError('userNameError', 'Name can include letters, spaces, apostrophes, dots, and hyphens only');
+        if (!nameValidation.valid || !name) {
             valid = false;
         }
         if (!chatId) {
@@ -659,6 +1024,12 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
                 method: 'POST',
                 body: JSON.stringify({
                     name,
+                    firstName: nameParts.firstName,
+                    middleName: nameParts.middleName,
+                    lastName: nameParts.lastName,
+                    first_name: nameParts.firstName,
+                    middle_name: nameParts.middleName,
+                    last_name: nameParts.lastName,
                     pin: backupPin,
                     cardUID: rfid,
                     uid: rfid,
@@ -679,8 +1050,37 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
                 feedback.showToast(data.message || 'Failed to add user', 'error');
             }
         } catch (error) {
+            if (Number(error?.status) === 400) {
+                const field = String(error?.payload?.field || '').trim();
+                const message = error?.payload?.message || 'Invalid name format';
+
+                if (field === 'firstName' || field === 'first_name') {
+                    setFormError('userFirstNameError', message);
+                    feedback.showToast(message, 'error');
+                    return;
+                }
+
+                if (field === 'middleName' || field === 'middle_name') {
+                    setFormError('userMiddleNameError', message);
+                    feedback.showToast(message, 'error');
+                    return;
+                }
+
+                if (field === 'lastName' || field === 'last_name') {
+                    setFormError('userLastNameError', message);
+                    feedback.showToast(message, 'error');
+                    return;
+                }
+
+                if (field === 'name') {
+                    setFormError('userLastNameError', message);
+                    feedback.showToast(message, 'error');
+                    return;
+                }
+            }
+
             if (Number(error?.status) === 400 && error?.payload?.field === 'name') {
-                setFormError('userNameError', error?.payload?.message || 'Name can include letters, spaces, apostrophes, dots, and hyphens only');
+                setFormError('userLastNameError', error?.payload?.message || 'Name can include letters, spaces, apostrophes, dots, and hyphens only');
                 feedback.showToast(error?.payload?.message || 'Invalid name format', 'error');
                 return;
             }
@@ -721,21 +1121,82 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         e.preventDefault();
         clearFormErrors(DOM);
 
-        const name = DOM.editUserName.value.trim();
+        const editingUid = String(state.editingUserId || '').trim().toUpperCase();
+        const editingUser = state.usersByUid?.[editingUid] || null;
+        const seededAdmin = state.editingSeededAdmin || isSeededAdminUser(editingUser);
+
+        if (!editingUid) {
+            feedback.showToast('No user selected for editing', 'error');
+            return;
+        }
+
+        const nameParts = getNamePartsFromForm('edit');
+        const nameValidation = validateNameParts(nameParts, 'edit');
+        const name = nameValidation.fullName;
         const chatId = DOM.editUserChatId.value.trim();
         const backupPin = DOM.editUserBackupPin.value.trim();
         const rfid = sanitizeUID(DOM.editUserRfid.value);
+
+        if (seededAdmin) {
+            let seededValid = true;
+
+            if (!nameValidation.valid || !name) {
+                seededValid = false;
+            }
+
+            if (chatId && !isValidChatId(chatId)) {
+                setFormError('editUserChatIdError', 'Telegram Chat ID must be exactly 10 digits');
+                seededValid = false;
+            }
+
+            if (!seededValid) {
+                return;
+            }
+
+            try {
+                const body = {
+                    uid: editingUid,
+                    name,
+                    firstName: nameParts.firstName,
+                    middleName: nameParts.middleName,
+                    lastName: nameParts.lastName,
+                    first_name: nameParts.firstName,
+                    middle_name: nameParts.middleName,
+                    last_name: nameParts.lastName,
+                    telegramChatID: chatId,
+                    chat_id: chatId,
+                    seededAdminProfile: true
+                };
+
+                const data = await apiFetch(CONFIG.API.USERS, {
+                    method: 'PUT',
+                    body: JSON.stringify(body)
+                });
+
+                if (data.success) {
+                    feedback.showToast('Default admin profile updated', 'success');
+                    closeEditUserDialog();
+                    await loadUsers();
+                    if (typeof onLogsUpdated === 'function') onLogsUpdated();
+                } else {
+                    feedback.showToast(data.message || 'Failed to update default admin profile', 'error');
+                }
+            } catch (error) {
+                feedback.showToast(
+                    error?.payload?.message || error?.message || 'Connection error — could not update default admin profile',
+                    'error'
+                );
+            }
+
+            return;
+        }
 
         if (DOM.editUserRfid.value !== rfid) {
             DOM.editUserRfid.value = rfid;
         }
 
         let valid = true;
-        if (!name) {
-            setFormError('editUserNameError', 'Name is required');
-            valid = false;
-        } else if (!isAlphabeticName(name)) {
-            setFormError('editUserNameError', 'Name can include letters, spaces, apostrophes, dots, and hyphens only');
+        if (!nameValidation.valid || !name) {
             valid = false;
         }
         if (chatId && !isValidChatId(chatId)) {
@@ -770,8 +1231,14 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
 
         try {
             const body = {
-                uid: state.editingUserId,
+                uid: editingUid,
                 name,
+                firstName: nameParts.firstName,
+                middleName: nameParts.middleName,
+                lastName: nameParts.lastName,
+                first_name: nameParts.firstName,
+                middle_name: nameParts.middleName,
+                last_name: nameParts.lastName,
                 pin: backupPin,
                 rfid,
                 cardUID: rfid,
@@ -794,8 +1261,37 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
                 feedback.showToast(data.message || 'Failed to update user', 'error');
             }
         } catch (error) {
+            if (Number(error?.status) === 400) {
+                const field = String(error?.payload?.field || '').trim();
+                const message = error?.payload?.message || 'Invalid name format';
+
+                if (field === 'firstName' || field === 'first_name') {
+                    setFormError('editUserFirstNameError', message);
+                    feedback.showToast(message, 'error');
+                    return;
+                }
+
+                if (field === 'middleName' || field === 'middle_name') {
+                    setFormError('editUserMiddleNameError', message);
+                    feedback.showToast(message, 'error');
+                    return;
+                }
+
+                if (field === 'lastName' || field === 'last_name') {
+                    setFormError('editUserLastNameError', message);
+                    feedback.showToast(message, 'error');
+                    return;
+                }
+
+                if (field === 'name') {
+                    setFormError('editUserLastNameError', message);
+                    feedback.showToast(message, 'error');
+                    return;
+                }
+            }
+
             if (Number(error?.status) === 400 && error?.payload?.field === 'name') {
-                setFormError('editUserNameError', error?.payload?.message || 'Name can include letters, spaces, apostrophes, dots, and hyphens only');
+                setFormError('editUserLastNameError', error?.payload?.message || 'Name can include letters, spaces, apostrophes, dots, and hyphens only');
                 feedback.showToast(error?.payload?.message || 'Invalid name format', 'error');
                 return;
             }
@@ -833,6 +1329,8 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
     function bindEvents() {
         bindNameInputRestrictions();
         bindUsersGridActions();
+        setResetUsersBusy(false);
+        setEditDialogMode(false);
 
         DOM.btnAddUser.addEventListener('click', openAddUserDialog);
         if (DOM.btnResetUsers) {

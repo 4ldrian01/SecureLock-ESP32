@@ -11,6 +11,22 @@
     flex-wrap: wrap;
 }
 
+.logs-pagination[data-page="first"] {
+    justify-content: flex-end;
+}
+
+.logs-pagination[data-page="last"] {
+    justify-content: flex-start;
+}
+
+.logs-pagination[data-page="single"] {
+    justify-content: center;
+}
+
+.pagination-btn[hidden] {
+    display: none !important;
+}
+
 .pagination-btn {
     min-width: 96px;
     padding: 0.5rem 0.9rem;

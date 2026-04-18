@@ -7,7 +7,13 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: var(--space-md);
+    min-height: var(--app-vh, 100vh);
+    padding-top: max(var(--space-md), env(safe-area-inset-top));
+    padding-right: var(--space-md);
+    padding-left: var(--space-md);
+    padding-bottom: max(var(--space-md), env(safe-area-inset-bottom));
+    overflow-y: auto;
+    overscroll-behavior: contain;
     z-index: 1100;
     opacity: 0;
     visibility: hidden;
@@ -121,7 +127,7 @@
 .add-user-dialog,
 .edit-user-dialog {
     width: min(92vw, 640px);
-    max-height: min(90vh, 90svh);
+    max-height: min(calc(var(--app-vh, 100vh) - (2 * var(--space-md))), 90svh);
     margin: auto;
     padding: 0;
     border: 1px solid var(--border-glass);
@@ -148,10 +154,11 @@
 
 .dialog-content {
     padding: 14px 16px;
-    max-height: calc(90vh - 2px);
+    max-height: calc(var(--app-vh, 100vh) - 2px);
     overflow-y: auto;
     overscroll-behavior: contain;
     scrollbar-gutter: stable;
+    -webkit-overflow-scrolling: touch;
 }
 
 .dialog-header {

@@ -1,7 +1,46 @@
 export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, onLogsUpdated }) {
-    let lastDiagnosticsFetchMs = 0;
+    let lastDiagnosticsFetchMs = Date.now();
     let lastDiagnosticsText = 'Diagnostics: initializing...';
     let diagnosticsRequestInFlight = false;
+    let diagnosticsFailureCount = 0;
+    let statusConsecutiveFailures = 0;
+    let lastStatusSuccessAtMs = 0;
+
+    function formatMs(value) {
+        const ms = Math.max(0, Math.round(Number(value) || 0));
+        return `${ms}ms`;
+    }
+
+    function updateTelemetryPanel() {
+        if (!DOM.telemetryPanel) {
+            return;
+        }
+
+        if (DOM.telemetryApiRtt) {
+            const rtt = Number(state.statusApiRttSmoothedMs || state.statusApiRttMs || 0);
+            DOM.telemetryApiRtt.textContent = rtt > 0 ? formatMs(rtt) : '--';
+        }
+
+        if (DOM.telemetryQueue) {
+            const depth = Math.max(0, Number(state.telegramNotifyQueueDepth || 0));
+            const capacity = Math.max(0, Number(state.telegramNotifyQueueCapacity || 0));
+            const oldestAgeMs = Math.max(0, Number(state.telegramNotifyQueueOldestAgeMs || 0));
+
+            if (capacity > 0) {
+                DOM.telemetryQueue.textContent = `${depth}/${capacity} (${Math.ceil(oldestAgeMs / 1000)}s)`;
+            } else {
+                DOM.telemetryQueue.textContent = `${depth}`;
+            }
+        }
+
+        if (DOM.telemetryPoll) {
+            const pollDuration = Math.max(0, Number(state.telegramLastPollDurationMs || 0));
+            const pollInterval = Math.max(0, Number(state.telegramPollIntervalMs || 0));
+            DOM.telemetryPoll.textContent = (pollDuration > 0 || pollInterval > 0)
+                ? `${pollDuration}ms @ ${pollInterval}ms`
+                : '--';
+        }
+    }
 
     function applyStatusBadgeVariant(online) {
         DOM.statusBadge.classList.toggle('badge-success', Boolean(online));
@@ -149,15 +188,39 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
         const hidden = Math.max(base, Number(CONFIG.DIAGNOSTICS_INTERVAL_HIDDEN || 12000));
         const mobile = Math.max(base, Number(CONFIG.DIAGNOSTICS_INTERVAL_MOBILE || 8000));
 
+        let networkMultiplier = 1;
+        const rtt = Math.max(0, Number(state.statusApiRttSmoothedMs || state.statusApiRttMs || 0));
+        if (rtt >= 900) {
+            networkMultiplier *= 1.85;
+        } else if (rtt >= 500) {
+            networkMultiplier *= 1.4;
+        }
+
+        if (typeof navigator !== 'undefined' && navigator.connection) {
+            const connection = navigator.connection;
+            const effectiveType = String(connection.effectiveType || '').toLowerCase();
+            const saveData = Boolean(connection.saveData);
+
+            if (saveData) {
+                networkMultiplier *= 1.5;
+            }
+
+            if (effectiveType === 'slow-2g' || effectiveType === '2g') {
+                networkMultiplier *= 1.5;
+            } else if (effectiveType === '3g') {
+                networkMultiplier *= 1.2;
+            }
+        }
+
         if (document.hidden) {
-            return hidden;
+            return Math.round(hidden * networkMultiplier);
         }
 
         if (window.matchMedia('(max-width: 768px)').matches) {
-            return mobile;
+            return Math.round(mobile * networkMultiplier);
         }
 
-        return base;
+        return Math.round(base * networkMultiplier);
     }
 
     function refreshDiagnosticsAsync() {
@@ -175,7 +238,17 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
 
         diagnosticsRequestInFlight = true;
 
-        apiFetch(CONFIG.API.DIAGNOSTICS)
+        const diagnosticsTimeoutMs = Math.max(1000, Number(CONFIG.DIAGNOSTICS_TIMEOUT_MS || 2200));
+        const defaultRetryCount = Math.max(0, Number(CONFIG.API_RETRY_COUNT || 0));
+        const retryBaseDelayMs = Math.max(100, Number(CONFIG.API_RETRY_BASE_DELAY_MS || 170));
+        const retryMaxDelayMs = Math.max(retryBaseDelayMs, Number(CONFIG.API_RETRY_MAX_DELAY_MS || 700));
+
+        apiFetch(CONFIG.API.DIAGNOSTICS, {
+            timeoutMs: diagnosticsTimeoutMs,
+            retries: defaultRetryCount,
+            retryBaseDelayMs,
+            retryMaxDelayMs
+        })
             .then((diag) => {
                 const compactMobile = window.matchMedia('(max-width: 640px)').matches;
                 const rfidText = diag.rfidReady ? 'RFID OK' : 'RFID WAIT';
@@ -189,7 +262,10 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
                 const tgCmd = state.telegramLastCommandText
                     ? `${state.telegramLastCommandRole || 'user'}:${state.telegramLastCommandText}(${state.telegramLastCommandResult || 'ok'})`
                     : 'none';
-                const tgText = `TG ${state.telegramLastPollDurationMs}ms@${state.telegramPollIntervalMs}ms, cmd ${tgAge}, q${state.telegramPendingApprox}, e${state.telegramPollErrors}, last ${tgCmd}`;
+                const tgNotifyDepth = Math.max(0, Number(state.telegramNotifyQueueDepth || 0));
+                const tgNotifyCap = Math.max(0, Number(state.telegramNotifyQueueCapacity || 0));
+                const tgNotifyAgeSec = Math.ceil(Math.max(0, Number(state.telegramNotifyQueueOldestAgeMs || 0)) / 1000);
+                const tgText = `TG ${state.telegramLastPollDurationMs}ms@${state.telegramPollIntervalMs}ms, cmd ${tgAge}, q${state.telegramPendingApprox}, nq${tgNotifyDepth}/${tgNotifyCap}(${tgNotifyAgeSec}s), e${state.telegramPollErrors}, last ${tgCmd}`;
                 const activeUsers = Number(diag.activeUsers || 0);
                 const rawUsers = Number(diag.rawUsers || 0);
                 const badUsers = Number(diag.invalidUsers || 0) + Number(diag.duplicateUsers || 0);
@@ -197,15 +273,17 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
                 const usersText = `USERS ${activeUsers}/${rawUsers} ${usersFlag}`;
 
                 if (compactMobile) {
-                    const tgCompact = `TG q${state.telegramPendingApprox} e${state.telegramPollErrors}`;
+                    const tgCompact = `TG q${state.telegramPendingApprox} nq${tgNotifyDepth}/${tgNotifyCap} e${state.telegramPollErrors}`;
                     lastDiagnosticsText = `Diagnostics: ${rfidText} • ${keypadText} • ${usersText} • ${tgCompact}`;
                 } else {
                     lastDiagnosticsText = `Diagnostics: ${rfidText} • ${keypadText} • ${keyText} • ${usersText} • ${tgText}`;
                 }
 
                 lastDiagnosticsFetchMs = Date.now();
+                diagnosticsFailureCount = 0;
             })
             .catch(() => {
+                diagnosticsFailureCount += 1;
                 if ((Date.now() - lastDiagnosticsFetchMs) > Math.max(diagIntervalMs * 2, 30000)) {
                     lastDiagnosticsText = 'Diagnostics: unavailable';
                 }
@@ -248,8 +326,36 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
     }
 
     async function pollStatus() {
+        const requestStartedAt = (typeof performance !== 'undefined' && typeof performance.now === 'function')
+            ? performance.now()
+            : Date.now();
+
         try {
-            const data = await apiFetch(CONFIG.API.STATUS);
+            const statusTimeoutMs = Math.max(1200, Number(CONFIG.STATUS_TIMEOUT_MS || 3200));
+            const defaultRetryCount = Math.max(0, Number(CONFIG.API_RETRY_COUNT || 0));
+            const retryBaseDelayMs = Math.max(100, Number(CONFIG.API_RETRY_BASE_DELAY_MS || 170));
+            const retryMaxDelayMs = Math.max(retryBaseDelayMs, Number(CONFIG.API_RETRY_MAX_DELAY_MS || 700));
+
+            const data = await apiFetch(CONFIG.API.STATUS, {
+                timeoutMs: statusTimeoutMs,
+                retries: defaultRetryCount,
+                retryBaseDelayMs,
+                retryMaxDelayMs
+            });
+            const requestFinishedAt = (typeof performance !== 'undefined' && typeof performance.now === 'function')
+                ? performance.now()
+                : Date.now();
+            const requestRttMs = Math.max(0, Number(requestFinishedAt - requestStartedAt) || 0);
+
+            state.statusApiRttMs = Math.round(requestRttMs);
+            if (!Number.isFinite(state.statusApiRttSmoothedMs) || state.statusApiRttSmoothedMs <= 0) {
+                state.statusApiRttSmoothedMs = state.statusApiRttMs;
+            } else {
+                state.statusApiRttSmoothedMs = Math.round((state.statusApiRttSmoothedMs * 0.72) + (state.statusApiRttMs * 0.28));
+            }
+
+            statusConsecutiveFailures = 0;
+            lastStatusSuccessAtMs = Date.now();
             setConnectionState(true);
 
             state.locked = Boolean(data.locked);
@@ -266,6 +372,9 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
             state.telegramLastCommandResult = String(data.telegramLastCommandResult || '');
             state.telegramPendingApprox = Number(data.telegramPendingApprox || 0);
             state.telegramPollErrors = Number(data.telegramPollErrors || 0);
+            state.telegramNotifyQueueDepth = Number(data.telegramNotifyQueueDepth || 0);
+            state.telegramNotifyQueueCapacity = Number(data.telegramNotifyQueueCapacity || 0);
+            state.telegramNotifyQueueOldestAgeMs = Number(data.telegramNotifyQueueOldestAgeMs || 0);
             state.emergencyGuestLock = Math.max(
                 0,
                 Math.ceil(Number(data.emergencyGuestLockRemainingMs || 0) / 1000)
@@ -297,12 +406,21 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
             updateLockUI(state.locked);
             updateAlarmState(state.alarm);
             updateEmergencyButton();
+            updateTelemetryPanel();
 
             refreshDiagnosticsAsync();
 
             return data;
         } catch {
-            setConnectionState(false);
+            statusConsecutiveFailures += 1;
+            const staleSinceSuccessMs = lastStatusSuccessAtMs > 0
+                ? (Date.now() - lastStatusSuccessAtMs)
+                : Number.POSITIVE_INFINITY;
+
+            if (statusConsecutiveFailures >= 2 || staleSinceSuccessMs >= 15000) {
+                setConnectionState(false);
+            }
+            updateTelemetryPanel();
             return null;
         }
     }

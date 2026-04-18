@@ -32,6 +32,24 @@ body {
     line-height: 1.45;
 }
 
+body[data-authenticated="pending"] .dashboard,
+body[data-authenticated="pending"] .dashboard-footer,
+body[data-authenticated="false"] .dashboard,
+body[data-authenticated="false"] .dashboard-footer {
+    pointer-events: none;
+    user-select: none;
+    opacity: 0;
+    visibility: hidden;
+}
+
+body[data-authenticated="true"] .dashboard,
+body[data-authenticated="true"] .dashboard-footer {
+    pointer-events: auto;
+    user-select: auto;
+    opacity: 1;
+    visibility: visible;
+}
+
 .dashboard {
     width: min(100%, 1280px);
     margin-inline: auto;

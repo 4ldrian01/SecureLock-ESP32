@@ -9,12 +9,17 @@ export function createInitialState() {
         logsTimer: null,
         usersTimer: null,
         usersByUid: {},
+        usersRequestInFlight: false,
         lastUsersHash: '',
         renderedUserFingerprints: {},
         renderedUserOrder: [],
         lastLogsHash: '',
         renderedLogsPageFingerprint: '',
         allLogs: [],
+        logsSearchQuery: '',
+        logsStatusFilter: 'all',
+        logsDateFrom: '',
+        logsDateTo: '',
         logsPage: 1,
         logsPageSize: 10,
         logsClearInFlight: false,
@@ -37,6 +42,11 @@ export function createInitialState() {
         telegramLastCommandResult: '',
         telegramPendingApprox: 0,
         telegramPollErrors: 0,
+        statusApiRttMs: 0,
+        statusApiRttSmoothedMs: 0,
+        telegramNotifyQueueDepth: 0,
+        telegramNotifyQueueCapacity: 0,
+        telegramNotifyQueueOldestAgeMs: 0,
         guestCooldown: 0,
         guestCooldownTimer: null,
         guestRequestInFlight: false,
@@ -45,6 +55,7 @@ export function createInitialState() {
         lockCountdownTimer: null,
         rfidPollTimer: null,
         rfidPollSession: 0,
-        editingUserId: null
+        editingUserId: null,
+        editingSeededAdmin: false
     };
 }

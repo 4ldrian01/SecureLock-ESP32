@@ -54,6 +54,23 @@
     line-height: 1.5;
 }
 
+.guest-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: var(--space-3);
+}
+
+.btn-guest-code {
+    min-width: 180px;
+    white-space: nowrap;
+}
+
+.btn-guest-code[data-state="active"],
+.btn-guest-code[data-state="cooldown"],
+.btn-guest-code[data-state="busy"] {
+    cursor: not-allowed;
+}
+
 @media (max-width: 1023px) {
     .pin-display {
         padding: var(--space-4);
@@ -69,5 +86,13 @@
         min-width: 2.45rem;
         min-height: 2.85rem;
         font-size: 1.3rem;
+    }
+
+    .guest-actions {
+        justify-content: stretch;
+    }
+
+    .btn-guest-code {
+        width: 100%;
     }
 }

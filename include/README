@@ -1,37 +1,33 @@
+# SecureLock `include/` Directory
 
-This directory is intended for project header files.
+This folder contains project-wide configuration headers used by firmware libraries and runtime code.
 
-A header file is a file containing C declarations and macro definitions
-to be shared between several project source files. You request the use of a
-header file in your project source file (C, C++, etc) located in `src` folder
-by including it, with the C preprocessing directive `#include'.
+## Files
 
-```src/main.c
+- `hardware_pins.h`
+	- Canonical pin map for relay, sensors, RFID, keypad, and boot/factory reset input.
+	- Includes compile-time safety checks (`static_assert`) to catch invalid/unsafe GPIO assignments.
 
-#include "header.h"
+- `secrets.h`
+	- Local credential/configuration file (WiFi, Telegram bot/admin chats, dashboard admin credentials).
+	- **Sensitive** and intentionally ignored by Git.
 
-int main (void)
-{
- ...
-}
-```
+- `secrets.h.example`
+	- Safe template for onboarding.
+	- Copy to `secrets.h` and fill real values before deployment.
 
-Including a header file produces the same results as copying the header file
-into each source file that needs it. Such copying would be time-consuming
-and error-prone. With a header file, the related declarations appear
-in only one place. If they need to be changed, they can be changed in one
-place, and programs that include the header file will automatically use the
-new version when next recompiled. The header file eliminates the labor of
-finding and changing all the copies as well as the risk that a failure to
-find one copy will result in inconsistencies within a program.
+## Security checklist
 
-In C, the convention is to give header files names that end with `.h'.
+1. Keep `secrets.h` private.
+2. Rotate credentials if exposed.
+3. Set `DASHBOARD_ADMIN_PASSWORD` to a strong non-default value.
+4. Verify `ADMIN_CHAT_IDS` are correct before flashing.
 
-Read more about using header files in official GCC documentation:
+## Include usage
 
-* Include Syntax
-* Include Operation
-* Once-Only Headers
-* Computed Includes
+Use standard C/C++ include patterns in source files:
 
-https://gcc.gnu.org/onlinedocs/cpp/Header-Files.html
+- `#include "hardware_pins.h"`
+- `#include "secrets.h"`
+
+Do not duplicate pin/credential constants elsewhere.

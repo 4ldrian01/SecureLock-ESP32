@@ -1,46 +1,44 @@
+# SecureLock `lib/` Directory
 
-This directory is intended for project specific (private) libraries.
-PlatformIO will compile them to static libraries and link into the executable file.
+This folder contains SecureLock firmware components (private PlatformIO libraries).
 
-The source code of each library should be placed in a separate directory
-("lib/your_library_name/[Code]").
+## Component layout
 
-For example, see the structure of the following example libraries `Foo` and `Bar`:
+- `AuthHandler/`
+  - RFID + keypad input processing
+  - OTP/backup PIN user metadata integration
+  - Local user-store interactions
 
-|--lib
-|  |
-|  |--Bar
-|  |  |--docs
-|  |  |--examples
-|  |  |--src
-|  |     |- Bar.c
-|  |     |- Bar.h
-|  |  |- library.json (optional. for custom build options, etc) https://docs.platformio.org/page/librarymanager/config.html
-|  |
-|  |--Foo
-|  |  |- Foo.c
-|  |  |- Foo.h
-|  |
-|  |- README --> THIS FILE
-|
-|- platformio.ini
-|--src
-   |- main.c
+- `LockManager/`
+  - Relay lock state transitions
+  - Door reed switch interpretation
+  - Auto-lock timing
 
-Example contents of `src/main.c` using Foo and Bar:
-```
-#include <Foo.h>
-#include <Bar.h>
+- `SecurityManager/`
+  - Vibration sensing
+  - Alarm and buzzer patterns
 
-int main (void)
-{
-  ...
-}
+- `Storage/`
+  - Shared persistence helpers for LittleFS JSON workflows
 
-```
+- `WebServer/`
+  - Async HTTP routing (`/api/*`)
+  - Auth/session handling, users/logs/status endpoints
+  - Static dashboard asset serving from LittleFS
 
-The PlatformIO Library Dependency Finder will find automatically dependent
-libraries by scanning project source files.
+## Design rules
 
-More information about PlatformIO Library Dependency Finder
-- https://docs.platformio.org/page/librarymanager/ldf.html
+1. Keep modules focused (single responsibility).
+2. Use non-blocking logic (`millis()` timing, async callbacks).
+3. Avoid cross-component circular dependencies.
+4. Route all UI/API-facing state changes through `WebServer` APIs and runtime orchestrator logic in `src/main_runtime.cpp`.
+
+## Adding a new component
+
+Create `lib/<ComponentName>/` with:
+
+- `<ComponentName>.h`
+- `<ComponentName>.cpp`
+- optional `library.json` for custom compile flags/deps
+
+Then include it from runtime orchestration code as needed.

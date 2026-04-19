@@ -51,6 +51,9 @@ The system is designed around non-blocking patterns (`millis()` timers + async H
 - 2FA flow after valid RFID:
   - Primary: **Telegram OTP (4 digits, 30s TTL)**
   - Fallback: **Offline Backup PIN (4 digits)**
+- Keypad quick controls:
+   - `B` = instant Backup PIN mode
+   - `#` = submit OTP/PIN (and can also open backup mode from idle)
 - Guest PIN support via Telegram admin command (`/guest_code`, 30 seconds)
 - Duress code support (`2580`) with unlock + silent escalation path
 
@@ -202,7 +205,7 @@ SecureLock/
 - Monitor serial: `pio device monitor -b 115200 -f direct`
 
 ### Helper scripts
-- `build.ps1` — clean/install/update/build helper
+- `build.ps1` — **default full deploy helper** (`build -> uploadfs -> upload`) via `scripts/deploy_all.ps1`; pass `-BuildOnly` for compile-only checks
 - `scripts/deploy_all.ps1` — Windows full pipeline (`clean -> build -> uploadfs -> upload -> monitor`)
 - `scripts/deploy_safe.sh` — Linux/macOS safe deployment helper
 
@@ -225,10 +228,10 @@ Main UI file: `data/html/pages/dashboard.html`
 ### Notable dashboard behavior
 - Admin overlay lock until authenticated
 - Polling intervals (from `data/js/core/config.js`):
-   - Status: 2.8s desktop / 3.6s mobile (adaptive backoff + jitter)
-   - Logs: 10s (20s when tab hidden)
+   - Status: 2.8s desktop / 4.2s mobile (adaptive backoff + jitter)
+   - Logs: 20s desktop / 30s mobile (skips offscreen rerenders)
    - Users: 15s (30s when tab hidden)
-   - Diagnostics: 5s desktop / 9s mobile (12s when hidden)
+   - Diagnostics: 5s desktop / 12s mobile (12s when hidden)
    - RFID enrollment poll: 400ms (adaptive backoff under errors/hidden tab)
  - Role-aware logs (source badges + actor role badges + search/status/date filters)
  - Lock telemetry chips (API RTT, Telegram queue depth, Telegram polling cadence)
@@ -244,6 +247,12 @@ Base path: `/api`
 
 ### Authentication
 Most endpoints require `Authorization: Bearer <token>` from `/api/auth/login`.
+
+Web dashboard login can be configured with one or two admin accounts:
+- `DASHBOARD_ADMIN_1_USERNAME` / `DASHBOARD_ADMIN_1_PASSWORD`
+- `DASHBOARD_ADMIN_2_USERNAME` / `DASHBOARD_ADMIN_2_PASSWORD` (optional)
+
+When configured, audit logs identify the editor as `Admin 1 (Web)` or `Admin 2 (Web)`.
 
 ### Endpoints
 
@@ -280,6 +289,7 @@ Most endpoints require `Authorization: Bearer <token>` from `/api/auth/login`.
 - `/start` — admin session heartbeat/verification
 - `/my_info` — admin account + device link summary
 - `/status` — live lock/alarm/WiFi status snapshot
+- `/user` — enrolled accounts report (admins + users)
 - `/admin_open` — policy-protected emergency unlock
 - `/guest_code` — generate/reuse 30-second guest PIN
 - `/buzzer_test` — buzzer diagnostic command

@@ -20,6 +20,7 @@ const char* USERS_NAME_KEY = "name";
 const char* USERS_PIN_KEY = "pin";
 const char* USERS_BACKUP_PIN_KEY = "backupPIN";
 const char* USERS_CHAT_ID_KEY = "telegramChatID";
+const char* USERS_CHAT_ID_LEGACY_KEY = "chat_id";
 
 bool isFourDigitCode(const String& value) {
     if (value.length() != 4) {
@@ -27,6 +28,28 @@ bool isFourDigitCode(const String& value) {
     }
 
     for (size_t i = 0; i < value.length(); i++) {
+        if (!isDigit(value.charAt(i))) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool isValidTelegramChatIdForOtp(const String& value) {
+    if (value.length() < 6 || value.length() > 15) {
+        return false;
+    }
+
+    size_t start = 0;
+    if (value.charAt(0) == '-') {
+        if (value.length() < 7) {
+            return false;
+        }
+        start = 1;
+    }
+
+    for (size_t i = start; i < value.length(); i++) {
         if (!isDigit(value.charAt(i))) {
             return false;
         }
@@ -48,17 +71,19 @@ AuthHandler::AuthHandler()
     _lastAcceptedKeyChar('\0'),
     _lastRawKey('\0'),
     _lastRawKeyChangeMs(0),
-    _sameKeyRetriggerUsed(false),
       _keypadNoiseWindowStartMs(0),
       _keypadNoiseCount(0),
       _keypadMutedUntilMs(0),
       _keypadReadyAtMs(0),
       _keypadRuntimeSettlingStarted(false),
     _heldKey('\0'),
+            _heldKeySinceMs(0),
+            _sameKeyRetriggerUsed(false),
       _activeRfidRstPin(PIN_RFID_RST),
     _rfidReady(false),
       _factoryPressStart(0),
       _factoryPressed(false),
+            _lastStorageError(AUTH_STORAGE_OK),
       _userCount(0)
 {
 }
@@ -347,6 +372,7 @@ char AuthHandler::getKeypadKey() {
     if (rawKey == '\0') {
         if ((now - _lastRawKeyChangeMs) >= KEYPAD_STABLE_RELEASE_MS) {
             _heldKey = '\0';
+            _heldKeySinceMs = 0;
             _sameKeyRetriggerUsed = false;
         }
         return '\0';
@@ -358,17 +384,17 @@ char AuthHandler::getKeypadKey() {
 
     const bool sameKeyAsHeld = (_heldKey == rawKey);
 
-    // Emit one key event per physical press; ignore repeats while held.
+    // Emit one key event per physical press.
+    // If release edge is missed on noisy matrix wiring, allow one controlled
+    // retrigger after a hold interval so repeated digits remain usable.
     if (sameKeyAsHeld) {
-        const unsigned long sinceLastAccepted = now - _lastAcceptedKeyMs;
-        if (_sameKeyRetriggerUsed || sinceLastAccepted < KEYPAD_SAME_KEY_REPRESS_MS) {
+        if (!_sameKeyRetriggerUsed
+            && _heldKeySinceMs > 0
+            && (now - _heldKeySinceMs) >= KEYPAD_SAME_KEY_RETRIGGER_MS) {
+            _sameKeyRetriggerUsed = true;
+        } else {
             return '\0';
         }
-
-        // Rescue path for repeated identical digits when release edge is noisy/missed.
-        _sameKeyRetriggerUsed = true;
-    } else {
-        _sameKeyRetriggerUsed = false;
     }
 
     const bool supported = ((rawKey >= '0' && rawKey <= '9') || rawKey == '*' || rawKey == '#'
@@ -381,7 +407,14 @@ char AuthHandler::getKeypadKey() {
         return '\0';
     }
 
-    if (now - _lastAcceptedKeyMs < KEYPAD_MIN_KEY_INTERVAL_MS) {
+    const bool modeControlKey = (rawKey == 'B' || rawKey == 'b' || rawKey == '#' || rawKey == '*');
+    if (!modeControlKey && (now - _lastAcceptedKeyMs) < KEYPAD_MIN_KEY_INTERVAL_MS) {
+        return '\0';
+    }
+
+    if (modeControlKey
+        && _lastAcceptedKeyChar == rawKey
+        && (now - _lastAcceptedKeyMs) < 16) {
         return '\0';
     }
 
@@ -400,6 +433,8 @@ char AuthHandler::getKeypadKey() {
     }
 
     _heldKey = rawKey;
+    _heldKeySinceMs = now;
+    _sameKeyRetriggerUsed = false;
     _lastAcceptedKeyMs = now;
     _lastAcceptedKeyChar = rawKey;
     return rawKey;
@@ -456,6 +491,47 @@ char AuthHandler::_scanKeypadRaw() {
         return detected;
     };
 
+    // Fallback scan: capture each row baseline with all columns HIGH, then drive
+    // each column LOW and look for rows that move away from baseline.
+    // This complements the edge-based detector on electrically noisy keypads.
+    auto scanAgainstBaseline = [this](unsigned int settleUs, unsigned int edgeUs) -> char {
+        int baseline[ROWS];
+
+        for (byte c = 0; c < COLS; c++) {
+            digitalWrite(_colPins[c], HIGH);
+        }
+        delayMicroseconds(settleUs);
+
+        for (byte r = 0; r < ROWS; r++) {
+            baseline[r] = digitalRead(_rowPins[r]);
+        }
+
+        char detected = '\0';
+        int hits = 0;
+
+        for (byte c = 0; c < COLS; c++) {
+            digitalWrite(_colPins[c], LOW);
+            delayMicroseconds(edgeUs);
+
+            for (byte r = 0; r < ROWS; r++) {
+                const int state = digitalRead(_rowPins[r]);
+                if (state != baseline[r]) {
+                    detected = _keys[r][c];
+                    hits++;
+                }
+            }
+
+            digitalWrite(_colPins[c], HIGH);
+            delayMicroseconds(edgeUs);
+        }
+
+        if (hits != 1) {
+            return '\0';
+        }
+
+        return detected;
+    };
+
     auto majorityVote = [](char a, char b, char c) -> char {
         if (a != '\0' && (a == b || a == c)) {
             return a;
@@ -492,6 +568,16 @@ char AuthHandler::_scanKeypadRaw() {
     delayMicroseconds(450);
     const char confirmation = scanOnce(45, 75);
     if (confirmation == candidate) {
+        return candidate;
+    }
+
+    const char baseline1 = scanAgainstBaseline(45, 70);
+    const char baseline2 = scanAgainstBaseline(45, 70);
+    if (baseline1 != '\0' && baseline1 == baseline2) {
+        return baseline1;
+    }
+
+    if (candidate != '\0' && (baseline1 == candidate || baseline2 == candidate)) {
         return candidate;
     }
 
@@ -533,18 +619,25 @@ AuthResult AuthHandler::validatePIN(const String& pin) {
 }
 
 bool AuthHandler::addUser(const String& uid, const String& pin, const String& name) {
+    _setStorageError(AUTH_STORAGE_OK);
+
     if (!_ensureFileSystemReady()) {
         return false;
     }
 
-    _loadUsersFromFS();
+    if (!_loadUsersFromFS()) {
+        _setStorageError(AUTH_STORAGE_LOAD_FAILED);
+        return false;
+    }
 
     String normalizedUid = _normalizeUID(uid);
     if (normalizedUid.length() == 0 || pin.length() == 0 || name.length() == 0) {
+        _setStorageError(AUTH_STORAGE_INVALID_INPUT);
         return false;
     }
 
     if (!isFourDigitCode(pin)) {
+        _setStorageError(AUTH_STORAGE_INVALID_INPUT);
         return false;
     }
 
@@ -559,7 +652,13 @@ bool AuthHandler::addUser(const String& uid, const String& pin, const String& na
         }
     } else {
         JsonArray users = _usersArray();
-        if (users.isNull() || _userCount >= MAX_USERS) {
+        if (users.isNull()) {
+            _setStorageError(AUTH_STORAGE_USERS_ARRAY_INVALID);
+            return false;
+        }
+
+        if (_userCount >= MAX_USERS) {
+            _setStorageError(AUTH_STORAGE_USER_LIMIT_REACHED);
             return false;
         }
 
@@ -643,21 +742,17 @@ bool AuthHandler::setUserTelegramChatId(const String& uid, const String& chatId)
     normalizedChat.trim();
 
     if (normalizedChat.length() > 0) {
-        if (normalizedChat.length() != 10) {
+        if (!isValidTelegramChatIdForOtp(normalizedChat)) {
             return false;
-        }
-
-        for (size_t i = 0; i < normalizedChat.length(); i++) {
-            if (!isDigit(normalizedChat.charAt(i))) {
-                return false;
-            }
         }
     }
 
     if (normalizedChat.length() == 0) {
         user.remove(USERS_CHAT_ID_KEY);
+        user.remove(USERS_CHAT_ID_LEGACY_KEY);
     } else {
         user[USERS_CHAT_ID_KEY] = normalizedChat;
+        user[USERS_CHAT_ID_LEGACY_KEY] = normalizedChat;
     }
 
     return _saveUsersToFS();
@@ -669,7 +764,13 @@ String AuthHandler::getUserTelegramChatId(const String& uid) {
         return "";
     }
 
-    return user[USERS_CHAT_ID_KEY] | "";
+    String normalizedChat = user[USERS_CHAT_ID_KEY] | "";
+    if (normalizedChat.length() == 0) {
+        normalizedChat = user[USERS_CHAT_ID_LEGACY_KEY] | "";
+    }
+
+    normalizedChat.trim();
+    return normalizedChat;
 }
 
 bool AuthHandler::isKnownTelegramChatId(const String& chatId) {
@@ -686,6 +787,9 @@ bool AuthHandler::isKnownTelegramChatId(const String& chatId) {
 
     for (JsonObject u : users) {
         String listedChat = u[USERS_CHAT_ID_KEY] | "";
+        if (listedChat.length() == 0) {
+            listedChat = u[USERS_CHAT_ID_LEGACY_KEY] | "";
+        }
         listedChat.trim();
         if (listedChat == normalizedChat) {
             return true;
@@ -741,6 +845,57 @@ String AuthHandler::getUserUIDAt(int index) const {
     return _userUIDs[index];
 }
 
+AuthStorageError AuthHandler::getLastStorageError() const {
+    return _lastStorageError;
+}
+
+String AuthHandler::getLastStorageErrorLabel() const {
+    switch (_lastStorageError) {
+    case AUTH_STORAGE_OK:
+        return "OK";
+    case AUTH_STORAGE_FS_UNAVAILABLE:
+        return "FS_UNAVAILABLE";
+    case AUTH_STORAGE_LOAD_FAILED:
+        return "LOAD_FAILED";
+    case AUTH_STORAGE_INVALID_INPUT:
+        return "INVALID_INPUT";
+    case AUTH_STORAGE_USERS_ARRAY_INVALID:
+        return "USERS_ARRAY_INVALID";
+    case AUTH_STORAGE_USER_LIMIT_REACHED:
+        return "USER_LIMIT_REACHED";
+    case AUTH_STORAGE_WRITE_OPEN_FAILED:
+        return "WRITE_OPEN_FAILED";
+    case AUTH_STORAGE_WRITE_SERIALIZE_FAILED:
+        return "WRITE_SERIALIZE_FAILED";
+    default:
+        return "UNKNOWN";
+    }
+}
+
+bool AuthHandler::getStorageUsage(size_t* usedBytes, size_t* totalBytes) const {
+    if (usedBytes) {
+        *usedBytes = 0;
+    }
+
+    if (totalBytes) {
+        *totalBytes = 0;
+    }
+
+    if (!StorageService::instance().isMounted()) {
+        return false;
+    }
+
+    if (usedBytes) {
+        *usedBytes = LittleFS.usedBytes();
+    }
+
+    if (totalBytes) {
+        *totalBytes = LittleFS.totalBytes();
+    }
+
+    return true;
+}
+
 bool AuthHandler::checkFactoryReset() {
     const bool currentPressed = digitalRead(PIN_FACTORY) == LOW;
     const unsigned long now = millis();
@@ -763,7 +918,7 @@ bool AuthHandler::checkFactoryReset() {
 
 void AuthHandler::performFactoryReset() {
     _usersDoc.clear();
-    _usersDoc[USERS_KEY] = JsonArray();
+    _usersDoc[USERS_KEY].to<JsonArray>();
     _saveUsersToFS();
     _loadUsersFromFS();
 }
@@ -844,12 +999,13 @@ bool AuthHandler::_loadUsersFromFS() {
     _usersDoc.clear();
 
     if (!LittleFS.exists(USERS_FILE)) {
-        _usersDoc[USERS_KEY] = JsonArray();
+        _usersDoc[USERS_KEY].to<JsonArray>();
         _saveUsersToFS();
     }
 
     File file = LittleFS.open(USERS_FILE, "r");
     if (!file) {
+        _setStorageError(AUTH_STORAGE_LOAD_FAILED);
         return false;
     }
 
@@ -858,12 +1014,12 @@ bool AuthHandler::_loadUsersFromFS() {
 
     if (err || !_usersDoc.is<JsonObject>()) {
         _usersDoc.clear();
-        _usersDoc[USERS_KEY] = JsonArray();
+        _usersDoc[USERS_KEY].to<JsonArray>();
         _saveUsersToFS();
     }
 
     if (!_usersDoc[USERS_KEY].is<JsonArray>()) {
-        _usersDoc[USERS_KEY] = JsonArray();
+        _usersDoc[USERS_KEY].to<JsonArray>();
         _saveUsersToFS();
     }
 
@@ -879,18 +1035,25 @@ bool AuthHandler::_saveUsersToFS() {
 
     File file = LittleFS.open(USERS_FILE, "w");
     if (!file) {
+        _setStorageError(AUTH_STORAGE_WRITE_OPEN_FAILED);
         return false;
     }
 
     const size_t written = serializeJson(_usersDoc, file);
     file.close();
 
-    return written > 0;
+    if (written == 0) {
+        _setStorageError(AUTH_STORAGE_WRITE_SERIALIZE_FAILED);
+        return false;
+    }
+
+    _setStorageError(AUTH_STORAGE_OK);
+    return true;
 }
 
 JsonArray AuthHandler::_usersArray() {
     if (!_usersDoc[USERS_KEY].is<JsonArray>()) {
-        _usersDoc[USERS_KEY] = JsonArray();
+        _usersDoc[USERS_KEY].to<JsonArray>();
     }
 
     return _usersDoc[USERS_KEY].as<JsonArray>();
@@ -914,16 +1077,18 @@ JsonObject AuthHandler::_findUserByUID(const String& uid) {
 
 bool AuthHandler::_ensureFileSystemReady() {
     if (StorageService::instance().ensureMounted()) {
+        _setStorageError(AUTH_STORAGE_OK);
         return true;
     }
 
+    _setStorageError(AUTH_STORAGE_FS_UNAVAILABLE);
     Serial.println("[AUTH][WARN] LittleFS not ready for auth storage");
     return false;
 }
 
 bool AuthHandler::_compactUsers() {
     if (!_usersDoc[USERS_KEY].is<JsonArray>()) {
-        _usersDoc[USERS_KEY] = JsonArray();
+        _usersDoc[USERS_KEY].to<JsonArray>();
     }
 
     JsonArray users = _usersArray();
@@ -944,6 +1109,9 @@ bool AuthHandler::_compactUsers() {
         String pin = u[USERS_PIN_KEY] | "";
         String name = u[USERS_NAME_KEY] | "";
         String chat = u[USERS_CHAT_ID_KEY] | "";
+        if (chat.length() == 0) {
+            chat = u[USERS_CHAT_ID_LEGACY_KEY] | "";
+        }
         String backup = u[USERS_BACKUP_PIN_KEY] | "";
 
         pin.trim();
@@ -982,6 +1150,7 @@ bool AuthHandler::_compactUsers() {
 
         if (chat.length() > 0) {
             nu[USERS_CHAT_ID_KEY] = chat;
+            nu[USERS_CHAT_ID_LEGACY_KEY] = chat;
         }
 
         if (isFourDigitCode(backup)) {
@@ -998,7 +1167,7 @@ bool AuthHandler::_compactUsers() {
     const bool sizeDiffers = compactCount != static_cast<int>(users.size());
     if (changed || sizeDiffers) {
         _usersDoc.clear();
-        _usersDoc[USERS_KEY] = JsonArray();
+        _usersDoc[USERS_KEY].to<JsonArray>();
         JsonArray dst = _usersArray();
         for (JsonObject srcUser : compactUsers) {
             JsonObject du = dst.add<JsonObject>();
@@ -1014,4 +1183,8 @@ bool AuthHandler::_compactUsers() {
 
     _userCount = compactCount;
     return true;
+}
+
+void AuthHandler::_setStorageError(AuthStorageError error) {
+    _lastStorageError = error;
 }

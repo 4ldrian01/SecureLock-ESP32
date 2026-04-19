@@ -7,6 +7,7 @@ param(
     [int]$MonitorBaud = 115200,
     [switch]$NoMonitor,
     [switch]$SkipClean,
+    [switch]$ForceUploadFS,
     [string]$ExpectedIp = "",
     [int]$EndpointTimeoutSec = 4,
     [int]$UploadMaxAttempts = 3,
@@ -285,7 +286,90 @@ function Test-PostDeployEndpoints {
     }
 }
 
+function Get-SourceDataFingerprint {
+    param(
+        [Parameter(Mandatory = $true)][string]$DataPath
+    )
+
+    if (-not (Test-Path $DataPath)) {
+        return ""
+    }
+
+    $resolvedDataPath = (Resolve-Path $DataPath).Path
+    if (-not $resolvedDataPath.EndsWith("\")) {
+        $resolvedDataPath += "\"
+    }
+
+    $files = Get-ChildItem -Path $DataPath -File -Recurse |
+        Where-Object {
+            $name = $_.Name.ToLowerInvariant()
+            -not $name.EndsWith('.gz') -and $name -ne 'logs.json' -and $name -ne 'users.json'
+        } |
+        Sort-Object FullName
+
+    $builder = New-Object System.Text.StringBuilder
+    foreach ($file in $files) {
+        $fullName = $file.FullName
+        $relative = $fullName
+
+        if ($fullName.StartsWith($resolvedDataPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $relative = $fullName.Substring($resolvedDataPath.Length)
+        }
+
+        $relative = $relative.Replace('\\', '/')
+        [void]$builder.Append($relative)
+        [void]$builder.Append('|')
+        [void]$builder.Append($file.Length)
+        [void]$builder.Append('|')
+        [void]$builder.Append($file.LastWriteTimeUtc.Ticks)
+        [void]$builder.Append("`n")
+    }
+
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($builder.ToString())
+        $hashBytes = $sha.ComputeHash($bytes)
+        return -join ($hashBytes | ForEach-Object { $_.ToString("x2") })
+    }
+    finally {
+        $sha.Dispose()
+    }
+}
+
+function Read-TextFileSafely {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    if (-not (Test-Path $Path)) {
+        return ""
+    }
+
+    try {
+        return (Get-Content -Path $Path -Raw -ErrorAction Stop).Trim()
+    }
+    catch {
+        return ""
+    }
+}
+
+function Write-TextFileSafely {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Value
+    )
+
+    $directory = Split-Path -Parent $Path
+    if ($directory -and -not (Test-Path $directory)) {
+        New-Item -Path $directory -ItemType Directory -Force | Out-Null
+    }
+
+    Set-Content -Path $Path -Value $Value -Encoding UTF8
+}
+
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$dataRoot = Join-Path $projectRoot "data"
+$uploadFsFingerprintCachePath = Join-Path $projectRoot ".cache\uploadfs_source_fingerprint.txt"
 
 $pioCandidates = @(
     "C:\pio_core\penv\Scripts\platformio.exe",
@@ -332,6 +416,9 @@ if (-not $InteractiveRetry) {
 if ($SkipEndpointChecks) {
     Write-Host "[DEPLOY] Endpoint checks: skipped by -SkipEndpointChecks" -ForegroundColor Yellow
 }
+if ($ForceUploadFS) {
+    Write-Host "[DEPLOY] UploadFS skip optimization: disabled by -ForceUploadFS" -ForegroundColor Yellow
+}
 
 Push-Location $projectRoot
 try {
@@ -351,34 +438,51 @@ try {
         & $pioExe run
     } -RetryDelaySec $RetryDelaySec -InteractiveRetry:$InteractiveRetry
 
-    $uploadFsStepParams = @{
-        Title = "Upload filesystem (LittleFS)"
-        MaxAttempts = $UploadMaxAttempts
-        RetryDelaySec = $RetryDelaySec
-        RetryHint = "If flashing fails or says wrong boot mode, hold the BOOT button while retrying; release after 'Connecting...'."
-        BeforeAttempt = {
-            $script:resolvedUploadPort = Resolve-UploadPort -RequestedPort $UploadPort -PioExecutable $pioExe
-            Stop-StalePlatformIOMonitors -Port $script:resolvedUploadPort
-            if ($script:resolvedUploadPort) {
-                Write-Host "[DEPLOY] Uploadfs attempt using port: $script:resolvedUploadPort" -ForegroundColor DarkGray
+    $sourceFingerprintCurrent = Get-SourceDataFingerprint -DataPath $dataRoot
+    $sourceFingerprintPrevious = Read-TextFileSafely -Path $uploadFsFingerprintCachePath
+    $shouldUploadFs = $true
+
+    if (-not $ForceUploadFS -and $sourceFingerprintCurrent -and $sourceFingerprintCurrent -eq $sourceFingerprintPrevious) {
+        $shouldUploadFs = $false
+    }
+
+    if ($shouldUploadFs) {
+        $uploadFsStepParams = @{
+            Title = "Upload filesystem (LittleFS)"
+            MaxAttempts = $UploadMaxAttempts
+            RetryDelaySec = $RetryDelaySec
+            RetryHint = "If flashing fails or says wrong boot mode, hold the BOOT button while retrying; release after 'Connecting...'."
+            BeforeAttempt = {
+                $script:resolvedUploadPort = Resolve-UploadPort -RequestedPort $UploadPort -PioExecutable $pioExe
+                Stop-StalePlatformIOMonitors -Port $script:resolvedUploadPort
+                if ($script:resolvedUploadPort) {
+                    Write-Host "[DEPLOY] Uploadfs attempt using port: $script:resolvedUploadPort" -ForegroundColor DarkGray
+                }
+                else {
+                    Write-Host "[DEPLOY] Uploadfs attempt using auto-detected port" -ForegroundColor DarkGray
+                }
             }
-            else {
-                Write-Host "[DEPLOY] Uploadfs attempt using auto-detected port" -ForegroundColor DarkGray
+            Action = {
+                if ($script:resolvedUploadPort) {
+                    & $pioExe run --target uploadfs --upload-port $script:resolvedUploadPort
+                }
+                else {
+                    & $pioExe run --target uploadfs
+                }
             }
         }
-        Action = {
-            if ($script:resolvedUploadPort) {
-                & $pioExe run --target uploadfs --upload-port $script:resolvedUploadPort
-            }
-            else {
-                & $pioExe run --target uploadfs
-            }
+        if ($InteractiveRetry) {
+            $uploadFsStepParams.InteractiveRetry = $true
+        }
+        Invoke-Step @uploadFsStepParams
+
+        if ($sourceFingerprintCurrent) {
+            Write-TextFileSafely -Path $uploadFsFingerprintCachePath -Value $sourceFingerprintCurrent
         }
     }
-    if ($InteractiveRetry) {
-        $uploadFsStepParams.InteractiveRetry = $true
+    else {
+        Write-Host "`n[DEPLOY] Upload filesystem (LittleFS): skipped (no source data changes detected)" -ForegroundColor Green
     }
-    Invoke-Step @uploadFsStepParams
 
     $uploadFwStepParams = @{
         Title = "Upload firmware"

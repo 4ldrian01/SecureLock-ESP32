@@ -31,20 +31,23 @@
 
 .users-grid {
     display: grid;
+    grid-template-columns: 1fr;
     gap: var(--space-3);
     align-items: stretch;
 }
 
 @media (min-width: 640px) {
     .users-grid {
-        grid-template-columns: repeat(2, 1fr);
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
 
-@media (min-width: 1024px) {
-    .users-grid {
-        grid-template-columns: repeat(3, 1fr);
-    }
+.users-summary {
+    margin: 0 0 var(--space-3);
+    color: var(--text-subtle);
+    font-size: 0.8rem;
+    font-weight: 500;
+    letter-spacing: 0.01em;
 }
 
 .users-empty {
@@ -73,6 +76,28 @@
     contain: layout paint;
 }
 
+.user-card-admin,
+.user-card[data-role='admin'] {
+    border-color: color-mix(in srgb, var(--danger) 52%, var(--border) 48%);
+    background:
+        linear-gradient(
+            140deg,
+            color-mix(in srgb, var(--danger) 10%, transparent 90%) 0%,
+            color-mix(in srgb, var(--surface) 92%, #ffffff 8%) 100%
+        );
+}
+
+.user-card-admin:hover,
+.user-card[data-role='admin']:hover {
+    border-color: color-mix(in srgb, var(--danger) 68%, var(--border-strong) 32%);
+    background:
+        linear-gradient(
+            140deg,
+            color-mix(in srgb, var(--danger) 14%, transparent 86%) 0%,
+            color-mix(in srgb, var(--surface-hover) 90%, #ffffff 10%) 100%
+        );
+}
+
 .user-card:hover {
     background: color-mix(in srgb, var(--surface-hover) 88%, #ffffff 12%);
     border-color: color-mix(in srgb, var(--primary) 44%, var(--border-strong) 56%);
@@ -83,16 +108,6 @@
 .user-card-locked {
     border-color: color-mix(in srgb, var(--danger) 36%, var(--border) 64%);
     background: color-mix(in srgb, var(--danger) 8%, var(--surface) 92%);
-}
-
-.user-card-seeded-admin {
-    border-color: color-mix(in srgb, var(--warning) 46%, var(--border-strong) 54%);
-    background: color-mix(in srgb, var(--warning) 9%, var(--surface) 91%);
-}
-
-.user-card-seeded-admin:hover {
-    border-color: color-mix(in srgb, var(--warning) 60%, var(--border-strong) 40%);
-    background: color-mix(in srgb, var(--warning) 12%, var(--surface-hover) 88%);
 }
 
 .user-card-locked:hover {
@@ -111,6 +126,7 @@
     display: flex;
     align-items: center;
     gap: var(--space-2);
+    flex-wrap: wrap;
 }
 
 .user-name {
@@ -162,9 +178,15 @@
 }
 
 .badge-admin {
-    background: color-mix(in srgb, var(--danger) 18%, transparent 82%);
-    color: var(--danger-light);
-    border-color: color-mix(in srgb, var(--danger) 46%, transparent 54%);
+    background:
+        linear-gradient(
+            135deg,
+            color-mix(in srgb, var(--danger) 88%, #5f0a0a 12%),
+            color-mix(in srgb, var(--danger) 72%, #4a0505 28%)
+        );
+    color: #fff;
+    border-color: color-mix(in srgb, var(--danger) 78%, #ffd7d7 22%);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--danger) 35%, transparent 65%);
 }
 
 .badge-user {
@@ -184,10 +206,6 @@
     gap: var(--space-2);
     align-items: center;
     flex-shrink: 0;
-}
-
-.user-actions .user-badge {
-    margin-left: 0.15rem;
 }
 
 .btn-edit,
@@ -245,7 +263,7 @@
 
 @media (max-width: 1023px) {
     .users-grid {
-        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 12px;
     }
 

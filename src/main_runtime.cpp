@@ -180,6 +180,16 @@ unsigned long lastRfidSuccessFeedbackMs = 0;
 unsigned long lastRfidDeniedFeedbackMs = 0;
 static const unsigned long RFID_SUCCESS_FEEDBACK_MIN_INTERVAL_MS = 400;
 static const unsigned long RFID_DENIED_FEEDBACK_MIN_INTERVAL_MS = 1200;
+static const unsigned long RFID_ENROLLMENT_WINDOW_DEFAULT_MS = 25000;
+static const unsigned long RFID_ENROLLMENT_WINDOW_MIN_MS = 3000;
+static const unsigned long RFID_ENROLLMENT_WINDOW_MAX_MS = 60000;
+static const unsigned long RFID_ENROLLMENT_FEEDBACK_MIN_INTERVAL_MS = 300;
+volatile unsigned long rfidEnrollmentWindowStartedMs = 0;
+volatile unsigned long rfidEnrollmentWindowUntilMs = 0;
+char rfidEnrollmentWindowSource[25] = "idle";
+portMUX_TYPE rfidEnrollmentMux = portMUX_INITIALIZER_UNLOCKED;
+unsigned long lastEnrollmentRfidHandledScanMs = 0;
+unsigned long lastEnrollmentRfidFeedbackMs = 0;
 static const unsigned long PENDING_2FA_CONFLICT_FEEDBACK_MS = 1500;
 static const unsigned long PENDING_2FA_CONFLICT_LOG_MS = 4000;
 static const unsigned long KEYPAD_AUTH_ALERT_MIN_INTERVAL_MS = 5000;
@@ -245,7 +255,7 @@ bool ensureTelegramPollingMode();
 void sendDuressAlert(String userName);
 void sendTheftAlert();
 void sendTamperAlert();
-bool sendOTP(String chatID, String otp);
+bool sendOTP(String chatID, String otp, bool* queuedFallback = nullptr);
 void sendRfidScanAlert(String uid, bool known, const String& userName);
 String normalizeTelegramCommand(const String& rawText);
 bool enqueueAdminNotification(const String& message);
@@ -257,12 +267,19 @@ String getSeededAdminOverrideNameByChatId(const String& chatId);
 String getSeededAdminNameByChatId(const String& chatId);
 bool resolveEnrolledUserIdentityByChatId(const String& chatId, String* matchedName, String* matchedUid = nullptr);
 String getTelegramActorLabel(const String& chatId, TelegramRole role);
+bool sendAdminEnrollmentReport(const String& chatId, const String& actorLabel);
 int getTelegramChatSlot(const String& chatId, bool createIfMissing = true);
 bool isDangerousAdminCommand(const String& command);
 bool shouldThrottleTelegramCommand(const String& chatId, bool dangerous, unsigned long* retryAfterMs = nullptr);
 bool shouldThrottleUnknownNotice(const String& chatId, unsigned long* retryAfterMs = nullptr);
 bool shouldThrottleUnauthorizedAdminAlert(const String& chatId, unsigned long* retryAfterMs = nullptr);
 String roleToText(TelegramRole role);
+void beginRfidEnrollmentWindow(const String& source, unsigned long durationMs = RFID_ENROLLMENT_WINDOW_DEFAULT_MS);
+void endRfidEnrollmentWindow(const String& source = "");
+bool isRfidEnrollmentWindowActive();
+unsigned long getRfidEnrollmentWindowRemainingMs();
+String getRfidEnrollmentWindowSource();
+bool handleRfidScanDuringEnrollment(AuthResult rfidResult);
 bool requestWebGuestCode(String* issuedCode, unsigned long* remainingMs, bool* reusedExisting);
 
 String getActiveGuestCode();
@@ -557,6 +574,173 @@ String roleToText(TelegramRole role) {
     }
 }
 
+void beginRfidEnrollmentWindow(const String& source, unsigned long durationMs) {
+    String normalizedSource = source;
+    normalizedSource.trim();
+    if (normalizedSource.length() == 0) {
+        normalizedSource = "dashboard";
+    }
+
+    if (normalizedSource.length() > 24) {
+        normalizedSource = normalizedSource.substring(0, 24);
+        normalizedSource.trim();
+    }
+
+    if (normalizedSource.length() == 0) {
+        normalizedSource = "dashboard";
+    }
+
+    unsigned long windowMs = durationMs;
+    if (windowMs < RFID_ENROLLMENT_WINDOW_MIN_MS) {
+        windowMs = RFID_ENROLLMENT_WINDOW_DEFAULT_MS;
+    }
+    if (windowMs > RFID_ENROLLMENT_WINDOW_MAX_MS) {
+        windowMs = RFID_ENROLLMENT_WINDOW_MAX_MS;
+    }
+
+    const unsigned long now = millis();
+    const unsigned long untilMs = now + windowMs;
+
+    portENTER_CRITICAL(&rfidEnrollmentMux);
+    rfidEnrollmentWindowStartedMs = now;
+    rfidEnrollmentWindowUntilMs = untilMs;
+    normalizedSource.toCharArray(rfidEnrollmentWindowSource, sizeof(rfidEnrollmentWindowSource));
+    portEXIT_CRITICAL(&rfidEnrollmentMux);
+
+    Serial.print("[RFID][ENROLL] Window started source=");
+    Serial.print(normalizedSource);
+    Serial.print(" ttlMs=");
+    Serial.println(windowMs);
+}
+
+void endRfidEnrollmentWindow(const String& source) {
+    String normalizedSource = source;
+    normalizedSource.trim();
+    if (normalizedSource.length() == 0) {
+        normalizedSource = "dashboard";
+    }
+
+    const bool wasActive = isRfidEnrollmentWindowActive();
+
+    portENTER_CRITICAL(&rfidEnrollmentMux);
+    rfidEnrollmentWindowStartedMs = 0;
+    rfidEnrollmentWindowUntilMs = 0;
+    snprintf(rfidEnrollmentWindowSource, sizeof(rfidEnrollmentWindowSource), "%s", "idle");
+    portEXIT_CRITICAL(&rfidEnrollmentMux);
+
+    if (wasActive) {
+        Serial.print("[RFID][ENROLL] Window stopped source=");
+        Serial.println(normalizedSource);
+    }
+}
+
+bool isRfidEnrollmentWindowActive() {
+    unsigned long untilMs = 0;
+    portENTER_CRITICAL(&rfidEnrollmentMux);
+    untilMs = rfidEnrollmentWindowUntilMs;
+    portEXIT_CRITICAL(&rfidEnrollmentMux);
+
+    if (untilMs == 0) {
+        return false;
+    }
+
+    const unsigned long now = millis();
+    const long remainingMs = static_cast<long>(untilMs - now);
+    if (remainingMs > 0) {
+        return true;
+    }
+
+    portENTER_CRITICAL(&rfidEnrollmentMux);
+    if (rfidEnrollmentWindowUntilMs != 0) {
+        rfidEnrollmentWindowStartedMs = 0;
+        rfidEnrollmentWindowUntilMs = 0;
+        snprintf(rfidEnrollmentWindowSource, sizeof(rfidEnrollmentWindowSource), "%s", "idle");
+    }
+    portEXIT_CRITICAL(&rfidEnrollmentMux);
+
+    return false;
+}
+
+unsigned long getRfidEnrollmentWindowRemainingMs() {
+    unsigned long untilMs = 0;
+    portENTER_CRITICAL(&rfidEnrollmentMux);
+    untilMs = rfidEnrollmentWindowUntilMs;
+    portEXIT_CRITICAL(&rfidEnrollmentMux);
+
+    if (untilMs == 0) {
+        return 0;
+    }
+
+    const unsigned long now = millis();
+    const long remainingMs = static_cast<long>(untilMs - now);
+    if (remainingMs <= 0) {
+        return 0;
+    }
+
+    return static_cast<unsigned long>(remainingMs);
+}
+
+String getRfidEnrollmentWindowSource() {
+    char sourceBuffer[25] = {0};
+
+    portENTER_CRITICAL(&rfidEnrollmentMux);
+    snprintf(sourceBuffer, sizeof(sourceBuffer), "%s", rfidEnrollmentWindowSource);
+    portEXIT_CRITICAL(&rfidEnrollmentMux);
+
+    String source = sourceBuffer;
+    source.trim();
+    if (source.length() == 0) {
+        return "idle";
+    }
+
+    return source;
+}
+
+bool handleRfidScanDuringEnrollment(AuthResult rfidResult) {
+    if (rfidResult != AUTH_SUCCESS && rfidResult != AUTH_DENIED) {
+        return false;
+    }
+
+    if (!isRfidEnrollmentWindowActive()) {
+        return false;
+    }
+
+    authHandler.startRFIDCooldown();
+
+    const String uid = authHandler.getLastRFIDUID();
+    const unsigned long scanMs = authHandler.getLastRFIDScanMs();
+    const bool known = (uid.length() > 0) ? authHandler.userExists(uid) : false;
+    const String source = getRfidEnrollmentWindowSource();
+
+    if (scanMs > 0 && scanMs != lastEnrollmentRfidHandledScanMs) {
+        lastEnrollmentRfidHandledScanMs = scanMs;
+
+        const String actor = known
+            ? authHandler.getUserName(uid)
+            : "RFID Enrollment";
+
+        const String method = known
+            ? ("Enrollment Scan (Registered Card) [" + uid + "]")
+            : ("Enrollment Scan (Unregistered Card) [" + uid + "]");
+
+        webServer.logActivity(actor, method, "info");
+
+        if (known) {
+            enqueueAdminNotification(
+                "ℹ️ RFID enrollment mode: registered card scanned [" + uid + "] from " + source + "."
+            );
+        }
+    }
+
+    const unsigned long nowMs = millis();
+    if ((nowMs - lastEnrollmentRfidFeedbackMs) >= RFID_ENROLLMENT_FEEDBACK_MIN_INTERVAL_MS) {
+        securityManager.beep(1);
+        lastEnrollmentRfidFeedbackMs = nowMs;
+    }
+
+    return true;
+}
+
 const char* keypadStateToText(KeypadState state) {
     switch (state) {
         case STATE_AWAITING_2FA:
@@ -682,7 +866,10 @@ void loop() {
 
     if (!isLockdown && keypadState != STATE_BACKUP_ONLY) {
         AuthResult rfidResult = authHandler.checkRFID();
-        if (rfidResult == AUTH_SUCCESS) {
+        if (handleRfidScanDuringEnrollment(rfidResult)) {
+            // Enrollment mode intentionally suppresses standard registered/unregistered
+            // RFID workflows while preserving scan visibility for dashboard enrollment.
+        } else if (rfidResult == AUTH_SUCCESS) {
             const String uid = authHandler.getLastRFIDUID();
             const String userName = authHandler.getUserName(uid);
             const unsigned long scanMs = authHandler.getLastRFIDScanMs();
@@ -779,6 +966,11 @@ void loop() {
     if (keypadState == STATE_AWAITING_2FA && pendingOtpIssuedAtMs > 0) {
         if ((millis() - pendingOtpIssuedAtMs) >= OTP_TTL_MS) {
             securityManager.beep(3);
+            if (pendingUserName.length() > 0) {
+                enqueueAdminNotification(
+                    "⚠️ OTP timed out for " + pendingUserName + ". 2FA session expired."
+                );
+            }
             clearPending2FA("OTP timeout", true);
         }
     }
@@ -938,13 +1130,21 @@ void processKeypad() {
             Serial.println("[KEYPAD] Backup-only mode started via #");
         } else if (keypadState == STATE_AWAITING_2FA) {
             if (!awaitingOfflineBackupMode) {
-                awaitingOfflineBackupMode = true;
-                keypadBuffer = "";
-                keypadIdleBufferLastInputMs = 0;
-                authHandler.clearBuffer();
-                authPrompt = "Offline Mode: Enter Backup PIN";
-                webServer.logActivity(pendingUserName, "Offline Backup Mode", "success");
-                Serial.println("[KEYPAD] Switched to offline backup mode via # (2FA)");
+                if (keypadBuffer.length() == 0) {
+                    awaitingOfflineBackupMode = true;
+                    keypadBuffer = "";
+                    keypadIdleBufferLastInputMs = 0;
+                    authHandler.clearBuffer();
+                    authPrompt = "Offline Mode: Enter Backup PIN";
+                    webServer.logActivity(pendingUserName, "Offline Backup Mode", "success");
+                    Serial.println("[KEYPAD] Switched to offline backup mode via # (2FA)");
+                } else if (keypadBuffer.length() == OTP_LENGTH) {
+                    evaluateAwaiting2FABuffer(true);
+                } else {
+                    securityManager.beep(1);
+                    authPrompt = "Enter 4-digit OTP (auto-submit at 4 digits, or press B for Offline Mode)";
+                    Serial.println("[KEYPAD] # ignored: waiting for complete 4-digit OTP");
+                }
             } else {
                 if (keypadBuffer.length() == 0) {
                     authPrompt = "Offline Mode: Enter Backup PIN";
@@ -1027,6 +1227,12 @@ void processKeypad() {
     const size_t maxLen = awaitingOfflineBackupMode ? BACKUP_PIN_LENGTH : OTP_LENGTH;
     if (keypadBuffer.length() < maxLen) {
         keypadBuffer += key;
+        if (!awaitingOfflineBackupMode && keypadBuffer.length() == OTP_LENGTH) {
+            authPrompt = "Verifying OTP...";
+            securityManager.beep(1);
+            evaluateAwaiting2FABuffer(true);
+            return;
+        }
         evaluateAwaiting2FABuffer(false);
     }
 }
@@ -1062,11 +1268,21 @@ bool evaluateAwaiting2FABuffer(bool explicitSubmit) {
     }
 
     if (!awaitingOfflineBackupMode && len == OTP_LENGTH) {
+        Serial.print("[AUTH][OTP] submit entered=");
+        Serial.print(keypadBuffer);
+        Serial.print(" expected=");
+        Serial.println(pendingOtp);
+
         if (pendingOtp.length() == OTP_LENGTH && keypadBuffer == pendingOtp) {
             grantAccess(pendingUserName, "RFID + Telegram OTP", pendingUserChatId);
             Serial.println("[AUTH] RFID + Telegram OTP accepted");
         } else {
             securityManager.beep(3);
+            if (pendingUserName.length() > 0) {
+                enqueueAdminNotification(
+                    "⚠️ OTP verification failed for " + pendingUserName + "."
+                );
+            }
             clearPending2FA("OTP failed", true);
             Serial.println("[AUTH] RFID + Telegram OTP failed");
         }
@@ -1233,6 +1449,10 @@ void enterAwaiting2FAForUser(const String& uid) {
     awaitingOfflineBackupMode = false;
     backupOnlyModeStartedAtMs = 0;
 
+    if (!bot) {
+        initializeTelegramBotIfNeeded();
+    }
+
     if (bot) {
         pendingOtp = generateNumericCode(OTP_LENGTH);
         pendingOtpIssuedAtMs = millis();
@@ -1245,27 +1465,45 @@ void enterAwaiting2FAForUser(const String& uid) {
             pendingOtpIssuedAtMs = 0;
             authPrompt = "Offline Mode: Enter Backup PIN";
             securityManager.beep(1);
-            webServer.logActivity(pendingUserName, "OTP Unavailable - Missing Chat ID", "success");
+            webServer.logActivity(pendingUserName, "OTP Unavailable - Missing Chat ID", "fail");
+            enqueueAdminNotification(
+                "⚠️ OTP delivery blocked for " + pendingUserName + " (missing Telegram Chat ID)."
+            );
             return;
         }
 
-        const bool otpSent = sendOTP(otpTargetChat, pendingOtp);
-        if (!otpSent) {
+        bool otpQueuedFallback = false;
+        const bool otpDispatched = sendOTP(otpTargetChat, pendingOtp, &otpQueuedFallback);
+        if (!otpDispatched) {
             awaitingOfflineBackupMode = true;
             pendingOtp = "";
             pendingOtpIssuedAtMs = 0;
             authPrompt = "Offline Mode: Enter Backup PIN";
             securityManager.beep(1);
-            webServer.logActivity(pendingUserName, "OTP Send Failed - Backup PIN", "success");
+            webServer.logActivity(pendingUserName, "OTP Send Failed - Backup PIN", "fail");
+            enqueueAdminNotification(
+                "⚠️ OTP delivery failed for " + pendingUserName + ". Switched to Backup PIN mode."
+            );
             return;
         }
 
-        webServer.logActivity(pendingUserName, "OTP Sent", "success");
-        authPrompt = "Enter 4-digit OTP (press # or B for Offline Mode)";
+        if (otpQueuedFallback) {
+            webServer.logActivity(pendingUserName, "OTP Queued (Retry Delivery)", "info");
+            enqueueAdminNotification(
+                "ℹ️ OTP direct send retried via queue for " + pendingUserName + "."
+            );
+            authPrompt = "Enter 4-digit OTP (delivery retry in progress, auto-submit at 4 digits, or press B for Offline Mode)";
+        } else {
+            webServer.logActivity(pendingUserName, "OTP Sent", "success");
+            authPrompt = "Enter 4-digit OTP (auto-submit at 4 digits, or press B for Offline Mode)";
+        }
     } else {
         awaitingOfflineBackupMode = true;
         authPrompt = "Offline Mode: Enter Backup PIN";
-        webServer.logActivity(pendingUserName, "OTP Unavailable - Backup PIN", "success");
+        webServer.logActivity(pendingUserName, "OTP Unavailable - Telegram Offline", "fail");
+        enqueueAdminNotification(
+            "⚠️ OTP unavailable for " + pendingUserName + " (Telegram bot offline)."
+        );
     }
 }
 
@@ -1766,6 +2004,161 @@ String getTelegramActorLabel(const String& chatId, TelegramRole role) {
     return "Unregistered Chat " + formatChatIdForLogs(normalizedChatId) + " (Telegram)";
 }
 
+String compactTelegramLabel(const String& rawLabel, size_t maxLen) {
+    String normalized = rawLabel;
+    normalized.trim();
+
+    while (normalized.indexOf("  ") >= 0) {
+        normalized.replace("  ", " ");
+    }
+
+    if (normalized.length() <= static_cast<int>(maxLen)) {
+        return normalized;
+    }
+
+    if (maxLen <= 3) {
+        return normalized.substring(0, maxLen);
+    }
+
+    return normalized.substring(0, maxLen - 3) + "...";
+}
+
+bool sendAdminEnrollmentReport(const String& chatId, const String& actorLabel) {
+    static const int MAX_PROFILE_LINES = 48;
+    static const int USERS_PER_MESSAGE = 8;
+
+    String adminLines[TELEGRAM_ADMIN_METRICS_MAX];
+    String adminChatCache[TELEGRAM_ADMIN_METRICS_MAX];
+    int adminLineCount = 0;
+
+    for (int i = 0; i < NUM_ADMINS && adminLineCount < TELEGRAM_ADMIN_METRICS_MAX; i++) {
+        String adminChatId = ADMIN_CHAT_IDS[i];
+        adminChatId.trim();
+        if (adminChatId.length() == 0) {
+            continue;
+        }
+
+        bool duplicate = false;
+        for (int j = 0; j < adminLineCount; j++) {
+            if (adminChatCache[j] == adminChatId) {
+                duplicate = true;
+                break;
+            }
+        }
+
+        if (duplicate) {
+            continue;
+        }
+
+        adminChatCache[adminLineCount] = adminChatId;
+
+        String enrolledName = "";
+        String enrolledUid = "";
+        const bool hasEnrolledProfile = resolveEnrolledUserIdentityByChatId(adminChatId, &enrolledName, &enrolledUid);
+
+        String displayName = normalizeDisplayNameForLogs(
+            getSeededAdminNameByChatId(adminChatId),
+            "Admin " + String(i + 1)
+        );
+
+        if ((displayName.length() == 0 || displayName.equalsIgnoreCase("admin")) && hasEnrolledProfile) {
+            displayName = enrolledName;
+        }
+
+        displayName = compactTelegramLabel(displayName, 24);
+
+        String line = String(adminLineCount + 1) + ") " + displayName
+            + " | " + formatChatIdForLogs(adminChatId);
+
+        if (hasEnrolledProfile && enrolledUid.length() > 0) {
+            line += " | UID " + enrolledUid;
+        } else {
+            line += " | seeded";
+        }
+
+        adminLines[adminLineCount] = line;
+        adminLineCount++;
+    }
+
+    String userLines[MAX_PROFILE_LINES];
+    int userLineCount = 0;
+
+    const int authUserCount = authHandler.getUserCount();
+    for (int i = 0; i < authUserCount && userLineCount < MAX_PROFILE_LINES; i++) {
+        String uid = authHandler.getUserUIDAt(i);
+        uid.trim();
+
+        if (uid.length() == 0 || uid.startsWith("GUEST_")) {
+            continue;
+        }
+
+        String linkedChatId = authHandler.getUserTelegramChatId(uid);
+        linkedChatId.trim();
+
+        if (isAdmin(linkedChatId)) {
+            // Listed in admin section; avoid duplicate role rows.
+            continue;
+        }
+
+        String displayName = normalizeDisplayNameForLogs(authHandler.getUserName(uid), "User");
+        displayName = compactTelegramLabel(displayName, 24);
+
+        const String chatLabel = linkedChatId.length() > 0
+            ? formatChatIdForLogs(linkedChatId)
+            : String("no-chat");
+
+        userLines[userLineCount] = String(userLineCount + 1) + ") " + displayName
+            + " | UID " + uid + " | " + chatLabel;
+        userLineCount++;
+    }
+
+    const int totalProfiles = adminLineCount + userLineCount;
+
+    bool sentAll = true;
+    const String summary =
+        "👥 Enrolled Accounts Report\n"
+        "Requested by: " + actorLabel + "\n"
+        "• Total profiles: " + String(totalProfiles) + "\n"
+        "• Admin profiles: " + String(adminLineCount) + "\n"
+        "• User profiles: " + String(userLineCount) + "\n"
+        "• Auth store users: " + String(authUserCount);
+    sentAll = sendTelegramText(chatId, summary) && sentAll;
+
+    String adminsMessage = "🛡️ Admin Profiles\n";
+    if (adminLineCount == 0) {
+        adminsMessage += "• No admin profiles configured";
+    } else {
+        for (int i = 0; i < adminLineCount; i++) {
+            adminsMessage += adminLines[i] + "\n";
+        }
+    }
+    sentAll = sendTelegramText(chatId, adminsMessage) && sentAll;
+
+    if (userLineCount == 0) {
+        sentAll = sendTelegramText(chatId, "👤 Enrolled Users\n• No non-admin user profiles enrolled") && sentAll;
+        return sentAll;
+    }
+
+    int batchIndex = 0;
+    while ((batchIndex * USERS_PER_MESSAGE) < userLineCount) {
+        const int start = batchIndex * USERS_PER_MESSAGE;
+        const int endExclusive = min(start + USERS_PER_MESSAGE, userLineCount);
+
+        String usersMessage = "👤 Enrolled Users ("
+            + String(start + 1) + "-" + String(endExclusive)
+            + " of " + String(userLineCount) + ")\n";
+
+        for (int i = start; i < endExclusive; i++) {
+            usersMessage += userLines[i] + "\n";
+        }
+
+        sentAll = sendTelegramText(chatId, usersMessage) && sentAll;
+        batchIndex++;
+    }
+
+    return sentAll;
+}
+
 TelegramRole resolveTelegramRole(const String& chatId) {
     String normalizedChatId = chatId;
     normalizedChatId.trim();
@@ -1871,11 +2264,15 @@ void handleAdminCommand(const String& chatId, const String& text) {
             "Identity: " + actorLabel + "\n\n"
             "Core control:\n"
             "• /status - live lock, alarm, WiFi, telemetry\n"
+            "• /user - list enrolled admin and user profiles\n"
             "• /admin_open - emergency unlock (cooldown + guest-safe checks)\n"
             "• /guest_code - generate/reuse 30-second guest PIN\n"
             "• /lockdown - disable local RFID/keypad auth\n"
             "• /unlockdown - re-enable local auth\n"
             "• /reboot - controlled device restart\n\n"
+            "Keypad quick controls:\n"
+            "• B - instant Backup PIN mode\n"
+            "• # - submit OTP/PIN (or start backup mode from idle)\n\n"
             "Diagnostics:\n"
             "• /my_info - admin identity and device link\n"
             "• /buzzer_test - buzzer diagnostic tone\n"
@@ -1914,6 +2311,13 @@ void handleAdminCommand(const String& chatId, const String& text) {
             "Use /help to view all admin commands.";
         const bool sent = sendTelegramText(chatId, infoMessage);
         webServer.logActivity(actorLabel, "My Info Command", sent ? "success" : "fail");
+        trackTelegramCommand("admin", text, sent ? "ok" : "send_fail", millis() - cmdStartMs);
+        return;
+    }
+
+    if (text == "/user" || text == "/users") {
+        const bool sent = sendAdminEnrollmentReport(chatId, actorLabel);
+        webServer.logActivity(actorLabel, "Enrolled Accounts Report", sent ? "success" : "fail");
         trackTelegramCommand("admin", text, sent ? "ok" : "send_fail", millis() - cmdStartMs);
         return;
     }
@@ -2080,11 +2484,13 @@ void handleUserCommand(const String& chatId, const String& text) {
             "Standard access flow:\n"
             "1) Tap your registered RFID card\n"
             "2) Wait for 4-digit OTP in this chat\n"
-            "3) Enter OTP on keypad\n\n"
+            "3) Enter OTP on keypad (auto-submits after 4 digits)\n\n"
             "Offline fallback:\n"
             "1) Tap RFID card\n"
-            "2) Press '#' or 'B' for Backup PIN mode\n"
-            "3) Enter your 4-digit Backup PIN\n\n"
+            "2) Press 'B' for instant Backup PIN mode (or '#' if preferred)\n"
+            "3) Enter your 4-digit Backup PIN (press # to submit, or wait for 4 digits)\n\n"
+            "Keypad-only fallback:\n"
+            "• From idle, press 'B' to start Backup Access\n\n"
             "Allowed commands:\n"
             "• /start - connection check\n"
             "• /my_info - your linked account summary\n"
@@ -2196,12 +2602,29 @@ void sendTamperAlert() {
     }
 }
 
-bool sendOTP(String chatID, String otp) {
-    if (!bot || chatID.length() == 0) {
+bool sendOTP(String chatID, String otp, bool* queuedFallback) {
+    if (queuedFallback) {
+        *queuedFallback = false;
+    }
+
+    if (!bot || chatID.length() == 0 || otp.length() != OTP_LENGTH) {
         return false;
     }
 
-    return sendTelegramText(chatID, "🔑 SecureLock OTP: " + otp + " (valid for 30 seconds).");
+    const String otpMessage = "🔑 SecureLock OTP: " + otp + " (valid for 30 seconds).";
+
+    if (sendTelegramText(chatID, otpMessage)) {
+        return true;
+    }
+
+    if (enqueueTelegramUserNotification(chatID, otpMessage)) {
+        if (queuedFallback) {
+            *queuedFallback = true;
+        }
+        return true;
+    }
+
+    return false;
 }
 
 void sendRfidScanAlert(String uid, bool known, const String& userName) {
@@ -2411,7 +2834,11 @@ void queueAccessEventForAdmins(const String& actor, const String& method) {
 }
 
 void forwardWebAdminActivityToTelegram(const String& user, const String& method, const String& status) {
-    (void)user;
+    String actorLabel = user;
+    actorLabel.trim();
+    if (actorLabel.length() == 0) {
+        actorLabel = "Admin (Web)";
+    }
 
     String normalizedMethod = method;
     normalizedMethod.trim();
@@ -2434,6 +2861,7 @@ void forwardWebAdminActivityToTelegram(const String& user, const String& method,
 
     const String message =
         "🖥️ Web Admin Activity\n"
+        "• Actor: " + actorLabel + "\n"
         "• Action: " + normalizedMethod + "\n"
         "• Result: " + statusLabel;
 

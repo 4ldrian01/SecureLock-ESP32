@@ -57,14 +57,14 @@
     color: var(--text-subtle);
     font-size: 0.84rem;
     white-space: nowrap;
-    width: 38%;
+    width: 30%;
     font-variant-numeric: tabular-nums;
 }
 
 .col-user {
     font-weight: 500;
     color: var(--text-main);
-    width: 24%;
+    width: 30%;
     overflow: hidden;
     text-overflow: ellipsis;
 }
@@ -85,13 +85,13 @@
 }
 
 .col-method {
-    width: 22%;
+    width: 24%;
 }
 
 .logs-table th.col-status,
 .logs-table td.col-status {
-    width: 18%;
-    min-width: 110px;
+    width: 16%;
+    min-width: 104px;
     text-align: center;
     padding-left: 0.5rem;
     padding-right: 0.5rem;
@@ -351,11 +351,11 @@
     }
 
     .col-time {
-        width: 44%;
+        width: 46%;
     }
 
     .col-user {
-        width: 38%;
+        width: 36%;
     }
 
     .logs-table th,
@@ -396,11 +396,11 @@
     }
 
     .logs-table .col-time {
-        width: 46%;
+        width: 44%;
     }
 
     .logs-table .col-user {
-        width: 30%;
+        width: 34%;
     }
 
     .log-user-cell {
@@ -419,7 +419,7 @@
 
     .logs-table th:last-child,
     .logs-table td:last-child {
-        width: 24%;
+        width: 22%;
         text-align: center;
     }
 

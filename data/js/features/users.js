@@ -1,12 +1,19 @@
-import { clearFormErrors, setFormError, escapeHtml } from '../core/helpers.js?v=20260418r5';
+import { clearFormErrors, setFormError, escapeHtml } from '../core/helpers.js?v=20260418r7';
 
 export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onLogsUpdated }) {
     const ADD_USER_SUBMIT_IDLE_LABEL = DOM.btnSubmitAdd
         ? DOM.btnSubmitAdd.innerHTML
         : 'Save User';
+    const TELEGRAM_CHAT_ID_RULE_MESSAGE = 'Telegram Chat ID must be 6-15 digits (optional leading -)';
     const RESET_USERS_IDLE_LABEL = DOM.btnResetUsers
         ? DOM.btnResetUsers.textContent
         : 'Reset Users';
+    const SCAN_CARD_IDLE_LABEL = DOM.btnScanCard
+        ? DOM.btnScanCard.innerHTML
+        : '📡 Scan Card';
+    const REPLACE_CARD_IDLE_LABEL = DOM.btnReplaceCard
+        ? DOM.btnReplaceCard.innerHTML
+        : 'Replace Card';
     let resetUsersInFlight = false;
 
     function isTruthyAdminFlag(value) {
@@ -128,6 +135,67 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         return 'user';
     }
 
+    function parsePositiveInteger(value) {
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed)) {
+            return 0;
+        }
+
+        const integerValue = Math.floor(parsed);
+        return integerValue > 0 ? integerValue : 0;
+    }
+
+    function normalizeQueueCategory(value) {
+        const normalized = String(value || '').trim().toUpperCase();
+        if (normalized === 'ADMIN' || normalized === 'USER') {
+            return normalized;
+        }
+
+        return '';
+    }
+
+    function formatQueueLabel(category, index) {
+        const normalizedCategory = category === 'ADMIN' ? 'ADMIN' : 'USER';
+        const normalizedIndex = Math.max(1, parsePositiveInteger(index) || 1);
+        const labelPrefix = normalizedCategory === 'ADMIN' ? 'Admin' : 'User';
+        return `${labelPrefix} ${String(normalizedIndex).padStart(2, '0')}`;
+    }
+
+    function resolveQueueMetadata(user, role, queueCounters) {
+        const fallbackCategory = role === 'admin' ? 'ADMIN' : 'USER';
+        const queueCategory = normalizeQueueCategory(user?.queueCategory || user?.roleQueueCategory)
+            || fallbackCategory;
+
+        const providedIndex = parsePositiveInteger(
+            user?.queueIndex
+            ?? user?.roleQueueIndex
+            ?? user?.indexInRole
+        );
+
+        let queueIndex = providedIndex;
+        if (queueIndex <= 0) {
+            if (queueCategory === 'ADMIN') {
+                queueCounters.admin += 1;
+                queueIndex = queueCounters.admin;
+            } else {
+                queueCounters.user += 1;
+                queueIndex = queueCounters.user;
+            }
+        } else if (queueCategory === 'ADMIN') {
+            queueCounters.admin = Math.max(queueCounters.admin, queueIndex);
+        } else {
+            queueCounters.user = Math.max(queueCounters.user, queueIndex);
+        }
+
+        const queueLabel = String(user?.queueLabel || '').trim() || formatQueueLabel(queueCategory, queueIndex);
+
+        return {
+            queueCategory,
+            queueIndex,
+            queueLabel
+        };
+    }
+
     function getDisplayName(user) {
         const nameParts = resolveNamePartsFromUser(user);
         const composed = composeFullName(nameParts);
@@ -196,7 +264,12 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
     }
 
     function normalizeUsersForDisplay(users) {
-        return (Array.isArray(users) ? users : []).map((user) => {
+        const queueCounters = {
+            admin: 0,
+            user: 0
+        };
+
+        const mappedUsers = (Array.isArray(users) ? users : []).map((user) => {
             const normalized = { ...user };
             const uid = (normalized.uid || normalized.cardUID || '').toString().trim().toUpperCase();
 
@@ -225,8 +298,66 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             normalized.editable = canEdit;
             normalized.deletable = seededAdmin ? false : canDelete;
 
+            const queueMeta = resolveQueueMetadata(normalized, role, queueCounters);
+            normalized.queueCategory = queueMeta.queueCategory;
+            normalized.queueIndex = queueMeta.queueIndex;
+            normalized.roleQueueCategory = queueMeta.queueCategory;
+            normalized.roleQueueIndex = queueMeta.queueIndex;
+            normalized.queueLabel = queueMeta.queueLabel;
+
             return normalized;
         });
+
+        mappedUsers.sort((lhs, rhs) => {
+            const lhsRole = normalizeRoleForDisplay(lhs);
+            const rhsRole = normalizeRoleForDisplay(rhs);
+            const lhsAdmin = lhsRole === 'admin';
+            const rhsAdmin = rhsRole === 'admin';
+
+            if (lhsAdmin !== rhsAdmin) {
+                return lhsAdmin ? -1 : 1;
+            }
+
+            const lhsQueueIndex = parsePositiveInteger(lhs?.queueIndex || lhs?.roleQueueIndex);
+            const rhsQueueIndex = parsePositiveInteger(rhs?.queueIndex || rhs?.roleQueueIndex);
+
+            if (lhsQueueIndex > 0 && rhsQueueIndex > 0 && lhsQueueIndex !== rhsQueueIndex) {
+                return lhsQueueIndex - rhsQueueIndex;
+            }
+
+            if (lhsQueueIndex > 0 && rhsQueueIndex <= 0) {
+                return -1;
+            }
+
+            if (rhsQueueIndex > 0 && lhsQueueIndex <= 0) {
+                return 1;
+            }
+
+            const lhsDisplayOrder = Number(lhs?.displayOrder);
+            const rhsDisplayOrder = Number(rhs?.displayOrder);
+            if (Number.isFinite(lhsDisplayOrder) && Number.isFinite(rhsDisplayOrder) && lhsDisplayOrder !== rhsDisplayOrder) {
+                return lhsDisplayOrder - rhsDisplayOrder;
+            }
+
+            const lhsName = getDisplayName(lhs);
+            const rhsName = getDisplayName(rhs);
+            const nameCompare = lhsName.localeCompare(rhsName, undefined, {
+                sensitivity: 'base',
+                numeric: true
+            });
+            if (nameCompare !== 0) {
+                return nameCompare;
+            }
+
+            const lhsUid = String(lhs?.uid || lhs?.cardUID || '').trim().toUpperCase();
+            const rhsUid = String(rhs?.uid || rhs?.cardUID || '').trim().toUpperCase();
+            return lhsUid.localeCompare(rhsUid, undefined, {
+                sensitivity: 'base',
+                numeric: true
+            });
+        });
+
+        return mappedUsers;
     }
 
     function createUserFingerprint(user) {
@@ -238,6 +369,9 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             nameParts.middleName,
             nameParts.lastName,
             normalizeRoleForDisplay(user),
+            String(user?.queueCategory || user?.roleQueueCategory || ''),
+            String(user?.queueIndex || user?.roleQueueIndex || ''),
+            String(user?.queueLabel || ''),
             String(user?.telegramChatID || user?.chat_id || '').trim(),
             String(user?.backupPIN || user?.backup_pin || '').trim(),
             isTruthyAdminFlag(user?.isAdminChat) ? '1' : '0',
@@ -257,6 +391,10 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         const uid = String(user.cardUID || user.uid || '').trim().toUpperCase();
         const name = getDisplayName(user);
         const chatId = String(user?.telegramChatID || user?.chat_id || '').trim();
+        const queueIndex = parsePositiveInteger(user?.queueIndex || user?.roleQueueIndex) || 1;
+        const roleLabel = isAdmin
+            ? `ADMIN ${String(queueIndex).padStart(2, '0')}`
+            : String(role || 'user').toUpperCase();
 
         const canEdit = resolveOptionalBoolean(user?.editable, true);
         const canDelete = resolveOptionalBoolean(user?.deletable, role !== 'admin' && !seededAdmin);
@@ -274,19 +412,17 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
                 </button>`;
         }
 
-        if (seededAdmin) {
-            actionsHtml += '<span class="badge user-badge badge-admin" title="Configured from secrets.h">SEEDED ADMIN</span>';
-        } else if (isAdmin) {
-            actionsHtml += '<span class="badge user-badge badge-admin" title="Admin account">ADMIN</span>';
-        }
+        const uidMetaHtml = seededAdmin
+            ? ''
+            : `<span class="user-uid">${escapeHtml(uid || '--')}</span>`;
 
         return `<div class="user-info">
                 <div class="user-name-row">
                     <span class="user-name">${escapeHtml(name)}</span>
-                    <span class="badge user-badge ${badgeClass}">${escapeHtml(role.toUpperCase())}</span>
+                    <span class="badge user-badge ${badgeClass}">${escapeHtml(roleLabel)}</span>
                 </div>
                 <div class="user-meta">
-                    <span class="user-uid">${escapeHtml(uid || '--')}</span>
+                    ${uidMetaHtml}
                     <span class="user-chat">TG: ${escapeHtml(chatId || '--')}</span>
                 </div>
             </div>
@@ -311,7 +447,7 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
 
     function isValidChatId(value) {
         const v = String(value || '').trim();
-        return /^\d{10}$/.test(v);
+        return /^-?\d{6,15}$/.test(v);
     }
     function isDuplicateChatId(chatId, excludeUid = '') {
         const normalizedChatId = String(chatId || '').trim();
@@ -353,9 +489,12 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
 
         chatIdFields.forEach((field) => {
             field.addEventListener('input', () => {
-                const digitsOnly = String(field.value || '').replace(/\D+/g, '').slice(0, 10);
-                if (field.value !== digitsOnly) {
-                    field.value = digitsOnly;
+                const rawValue = String(field.value || '').replace(/\s+/g, '');
+                const hasLeadingMinus = rawValue.startsWith('-');
+                const digits = rawValue.replace(/\D+/g, '').slice(0, 15);
+                const normalized = (hasLeadingMinus ? '-' : '') + digits;
+                if (field.value !== normalized) {
+                    field.value = normalized;
                 }
             });
         });
@@ -397,6 +536,35 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
                 }
             });
         }
+    }
+
+    function updateUsersSummary(users) {
+        if (!DOM.usersSummary) {
+            return;
+        }
+
+        const safeUsers = Array.isArray(users) ? users : [];
+        const totalProfiles = safeUsers.length;
+
+        if (totalProfiles <= 0) {
+            DOM.usersSummary.textContent = 'Profiles: 0 total';
+            return;
+        }
+
+        let adminProfiles = 0;
+        let userProfiles = 0;
+
+        safeUsers.forEach((user) => {
+            const role = normalizeRoleForDisplay(user);
+            if (role === 'admin') {
+                adminProfiles += 1;
+                return;
+            }
+
+            userProfiles += 1;
+        });
+
+        DOM.usersSummary.textContent = `Profiles: ${totalProfiles} total • Admin ${adminProfiles} • Users ${userProfiles}`;
     }
 
     function updateAddUserSubmitButton() {
@@ -468,6 +636,9 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             renderUsers(normalizedUsers);
         } catch {
             DOM.usersGrid.innerHTML = '<p class="users-empty">Unable to load users</p>';
+            if (DOM.usersSummary) {
+                DOM.usersSummary.textContent = 'Profiles: unavailable';
+            }
         } finally {
             state.usersRequestInFlight = false;
         }
@@ -483,6 +654,7 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
 
             state.renderedUserFingerprints = {};
             state.renderedUserOrder = [];
+            updateUsersSummary([]);
             return;
         }
 
@@ -506,6 +678,11 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
                 return;
             }
 
+            const role = normalizeRoleForDisplay(user);
+            const queueCategory = normalizeQueueCategory(user?.queueCategory || user?.roleQueueCategory)
+                || (role === 'admin' ? 'ADMIN' : 'USER');
+            const queueIndex = parsePositiveInteger(user?.queueIndex || user?.roleQueueIndex);
+
             const fingerprint = createUserFingerprint(user);
             nextFingerprints[uid] = fingerprint;
             nextOrder.push(uid);
@@ -525,9 +702,10 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
                 card.dataset.rendered = '1';
             }
 
-            const seededAdmin = isSeededAdminUser(user);
-            card.dataset.seededAdmin = seededAdmin ? 'true' : 'false';
-            card.classList.toggle('user-card-seeded-admin', seededAdmin);
+            card.dataset.role = role;
+            card.dataset.queueCategory = queueCategory;
+            card.dataset.queueIndex = queueIndex > 0 ? String(queueIndex) : '';
+            card.classList.toggle('user-card-admin', role === 'admin');
 
             cardsInOrder.push(card);
         });
@@ -544,6 +722,7 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
 
         state.renderedUserFingerprints = nextFingerprints;
         state.renderedUserOrder = nextOrder;
+        updateUsersSummary(users);
     }
 
     function handleDeleteUser(uid) {
@@ -583,6 +762,7 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
 
     function handleEditUserRequest(uid) {
         state.editingUserId = uid;
+        state.editUserScanRequested = false;
         const key = String(uid || '').trim().toUpperCase();
         const user = state.usersByUid?.[key];
 
@@ -603,7 +783,9 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         DOM.editUserLastName.value = nameParts.lastName || '';
         DOM.editUserChatId.value = user?.telegramChatID || '';
         DOM.editUserBackupPin.value = seededAdmin ? '' : (user?.backupPIN || '');
-        DOM.editUserRfid.value = user?.cardUID || user?.uid || uid || '';
+        DOM.editUserRfid.value = seededAdmin
+            ? 'Managed by system'
+            : (user?.cardUID || user?.uid || uid || '');
 
         DOM.editUserRfid.classList.remove('input-error', 'scanned', 'scanning');
         setFormError('editUserRfidError', '');
@@ -636,19 +818,118 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         });
     }
 
-    function stopRfidPoll() {
+    function getRfidEnrollFlow(targetInput) {
+        return targetInput === DOM.editUserRfid ? 'edit-user' : 'add-user';
+    }
+
+    function setScanButtonBusy(targetInput, isBusy) {
+        const isEditFlow = targetInput === DOM.editUserRfid;
+        const button = isEditFlow ? DOM.btnReplaceCard : DOM.btnScanCard;
+
+        if (!button) {
+            return;
+        }
+
+        const busy = Boolean(isBusy);
+        button.disabled = busy;
+        button.classList.toggle('scanning', busy);
+        button.setAttribute('aria-busy', busy ? 'true' : 'false');
+
+        if (busy) {
+            button.innerHTML = 'Scanning Card...';
+            return;
+        }
+
+        button.innerHTML = isEditFlow ? REPLACE_CARD_IDLE_LABEL : SCAN_CARD_IDLE_LABEL;
+    }
+
+    function stopRfidEnrollmentSession(flowName = '') {
+        const activeFlow = String(flowName || state.rfidEnrollFlow || '').trim();
+        state.rfidEnrollFlow = '';
+        state.rfidEnrollActive = false;
+
+        if (!activeFlow || !CONFIG.API?.RFID_ENROLL_STOP) {
+            return;
+        }
+
+        const rfidTimeoutMs = Math.max(600, Number(CONFIG.RFID_TIMEOUT_MS || 1500));
+        const endpoint = `${CONFIG.API.RFID_ENROLL_STOP}?source=${encodeURIComponent(activeFlow)}`;
+
+        apiFetch(endpoint, {
+            method: 'POST',
+            timeoutMs: rfidTimeoutMs,
+            retries: 0
+        }).catch(() => {
+            // Enrollment stop is best-effort; server-side window auto-expires.
+        });
+    }
+
+    async function startRfidEnrollmentSession(targetInput) {
+        const flow = getRfidEnrollFlow(targetInput);
+
+        if (!CONFIG.API?.RFID_ENROLL_START) {
+            return { ok: false, reason: 'unsupported' };
+        }
+
+        const requestedWindowMs = Math.max(8000, Number(CONFIG.RFID_ENROLLMENT_WINDOW_MS || 25000));
+        const rfidTimeoutMs = Math.max(700, Number(CONFIG.RFID_TIMEOUT_MS || 1500));
+        const endpoint = `${CONFIG.API.RFID_ENROLL_START}?source=${encodeURIComponent(flow)}&ttlMs=${encodeURIComponent(String(requestedWindowMs))}`;
+
+        try {
+            const data = await apiFetch(endpoint, {
+                method: 'POST',
+                timeoutMs: rfidTimeoutMs,
+                retries: 0
+            });
+
+            state.rfidEnrollFlow = String(data?.enrollmentSource || flow).trim() || flow;
+            state.rfidEnrollActive = Boolean(data?.enrollmentActive ?? true);
+
+            if (!state.rfidEnrollActive) {
+                state.rfidEnrollFlow = '';
+                return { ok: false, reason: 'inactive' };
+            }
+
+            return { ok: true, reason: '' };
+        } catch (error) {
+            state.rfidEnrollFlow = '';
+            state.rfidEnrollActive = false;
+
+            if (Number(error?.status) === 404) {
+                return { ok: false, reason: 'firmware-update-required' };
+            }
+
+            return { ok: false, reason: 'network' };
+        }
+    }
+
+    function stopRfidPoll({ releaseEnrollment = true } = {}) {
         state.rfidPollSession = Number(state.rfidPollSession || 0) + 1;
 
         if (state.rfidPollTimer) {
             clearTimeout(state.rfidPollTimer);
             state.rfidPollTimer = null;
         }
+
+        setScanButtonBusy(DOM.userRfid, false);
+        setScanButtonBusy(DOM.editUserRfid, false);
+
+        if (releaseEnrollment) {
+            stopRfidEnrollmentSession();
+        }
     }
 
-    function startRfidPoll(targetInput) {
+    async function startRfidPoll(targetInput) {
         if (targetInput === DOM.editUserRfid && state.editingSeededAdmin) {
             feedback.showToast('Seeded admin RFID is managed by system configuration', 'info');
             return;
+        }
+
+        const isEditFlow = targetInput === DOM.editUserRfid;
+        if (isEditFlow) {
+            state.editUserScanRequested = true;
+        } else {
+            state.addUserScanRequested = true;
         }
 
         stopRfidPoll();
@@ -658,13 +939,45 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         targetInput.classList.remove('scanned', 'input-error');
         let lastScanTimestamp = 0;
 
-        const isEditFlow = targetInput === DOM.editUserRfid;
         const editingUid = String(state.editingUserId || '').trim().toUpperCase();
 
         if (targetInput === DOM.userRfid) {
             setFormError('userRfidError', '');
         } else if (targetInput === DOM.editUserRfid) {
             setFormError('editUserRfidError', '');
+        }
+
+        setScanButtonBusy(targetInput, true);
+        const enrollmentStart = await startRfidEnrollmentSession(targetInput);
+
+        if (sessionId !== Number(state.rfidPollSession || 0)) {
+            return;
+        }
+
+        if (!enrollmentStart.ok) {
+            if (isEditFlow) {
+                state.editUserScanRequested = false;
+            } else {
+                state.addUserScanRequested = false;
+            }
+
+            targetInput.value = '';
+            targetInput.classList.remove('scanning', 'scanned');
+            targetInput.classList.add('input-error');
+            setScanButtonBusy(targetInput, false);
+
+            const errorField = isEditFlow ? 'editUserRfidError' : 'userRfidError';
+            const formMessage = enrollmentStart.reason === 'firmware-update-required'
+                ? 'RFID enrollment mode is unavailable. Update firmware then try again.'
+                : 'Unable to start scanner. Check connection and try again.';
+
+            const toastMessage = enrollmentStart.reason === 'firmware-update-required'
+                ? 'RFID scanner mode needs latest firmware. Re-upload firmware and retry.'
+                : 'Could not start RFID scan mode. Please try again.';
+
+            setFormError(errorField, formMessage);
+            feedback.showToast(toastMessage, 'error');
+            return;
         }
 
         const basePollInterval = Math.max(150, Number(CONFIG.RFID_POLL_INTERVAL || 400));
@@ -683,6 +996,30 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
                     timeoutMs: rfidTimeoutMs,
                     retries: 0
                 });
+
+                if (data?.enrollmentActive === false) {
+                    targetInput.value = '';
+                    targetInput.classList.remove('scanning', 'scanned');
+                    targetInput.classList.add('input-error');
+                    const timeoutMessage = 'Scanner timed out. Tap Scan Card to start again.';
+
+                    if (isEditFlow) {
+                        state.editUserScanRequested = false;
+                    } else {
+                        state.addUserScanRequested = false;
+                    }
+
+                    if (isEditFlow) {
+                        setFormError('editUserRfidError', timeoutMessage);
+                    } else {
+                        setFormError('userRfidError', timeoutMessage);
+                    }
+
+                    feedback.showToast('RFID scan window expired. Tap Scan Card again.', 'info');
+                    stopRfidPoll({ releaseEnrollment: false });
+                    return { captured: true, error: false };
+                }
+
                 const uid = String(data?.uid || data?.lastUid || '').trim();
                 const scanTs = Number(data?.scanTimestamp || data?.lastScanTimestamp || data?.timestamp || 0);
                 const hasFreshScan = Boolean(data?.scanned)
@@ -813,18 +1150,22 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
     }
 
     function openAddUserDialog() {
+        stopRfidPoll();
         DOM.addUserForm.reset();
+        state.addUserScanRequested = false;
+        state.rfidEnrollFlow = '';
+        state.rfidEnrollActive = false;
         DOM.userRfid.value = '';
         DOM.userRfid.readOnly = true;
-        DOM.userRfid.placeholder = 'Tap card on reader, then press Scan Card';
+        DOM.userRfid.placeholder = 'Press Scan Card to start RFID capture';
         DOM.userRfid.classList.remove('scanned', 'scanning', 'input-error');
         setFormError('userRfidError', '');
         setAddUserBusy(false);
         DOM.addUserModal.showModal();
-        startRfidPoll(DOM.userRfid);
     }
 
     function closeAddUserDialog() {
+        state.addUserScanRequested = false;
         stopRfidPoll();
         DOM.addUserModal.close();
     }
@@ -857,9 +1198,6 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
 
         if (DOM.editUserRfid) {
             DOM.editUserRfid.readOnly = true;
-            if (isSeeded) {
-                DOM.editUserRfid.value = String(user?.cardUID || user?.uid || state.editingUserId || 'DEFAULT_ADMIN').trim();
-            }
         }
 
         if (DOM.btnReplaceCard) {
@@ -875,6 +1213,7 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
     }
 
     function closeEditUserDialog() {
+        state.editUserScanRequested = false;
         stopRfidPoll();
         setEditDialogMode(false);
         DOM.editUserModal.close();
@@ -965,7 +1304,8 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         let rfid = sanitizeUID(rawRfidInput);
 
         // If polling missed a valid tap, recover from latest scan once before blocking submit.
-        if (!rfid || isWaitingScanText(rawRfidInput)) {
+        // This recovery only runs when the user explicitly started scan mode.
+        if (state.addUserScanRequested && (!rfid || isWaitingScanText(rawRfidInput))) {
             try {
                 const rfidTimeoutMs = Math.max(600, Number(CONFIG.RFID_TIMEOUT_MS || 1500));
                 const scan = await apiFetch(CONFIG.API.RFID_SCAN, {
@@ -992,7 +1332,7 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             setFormError('userChatIdError', 'Telegram Chat ID is required');
             valid = false;
         } else if (!isValidChatId(chatId)) {
-            setFormError('userChatIdError', 'Telegram Chat ID must be exactly 10 digits');
+            setFormError('userChatIdError', TELEGRAM_CHAT_ID_RULE_MESSAGE);
             valid = false;
         } else if (isDuplicateChatId(chatId)) {
             setFormError('userChatIdError', 'Telegram Chat ID already linked to another user');
@@ -1003,9 +1343,13 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             valid = false;
         }
         if (!rfid) {
-            setFormError('userRfidError', 'RFID tag is required - tap a card');
+            const rfidRequiredMessage = state.addUserScanRequested
+                ? 'RFID tag is required - tap a card'
+                : 'Tap Scan Card first, then present the RFID card to enroll';
+
+            setFormError('userRfidError', rfidRequiredMessage);
             DOM.userRfid.classList.add('input-error');
-            feedback.showToast('Scan an RFID card first.', 'error');
+            feedback.showToast('Tap Scan Card first, then scan the RFID card.', 'error');
             valid = false;
         } else if (!isValidUid(rfid)) {
             setFormError('userRfidError', 'RFID UID must be 8-20 hex characters (A-F, 0-9)');
@@ -1145,7 +1489,7 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             }
 
             if (chatId && !isValidChatId(chatId)) {
-                setFormError('editUserChatIdError', 'Telegram Chat ID must be exactly 10 digits');
+                setFormError('editUserChatIdError', TELEGRAM_CHAT_ID_RULE_MESSAGE);
                 seededValid = false;
             }
 
@@ -1200,7 +1544,7 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             valid = false;
         }
         if (chatId && !isValidChatId(chatId)) {
-            setFormError('editUserChatIdError', 'Telegram Chat ID must be exactly 10 digits');
+            setFormError('editUserChatIdError', TELEGRAM_CHAT_ID_RULE_MESSAGE);
             valid = false;
         } else if (!chatId) {
             setFormError('editUserChatIdError', 'Telegram Chat ID is required');
@@ -1339,12 +1683,16 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         DOM.btnCloseDialog.addEventListener('click', closeAddUserDialog);
         DOM.btnCancelAdd.addEventListener('click', closeAddUserDialog);
         DOM.addUserForm.addEventListener('submit', handleAddUser);
-        DOM.btnScanCard.addEventListener('click', () => startRfidPoll(DOM.userRfid));
+        DOM.btnScanCard.addEventListener('click', () => {
+            void startRfidPoll(DOM.userRfid);
+        });
 
         DOM.btnCloseEditDialog.addEventListener('click', closeEditUserDialog);
         DOM.btnCancelEdit.addEventListener('click', closeEditUserDialog);
         DOM.editUserForm.addEventListener('submit', handleEditUser);
-        DOM.btnReplaceCard.addEventListener('click', () => startRfidPoll(DOM.editUserRfid));
+        DOM.btnReplaceCard.addEventListener('click', () => {
+            void startRfidPoll(DOM.editUserRfid);
+        });
 
         DOM.addUserModal.addEventListener('click', (e) => {
             if (e.target === DOM.addUserModal) closeAddUserDialog();

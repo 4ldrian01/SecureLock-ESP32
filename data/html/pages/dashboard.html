@@ -15,44 +15,16 @@
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%233B82F6'%3E%3Cpath d='M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z'/%3E%3C/svg%3E">
 
     <!-- Stylesheet -->
-    <link rel="preload" href="../../css/critical.css?v=20260418r5" as="style">
-    <link rel="stylesheet" href="../../css/critical.css?v=20260418r5">
+    <link rel="preload" href="../../css/critical.css?v=20260418r7" as="style">
+    <link rel="stylesheet" href="../../css/critical.css?v=20260418r7">
 
-    <!-- Preload modular CSS chunks to reduce @import waterfall on first load -->
-    <link rel="preload" href="../../css/style.css?v=20260418r5" as="style">
-    <link rel="preload" href="../../css/tokens.css?v=20260418r5" as="style">
-    <link rel="preload" href="../../css/base.css?v=20260418r5" as="style">
-    <link rel="preload" href="../../css/components.css?v=20260418r5" as="style">
-    <link rel="preload" href="../../css/layout.css?v=20260418r5" as="style">
-    <link rel="preload" href="../../css/components/brand.css?v=20260418r5" as="style">
-    <link rel="preload" href="../../css/components/lock.css?v=20260418r5" as="style">
-    <link rel="preload" href="../../css/components/modal.css?v=20260418r5" as="style">
-    <link rel="preload" href="../../css/components/forms.css?v=20260418r5" as="style">
-    <link rel="preload" href="../../css/components/toast.css?v=20260418r5" as="style">
-    <link rel="preload" href="../../css/components/footer.css?v=20260418r5" as="style">
-    <link rel="preload" href="../../css/features/auth.css?v=20260418r5" as="style">
-    <link rel="preload" href="../../css/features/guest.css?v=20260418r5" as="style">
-    <link rel="preload" href="../../css/features/logs.css?v=20260418r5" as="style">
-    <link rel="preload" href="../../css/features/users.css?v=20260418r5" as="style">
-    <link rel="preload" href="../../css/features/pagination.css?v=20260418r5" as="style">
+    <!-- Keep startup request count lean for mobile networks. -->
+    <link rel="preload" href="../../css/style.css?v=20260418r7" as="style">
+    <link rel="stylesheet" href="../../css/style.css?v=20260418r7" media="print" id="dashboardStyle">
+    <noscript><link rel="stylesheet" href="../../css/style.css?v=20260418r7"></noscript>
 
-    <link rel="stylesheet" href="../../css/style.css?v=20260418r5" media="print" id="dashboardStyle">
-    <noscript><link rel="stylesheet" href="../../css/style.css?v=20260418r5"></noscript>
-
-    <!-- Preload critical ES modules to reduce startup request waterfall -->
-    <link rel="modulepreload" href="../../js/entry/main.js?v=20260418r5">
-    <link rel="modulepreload" href="../../js/app/index.js?v=20260418r5">
-    <link rel="modulepreload" href="../../js/core/api.js?v=20260418r5">
-    <link rel="modulepreload" href="../../js/core/config.js?v=20260418r5">
-    <link rel="modulepreload" href="../../js/core/dom.js?v=20260418r5">
-    <link rel="modulepreload" href="../../js/core/helpers.js?v=20260418r5">
-    <link rel="modulepreload" href="../../js/core/state.js?v=20260418r5">
-    <link rel="modulepreload" href="../../js/features/auth.js?v=20260418r5">
-    <link rel="modulepreload" href="../../js/features/status.js?v=20260418r5">
-    <link rel="modulepreload" href="../../js/features/guest.js?v=20260418r5">
-    <link rel="modulepreload" href="../../js/features/logs.js?v=20260418r5">
-    <link rel="modulepreload" href="../../js/features/users.js?v=20260418r5">
-    <link rel="modulepreload" href="../../js/ui/feedback.js?v=20260418r5">
+    <!-- Preload only the entry module and let native module graph loading handle the rest. -->
+    <link rel="modulepreload" href="../../js/entry/main.js?v=20260418r7">
 </head>
 <body data-authenticated="pending" data-app-ready="false">
     <main class="dashboard">
@@ -283,6 +255,8 @@
                     </div>
                 </header>
 
+                <p class="users-summary" id="usersSummary" aria-live="polite">Profiles: 0 total</p>
+
                 <!-- Users Grid -->
                 <div class="users-grid" id="usersGrid" role="list">
                     <p class="users-empty" role="status" aria-live="polite">
@@ -420,14 +394,14 @@
                         id="editUserChatId"
                         name="editUserChatId"
                         class="input form-input"
-                        placeholder="e.g., 0123456789"
+                        placeholder="e.g., 6042843156"
                         inputmode="numeric"
-                        pattern="[0-9]{10}"
-                        maxlength="10"
+                        pattern="-?[0-9]{6,15}"
+                        maxlength="16"
                         autocomplete="off"
                         required
                     />
-                    <span class="form-helper">Must be exactly 10 digits (numbers only) for OTP delivery</span>
+                    <span class="form-helper">Use 6-15 digits (optional leading -) for OTP delivery</span>
                     <span class="form-error" id="editUserChatIdError"></span>
                 </div>
 
@@ -446,7 +420,7 @@
                         required
                         autocomplete="off"
                     />
-                    <span class="form-helper">Used when user enters Offline Mode (#) after RFID scan</span>
+                    <span class="form-helper">Used when user enters Offline Mode (B or #) after RFID scan</span>
                     <span class="form-error" id="editUserBackupPinError"></span>
                 </div>
 
@@ -570,14 +544,14 @@
                         id="userChatId"
                         name="userChatId"
                         class="input form-input"
-                        placeholder="e.g., 0123456789"
+                        placeholder="e.g., 6042843156"
                         inputmode="numeric"
-                        pattern="[0-9]{10}"
-                        maxlength="10"
+                        pattern="-?[0-9]{6,15}"
+                        maxlength="16"
                         autocomplete="off"
                         required
                     />
-                    <span class="form-helper">Must be exactly 10 digits (numbers only). User receives OTP on this chat ID</span>
+                    <span class="form-helper">Use 6-15 digits (optional leading -). User receives OTP on this chat ID</span>
                     <span class="form-error" id="userChatIdError"></span>
                 </div>
 
@@ -596,7 +570,7 @@
                         required
                         autocomplete="off"
                     />
-                    <span class="form-helper">Used when user enters Offline Mode (#) after RFID scan</span>
+                    <span class="form-helper">Used when user enters Offline Mode (B or #) after RFID scan</span>
                     <span class="form-error" id="userBackupPinError"></span>
                 </div>
 
@@ -620,7 +594,7 @@
                             📡 Scan Card
                         </button>
                     </div>
-                    <span class="form-helper">Tap RFID card on reader to enroll</span>
+                    <span class="form-helper">Press Scan Card first, then tap the RFID card on the reader to enroll</span>
                     <span class="form-error" id="userRfidError"></span>
                 </div>
 
@@ -717,6 +691,6 @@
     </aside>
 
     <!-- JavaScript -->
-    <script type="module" src="../../js/entry/main.js?v=20260418r5"></script>
+    <script type="module" src="../../js/entry/main.js?v=20260418r7"></script>
 </body>
 </html>

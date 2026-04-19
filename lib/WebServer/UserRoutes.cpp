@@ -22,8 +22,45 @@ extern unsigned long getTelegramAdminSendFailuresAt(int index);
 extern unsigned long getTelegramAdminLastSuccessMsAt(int index);
 extern unsigned long getTelegramAdminLastFailureMsAt(int index);
 extern bool enqueueTelegramUserNotification(const String& chatId, const String& message);
+extern void beginRfidEnrollmentWindow(const String& source, unsigned long durationMs);
+extern void endRfidEnrollmentWindow(const String& source);
+extern bool isRfidEnrollmentWindowActive();
+extern unsigned long getRfidEnrollmentWindowRemainingMs();
+extern String getRfidEnrollmentWindowSource();
 
 namespace {
+
+String sanitizeEnrollmentSource(const String& raw) {
+    String source = raw;
+    source.trim();
+
+    if (source.length() == 0) {
+        return "dashboard";
+    }
+
+    String filtered;
+    filtered.reserve(min(static_cast<int>(source.length()), 24));
+
+    for (size_t i = 0; i < source.length(); i++) {
+        const char ch = source.charAt(i);
+        if (isAlphaNumeric(ch) || ch == '-' || ch == '_' || ch == ' ') {
+            filtered += ch;
+        }
+    }
+
+    filtered.trim();
+
+    if (filtered.length() == 0) {
+        return "dashboard";
+    }
+
+    if (filtered.length() > 24) {
+        filtered = filtered.substring(0, 24);
+        filtered.trim();
+    }
+
+    return filtered;
+}
 
 String normalizedNameValue(const String& raw) {
     String value = raw;
@@ -57,6 +94,51 @@ bool isSeededAdminChatId(const String& chatId) {
     }
 
     return false;
+}
+
+String describeAuthStorageFailure(AuthHandler* auth) {
+    if (!auth) {
+        return "Unable to write user record. Storage may be full or unavailable.";
+    }
+
+    switch (auth->getLastStorageError()) {
+    case AUTH_STORAGE_FS_UNAVAILABLE:
+        return "Storage unavailable: LittleFS is not mounted. Reboot device and retry.";
+    case AUTH_STORAGE_LOAD_FAILED:
+        return "Unable to load existing user storage (users.json).";
+    case AUTH_STORAGE_USERS_ARRAY_INVALID:
+        return "User storage schema is invalid (users array missing/corrupt).";
+    case AUTH_STORAGE_USER_LIMIT_REACHED:
+        return "User limit reached (max 20 users). Delete an existing user first.";
+    case AUTH_STORAGE_WRITE_OPEN_FAILED:
+        return "Unable to open users.json for writing.";
+    case AUTH_STORAGE_WRITE_SERIALIZE_FAILED:
+        return "Unable to serialize user record to users.json.";
+    case AUTH_STORAGE_INVALID_INPUT:
+        return "Invalid user data supplied for storage.";
+    case AUTH_STORAGE_OK:
+    default:
+        return "Unable to write user record. Storage may be full or unavailable.";
+    }
+}
+
+void appendAuthStorageTelemetry(JsonDocument* doc, AuthHandler* auth) {
+    if (!doc || !auth) {
+        return;
+    }
+
+    (*doc)["authStorageError"] = auth->getLastStorageErrorLabel();
+
+    size_t usedBytes = 0;
+    size_t totalBytes = 0;
+    const bool usageReady = auth->getStorageUsage(&usedBytes, &totalBytes);
+    (*doc)["storageUsageAvailable"] = usageReady;
+    if (usageReady) {
+        const size_t freeBytes = (totalBytes > usedBytes) ? (totalBytes - usedBytes) : 0;
+        (*doc)["storageUsedBytes"] = static_cast<unsigned long>(usedBytes);
+        (*doc)["storageTotalBytes"] = static_cast<unsigned long>(totalBytes);
+        (*doc)["storageFreeBytes"] = static_cast<unsigned long>(freeBytes);
+    }
 }
 
 void splitNameParts(const String& fullName, String* firstName, String* middleName, String* lastName) {
@@ -346,7 +428,7 @@ bool saveSeededAdminNameOverride(int adminIndex, const String& displayName) {
     }
 
     if (!usersDoc["users"].is<JsonArray>()) {
-        usersDoc["users"] = JsonArray();
+        usersDoc["users"].to<JsonArray>();
     }
 
     JsonObject settings = usersDoc["settings"].is<JsonObject>()
@@ -513,6 +595,57 @@ void appendSeededAdminProfilesToResponse(JsonDocument* responseDoc) {
     }
 }
 
+String buildQueueLabel(const String& category, int queueIndex) {
+    const String safeCategory = category.length() > 0 ? category : "USER";
+    const int safeIndex = queueIndex > 0 ? queueIndex : 1;
+    const String labelPrefix = (safeCategory == "ADMIN") ? "Admin" : "User";
+
+    String label = labelPrefix;
+    label += " ";
+    if (safeIndex < 10) {
+        label += "0";
+    }
+    label += String(safeIndex);
+    return label;
+}
+
+void appendQueueMetadataToResponse(JsonDocument* responseDoc) {
+    if (!responseDoc || !(*responseDoc)["users"].is<JsonArray>()) {
+        return;
+    }
+
+    JsonArray users = (*responseDoc)["users"].as<JsonArray>();
+    int adminQueueIndex = 0;
+    int userQueueIndex = 0;
+    int displayOrder = 0;
+
+    for (JsonObject user : users) {
+        String role = user["type"] | "";
+        if (role.length() == 0) {
+            role = user["role"] | "user";
+        }
+        role.trim();
+        role.toLowerCase();
+
+        const bool isAdmin = role == "admin"
+            || static_cast<bool>(user["isAdminChat"] | false)
+            || static_cast<bool>(user["isSeededAdmin"] | false);
+
+        const String queueCategory = isAdmin ? "ADMIN" : "USER";
+        const int queueIndex = isAdmin
+            ? ++adminQueueIndex
+            : ++userQueueIndex;
+
+        user["queueCategory"] = queueCategory;
+        user["queueIndex"] = queueIndex;
+        user["roleQueueCategory"] = queueCategory;
+        user["roleQueueIndex"] = queueIndex;
+        user["queueLabel"] = buildQueueLabel(queueCategory, queueIndex);
+        user["displayOrder"] = displayOrder;
+        displayOrder++;
+    }
+}
+
 }
 
 void WebServer::_handleAPIUsers(AsyncWebServerRequest* request) {
@@ -523,6 +656,7 @@ void WebServer::_handleAPIUsers(AsyncWebServerRequest* request) {
     JsonDocument responseDoc;
     _syncUsersFileFromAuth(&responseDoc);
     appendSeededAdminProfilesToResponse(&responseDoc);
+    appendQueueMetadataToResponse(&responseDoc);
     _sendJSON(request, 200, responseDoc);
 }
 
@@ -582,7 +716,7 @@ void WebServer::_handleAPIDeleteUser(AsyncWebServerRequest* request) {
     }
 
     if (protectedAdmin) {
-        _addLogEntry("Admin (Web)", "Delete User (blocked admin " + uid + ")", "fail");
+        _addLogEntry(_activeApiActorLabel(), "Delete User (blocked admin " + uid + ")", "fail");
 
         JsonDocument doc;
         doc["success"] = false;
@@ -600,7 +734,7 @@ void WebServer::_handleAPIDeleteUser(AsyncWebServerRequest* request) {
         _syncUsersFileFromAuth();
     }
 
-    _addLogEntry("Admin (Web)", "Delete User (" + uid + ")", deleted ? "success" : "fail");
+    _addLogEntry(_activeApiActorLabel(), "Delete User (" + uid + ")", deleted ? "success" : "fail");
 
     JsonDocument doc;
     doc["success"] = deleted;
@@ -666,7 +800,7 @@ void WebServer::_handleAPIResetUsers(AsyncWebServerRequest* request, uint8_t* da
         }
     }
 
-    _addLogEntry("Admin (Web)", "Reset All Users", "success");
+    _addLogEntry(_activeApiActorLabel(), "Reset All Users", "success");
 
     JsonDocument doc;
     doc["success"] = true;
@@ -759,7 +893,7 @@ void WebServer::_handleAPIAddUser(AsyncWebServerRequest* request, uint8_t* data,
         JsonDocument doc;
         doc["success"] = false;
         doc["field"] = "telegramChatID";
-        doc["message"] = "Telegram Chat ID must be exactly 10 digits";
+        doc["message"] = "Telegram Chat ID must be 6-15 digits (optional leading -)";
         _sendJSON(request, 400, doc);
         return;
     }
@@ -789,7 +923,7 @@ void WebServer::_handleAPIAddUser(AsyncWebServerRequest* request, uint8_t* data,
         JsonDocument doc;
         doc["success"] = false;
         doc["field"] = "telegramChatID";
-        doc["message"] = "Telegram Chat ID must be exactly 10 digits for OTP delivery";
+        doc["message"] = "Telegram Chat ID must be 6-15 digits (optional leading -) for OTP delivery";
         _sendJSON(request, 400, doc);
         return;
     }
@@ -879,7 +1013,7 @@ void WebServer::_handleAPIAddUser(AsyncWebServerRequest* request, uint8_t* data,
         Serial.print("[API][WARN] Duplicate RFID enrollment blocked (Add User): ");
         Serial.println(uid);
         _security->beep(3);
-        _addLogEntry("Admin (Web)", "Duplicate RFID " + uid, "fail");
+        _addLogEntry(_activeApiActorLabel(), "Duplicate RFID " + uid, "fail");
 
         JsonDocument doc;
         doc["success"] = false;
@@ -896,10 +1030,8 @@ void WebServer::_handleAPIAddUser(AsyncWebServerRequest* request, uint8_t* data,
     if (!added) {
         if (_auth->userExists(uid)) {
             failureReason = "This RFID card is already registered.";
-        } else if (_auth->getUserCount() >= 20) {
-            failureReason = "User limit reached (max 20 users). Delete an existing user first.";
         } else {
-            failureReason = "Unable to write user record. Storage may be full or unavailable.";
+            failureReason = describeAuthStorageFailure(_auth);
         }
     }
 
@@ -935,16 +1067,17 @@ void WebServer::_handleAPIAddUser(AsyncWebServerRequest* request, uint8_t* data,
 
         userNotified = enqueueTelegramUserNotification(telegramChatID, onboardingMessage);
         if (!userNotified) {
-            _addLogEntry("Admin (Web)", "Add User Notify Failed (" + name + ")", "fail");
+            _addLogEntry(_activeApiActorLabel(), "Add User Notify Failed (" + name + ")", "fail");
         }
     }
 
-    _addLogEntry("Admin (Web)", "Add User (" + name + ")", added ? "success" : "fail");
+    _addLogEntry(_activeApiActorLabel(), "Add User (" + name + ")", added ? "success" : "fail");
 
     JsonDocument doc;
     doc["success"] = added;
     doc["message"] = added ? "User added" : (failureReason.length() ? failureReason : "Failed to add user");
     doc["userNotificationSent"] = userNotified;
+    appendAuthStorageTelemetry(&doc, _auth);
     _sendJSON(request, added ? 201 : 500, doc);
 }
 
@@ -1084,7 +1217,7 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
         }
 
         const bool saved = saveSeededAdminNameOverride(seededAdminIndex, name);
-        _addLogEntry("Admin (Web)", "Edit Seeded Admin Profile (" + name + ")", saved ? "success" : "fail");
+        _addLogEntry(_activeApiActorLabel(), "Edit Seeded Admin Profile (" + name + ")", saved ? "success" : "fail");
 
         JsonDocument doc;
         doc["success"] = saved;
@@ -1112,7 +1245,7 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
         JsonDocument doc;
         doc["success"] = false;
         doc["field"] = "telegramChatID";
-        doc["message"] = "Telegram Chat ID must be exactly 10 digits";
+        doc["message"] = "Telegram Chat ID must be 6-15 digits (optional leading -)";
         _sendJSON(request, 400, doc);
         return;
     }
@@ -1133,7 +1266,7 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
         JsonDocument doc;
         doc["success"] = false;
         doc["field"] = "telegramChatID";
-        doc["message"] = "Telegram Chat ID must be exactly 10 digits";
+        doc["message"] = "Telegram Chat ID must be 6-15 digits (optional leading -)";
         _sendJSON(request, 400, doc);
         return;
     }
@@ -1220,7 +1353,7 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
         Serial.println(rfid);
 
         _security->beep(3);
-        _addLogEntry("Admin (Web)", "Duplicate RFID " + rfid, "fail");
+        _addLogEntry(_activeApiActorLabel(), "Duplicate RFID " + rfid, "fail");
 
         JsonDocument doc;
         doc["success"] = false;
@@ -1245,7 +1378,7 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
     }
 
     if (isSeededAdminChatId(oldTelegramChatId)) {
-        _addLogEntry("Admin (Web)", "Edit User Blocked (Seeded Admin)", "fail");
+        _addLogEntry(_activeApiActorLabel(), "Edit User Blocked (Seeded Admin)", "fail");
 
         JsonDocument doc;
         doc["success"] = false;
@@ -1303,7 +1436,7 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
         JsonDocument doc;
         doc["success"] = false;
         doc["field"] = "telegramChatID";
-        doc["message"] = "Telegram Chat ID must be exactly 10 digits";
+        doc["message"] = "Telegram Chat ID must be 6-15 digits (optional leading -)";
         _sendJSON(request, 400, doc);
         return;
     }
@@ -1369,7 +1502,8 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
     if (!authUpdated) {
         JsonDocument doc;
         doc["success"] = false;
-        doc["message"] = "Failed to update user credentials";
+        doc["message"] = describeAuthStorageFailure(_auth);
+        appendAuthStorageTelemetry(&doc, _auth);
         _sendJSON(request, 500, doc);
         return;
     }
@@ -1406,15 +1540,16 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
 
     bool userNotified = false;
     if (effectiveTelegramChatId.length() > 0) {
+        const String actor = _activeApiActorLabel();
         const String updateMessage =
-            "ℹ️ Your SecureLock profile was updated by admin\n"
+            "ℹ️ Your SecureLock profile was updated by " + actor + "\n"
             "• Name: " + name + "\n"
             "• RFID: " + (uidChanged ? String("Updated") : String("Unchanged")) + "\n"
             "• Backup PIN: Active";
 
         userNotified = enqueueTelegramUserNotification(effectiveTelegramChatId, updateMessage);
         if (!userNotified) {
-            _addLogEntry("Admin (Web)", "Edit User Notify Failed (" + name + ")", "fail");
+            _addLogEntry(_activeApiActorLabel(), "Edit User Notify Failed (" + name + ")", "fail");
         }
     }
 
@@ -1425,8 +1560,74 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
     doc["userNotificationSent"] = userNotified;
 
     _syncUsersFileFromAuth();
-    _addLogEntry("Admin (Web)", uidChanged ? ("Edit User (RFID Replaced: " + name + ")") : ("Edit User (" + name + ")"), "success");
+    _addLogEntry(_activeApiActorLabel(), uidChanged ? ("Edit User (RFID Replaced: " + name + ")") : ("Edit User (" + name + ")"), "success");
     _sendJSON(request, 200, doc);
+}
+
+void WebServer::_handleAPIRfidEnrollStart(AsyncWebServerRequest* request) {
+    if (!_requireApiAuth(request)) {
+        return;
+    }
+
+    String source = "dashboard";
+    if (request->hasParam("source")) {
+        source = sanitizeEnrollmentSource(request->getParam("source")->value());
+    }
+
+    const unsigned long defaultWindowMs = 25000UL;
+    const unsigned long minWindowMs = 3000UL;
+    const unsigned long maxWindowMs = 60000UL;
+
+    unsigned long requestedWindowMs = 0;
+    if (request->hasParam("ttlMs")) {
+        String ttlRaw = request->getParam("ttlMs")->value();
+        ttlRaw.trim();
+        requestedWindowMs = static_cast<unsigned long>(ttlRaw.toInt());
+    }
+
+    unsigned long windowMs = defaultWindowMs;
+    if (requestedWindowMs > 0) {
+        windowMs = requestedWindowMs;
+        if (windowMs < minWindowMs) {
+            windowMs = minWindowMs;
+        } else if (windowMs > maxWindowMs) {
+            windowMs = maxWindowMs;
+        }
+    }
+
+    beginRfidEnrollmentWindow(source, windowMs);
+
+    JsonDocument doc;
+    doc["success"] = true;
+    doc["enrollmentActive"] = isRfidEnrollmentWindowActive();
+    doc["enrollmentSource"] = getRfidEnrollmentWindowSource();
+    doc["enrollmentRemainingMs"] = getRfidEnrollmentWindowRemainingMs();
+    doc["windowMs"] = windowMs;
+    _sendJSON(request, 200, doc);
+
+    _addLogEntry(_activeApiActorLabel(), "RFID Enroll Window Started (" + source + ")", "info");
+}
+
+void WebServer::_handleAPIRfidEnrollStop(AsyncWebServerRequest* request) {
+    if (!_requireApiAuth(request)) {
+        return;
+    }
+
+    String source = "dashboard";
+    if (request->hasParam("source")) {
+        source = sanitizeEnrollmentSource(request->getParam("source")->value());
+    }
+
+    endRfidEnrollmentWindow(source);
+
+    JsonDocument doc;
+    doc["success"] = true;
+    doc["enrollmentActive"] = isRfidEnrollmentWindowActive();
+    doc["enrollmentSource"] = getRfidEnrollmentWindowSource();
+    doc["enrollmentRemainingMs"] = getRfidEnrollmentWindowRemainingMs();
+    _sendJSON(request, 200, doc);
+
+    _addLogEntry(_activeApiActorLabel(), "RFID Enroll Window Stopped (" + source + ")", "info");
 }
 
 void WebServer::_handleAPIRfidScan(AsyncWebServerRequest* request) {
@@ -1448,6 +1649,9 @@ void WebServer::_handleAPIRfidScan(AsyncWebServerRequest* request) {
     doc["scanned"] = scanned;
     doc["known"] = known;
     doc["status"] = scanStatus;
+    doc["enrollmentActive"] = isRfidEnrollmentWindowActive();
+    doc["enrollmentRemainingMs"] = getRfidEnrollmentWindowRemainingMs();
+    doc["enrollmentSource"] = getRfidEnrollmentWindowSource();
     if (scanned) {
         doc["uid"] = lastUID;
         doc["scanTimestamp"] = scanMs;
@@ -1477,6 +1681,9 @@ void WebServer::_handleAPIDiagnostics(AsyncWebServerRequest* request) {
     doc["rfidCooldownActive"] = _auth->isRFIDCooldownActive();
     doc["lastRfidUid"] = _auth->getLastRFIDUID();
     doc["lastRfidScanMs"] = _auth->getLastRFIDScanMs();
+    doc["rfidEnrollmentActive"] = isRfidEnrollmentWindowActive();
+    doc["rfidEnrollmentRemainingMs"] = getRfidEnrollmentWindowRemainingMs();
+    doc["rfidEnrollmentSource"] = getRfidEnrollmentWindowSource();
     doc["keypadReady"] = _auth->isKeypadReady();
     doc["keypadMuted"] = _auth->isKeypadMuted();
     doc["keypadMuteRemainingMs"] = _auth->getKeypadMuteRemainingMs();
@@ -1491,6 +1698,7 @@ void WebServer::_handleAPIDiagnostics(AsyncWebServerRequest* request) {
     doc["invalidUsers"] = invalidUsers;
     doc["duplicateUsers"] = duplicateUsers;
     doc["usersStorageMismatch"] = (_auth->getUserCount() != uniqueUsers) || (invalidUsers > 0) || (duplicateUsers > 0);
+    appendAuthStorageTelemetry(&doc, _auth);
 
     const unsigned long nowMs = millis();
     const int queueDepth = getTelegramNotificationQueueDepth();

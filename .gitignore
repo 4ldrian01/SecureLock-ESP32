@@ -74,3 +74,9 @@ ENV/
 # Documentation Build Output
 docs/_build/
 *.pdf
+
+# Local build/deploy caches
+.cache/
+
+# Generated frontend precompression artifacts
+data/**/*.gz

@@ -55,6 +55,10 @@ export function createInitialState() {
         lockCountdownTimer: null,
         rfidPollTimer: null,
         rfidPollSession: 0,
+        rfidEnrollFlow: '',
+        rfidEnrollActive: false,
+        addUserScanRequested: false,
+        editUserScanRequested: false,
         editingUserId: null,
         editingSeededAdmin: false
     };

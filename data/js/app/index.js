@@ -1,18 +1,18 @@
-import { CONFIG } from '../core/config.js?v=20260418r5';
-import { createInitialState } from '../core/state.js?v=20260418r5';
-import { getDOM } from '../core/dom.js?v=20260418r5';
+import { CONFIG } from '../core/config.js?v=20260418r7';
+import { createInitialState } from '../core/state.js?v=20260418r7';
+import { getDOM } from '../core/dom.js?v=20260418r7';
 import {
     apiFetch,
     setApiAuthToken,
     clearApiAuthToken,
     setApiUnauthorizedHandler
-} from '../core/api.js?v=20260418r5';
-import { createFeedback } from '../ui/feedback.js?v=20260418r5';
-import { createAuthFeature } from '../features/auth.js?v=20260418r5';
-import { createStatusFeature } from '../features/status.js?v=20260418r5';
-import { createGuestFeature } from '../features/guest.js?v=20260418r5';
-import { createLogsFeature } from '../features/logs.js?v=20260418r5';
-import { createUsersFeature } from '../features/users.js?v=20260418r5';
+} from '../core/api.js?v=20260418r7';
+import { createFeedback } from '../ui/feedback.js?v=20260418r7';
+import { createAuthFeature } from '../features/auth.js?v=20260418r7';
+import { createStatusFeature } from '../features/status.js?v=20260418r7';
+import { createGuestFeature } from '../features/guest.js?v=20260418r7';
+import { createLogsFeature } from '../features/logs.js?v=20260418r7';
+import { createUsersFeature } from '../features/users.js?v=20260418r7';
 
 export function initApp() {
     const DOM = getDOM();
@@ -73,6 +73,16 @@ export function initApp() {
 
     function isMobileViewport() {
         return window.matchMedia('(max-width: 768px)').matches;
+    }
+
+    function shouldEagerWarmSections() {
+        const saveData = Boolean(
+            typeof navigator !== 'undefined'
+            && navigator.connection
+            && navigator.connection.saveData
+        );
+
+        return !isMobileViewport() && !saveData;
     }
 
     function getSectionPreloadPx() {
@@ -480,8 +490,10 @@ export function initApp() {
                     }
                 });
 
-                loadSectionIfNeeded('logs', authFeature);
-                loadSectionIfNeeded('users', authFeature);
+                if (shouldEagerWarmSections()) {
+                    loadSectionIfNeeded('logs', authFeature);
+                    loadSectionIfNeeded('users', authFeature);
+                }
                 refreshVisibleSections();
                 scheduleRouteSync(authFeature);
             }
@@ -638,19 +650,21 @@ export function initApp() {
             fromPopState: true
         });
 
-        setTimeout(() => {
-            if (!runtimeStarted || !authFeature.isAuthenticated()) {
-                return;
-            }
-            loadSectionIfNeeded('logs', authFeature);
-        }, 120);
+        if (shouldEagerWarmSections()) {
+            setTimeout(() => {
+                if (!runtimeStarted || !authFeature.isAuthenticated()) {
+                    return;
+                }
+                loadSectionIfNeeded('logs', authFeature);
+            }, 120);
 
-        setTimeout(() => {
-            if (!runtimeStarted || !authFeature.isAuthenticated()) {
-                return;
-            }
-            loadSectionIfNeeded('users', authFeature);
-        }, 200);
+            setTimeout(() => {
+                if (!runtimeStarted || !authFeature.isAuthenticated()) {
+                    return;
+                }
+                loadSectionIfNeeded('users', authFeature);
+            }, 200);
+        }
 
         startPollingLoops(authFeature);
         scheduleRouteSync(authFeature);

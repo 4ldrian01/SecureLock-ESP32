@@ -52,6 +52,27 @@ void WiFiController::update() {
         Serial.println(WiFi.SSID());
         Serial.print("[WIFI] IP: ");
         Serial.println(WiFi.localIP());
+
+        Serial.print("[WIFI] Gateway: ");
+        Serial.println(WiFi.gatewayIP());
+        Serial.print("[WIFI] DNS1 (DHCP): ");
+        Serial.println(WiFi.dnsIP(0));
+        Serial.print("[WIFI] DNS2 (DHCP): ");
+        Serial.println(WiFi.dnsIP(1));
+
+        const IPAddress fallbackDns1(8, 8, 8, 8);
+        const IPAddress fallbackDns2(1, 1, 1, 1);
+        const IPAddress noAddress(0, 0, 0, 0);
+        if (WiFi.config(noAddress, noAddress, noAddress, fallbackDns1, fallbackDns2)) {
+            Serial.println("[WIFI] DNS override applied: 8.8.8.8 / 1.1.1.1");
+        } else {
+            Serial.println("[WIFI][WARN] DNS override failed");
+        }
+
+        Serial.print("[WIFI] DNS1 (active): ");
+        Serial.println(WiFi.dnsIP(0));
+        Serial.print("[WIFI] DNS2 (active): ");
+        Serial.println(WiFi.dnsIP(1));
     } else if (!connectedNow && _connected) {
         Serial.println("[WIFI][WARN] Link lost. Reconnecting in background...");
     }

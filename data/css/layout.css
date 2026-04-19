@@ -15,8 +15,8 @@
         "header"
         "hero"
         "guest"
-        "logs"
-        "users";
+        "users"
+        "logs";
     gap: var(--space-4);
 }
 
@@ -123,8 +123,8 @@
         grid-template-areas:
             "header header"
             "hero hero"
-            "guest logs"
-            "users users";
+            "guest users"
+            "logs logs";
         gap: var(--space-5);
         align-items: stretch;
     }

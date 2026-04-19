@@ -91,10 +91,10 @@ void WebServer::_handleAPILogs(AsyncWebServerRequest* request) {
 
         if (error || !storageDoc["logs"].is<JsonArray>()) {
             storageDoc.clear();
-            storageDoc["logs"] = JsonArray();
+            storageDoc["logs"].to<JsonArray>();
         }
     } else {
-        storageDoc["logs"] = JsonArray();
+        storageDoc["logs"].to<JsonArray>();
     }
 
     JsonDocument responseDoc;
@@ -151,7 +151,7 @@ void WebServer::_handleAPIClearLogs(AsyncWebServerRequest* request) {
     _clearQueuedLogs();
 
     JsonDocument logsDoc;
-    logsDoc["logs"] = JsonArray();
+    logsDoc["logs"].to<JsonArray>();
 
     bool cleared = false;
     File file = LittleFS.open("/logs.json", "w");
@@ -165,7 +165,7 @@ void WebServer::_handleAPIClearLogs(AsyncWebServerRequest* request) {
     response["success"] = cleared;
     response["message"] = cleared ? "All logs cleared" : "Failed to clear logs";
 
-    forwardWebAdminActivityToTelegram("Admin (Web)", "Clear Logs", cleared ? "success" : "fail");
+    forwardWebAdminActivityToTelegram(_activeApiActorLabel(), "Clear Logs", cleared ? "success" : "fail");
 
     _sendJSON(request, cleared ? 200 : 500, response);
 }
@@ -202,7 +202,7 @@ void WebServer::_writeLogBatchToStorage(const QueuedLogEntry* entries, size_t co
     }
 
     if (!logsDoc["logs"].is<JsonArray>()) {
-        logsDoc["logs"] = JsonArray();
+        logsDoc["logs"].to<JsonArray>();
     }
 
     JsonArray logs = logsDoc["logs"].as<JsonArray>();
@@ -277,7 +277,10 @@ void WebServer::_writeLogBatchToStorage(const QueuedLogEntry* entries, size_t co
         Serial.print(" | ");
         Serial.println(status);
 
-        if (user == "Admin (Web)") {
+        String normalizedUser = user;
+        normalizedUser.trim();
+        normalizedUser.toLowerCase();
+        if (normalizedUser.indexOf("admin") >= 0 && normalizedUser.indexOf("(web)") >= 0) {
             forwardWebAdminActivityToTelegram(user, method, status);
         }
     }

@@ -32,6 +32,8 @@
  *   GET    /api/logs        → Get activity logs
  *   GET    /api/diagnostics → Hardware diagnostics (RFID/keypad/buzzer)
  *   DELETE /api/logs        → Clear all activity logs
+ *   POST   /api/rfid/enroll/start → Begin enrollment scan window (suppresses auth-deny workflow)
+ *   POST   /api/rfid/enroll/stop  → End enrollment scan window
  *   GET    /api/rfid/scan   → Poll RFID reader for card enrollment
  * 
  * FEATURES:
@@ -96,6 +98,9 @@ private:
     String _apiSessionToken;
     unsigned long _apiSessionIssuedAtMs;
     unsigned long _apiSessionExpiresAtMs;
+    String _apiSessionActorLabel;
+    String _apiSessionAdminUsername;
+    int _apiSessionAdminSlot;
     int _authFailedAttempts;
     unsigned long _authLockoutUntilMs;
 
@@ -128,6 +133,8 @@ private:
     void _handleAPIResetUsers(AsyncWebServerRequest* request, uint8_t* data, size_t len);
     void _handleAPILogs(AsyncWebServerRequest* request);
     void _handleAPIClearLogs(AsyncWebServerRequest* request);
+    void _handleAPIRfidEnrollStart(AsyncWebServerRequest* request);
+    void _handleAPIRfidEnrollStop(AsyncWebServerRequest* request);
     void _handleAPIRfidScan(AsyncWebServerRequest* request);
     void _handleAPIDiagnostics(AsyncWebServerRequest* request);
     
@@ -169,6 +176,8 @@ private:
     
     // Utilities
     String _getMimeType(const String& filename);
+    bool _clientAcceptsGzip(AsyncWebServerRequest* request) const;
+    bool _serveStaticAsset(AsyncWebServerRequest* request, const String& path, bool cacheable);
     void _sendJSON(AsyncWebServerRequest* request, int code, const JsonDocument& doc);
     void _addCORSHeaders(AsyncWebServerRequest* request, AsyncWebServerResponse* response);
     void _addSecurityHeaders(AsyncWebServerResponse* response);
@@ -180,6 +189,9 @@ private:
     bool _requireApiAuth(AsyncWebServerRequest* request);
     String _generateApiSessionToken() const;
     void _invalidateApiSession();
+    String _activeApiActorLabel() const;
+    String _activeApiAdminUsername() const;
+    int _activeApiAdminSlot() const;
     bool _secureEquals(const String& a, const String& b) const;
     unsigned long _remainingCooldownMs(unsigned long lastActionMs, unsigned long cooldownMs) const;
     bool _syncUsersFileFromAuth(JsonDocument* responseDoc = nullptr);

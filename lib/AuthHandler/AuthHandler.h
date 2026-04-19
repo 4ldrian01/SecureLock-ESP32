@@ -57,6 +57,17 @@ enum AuthResult {
     AUTH_DURESS      // Duress code entered (2580)
 };
 
+enum AuthStorageError {
+    AUTH_STORAGE_OK = 0,
+    AUTH_STORAGE_FS_UNAVAILABLE,
+    AUTH_STORAGE_LOAD_FAILED,
+    AUTH_STORAGE_INVALID_INPUT,
+    AUTH_STORAGE_USERS_ARRAY_INVALID,
+    AUTH_STORAGE_USER_LIMIT_REACHED,
+    AUTH_STORAGE_WRITE_OPEN_FAILED,
+    AUTH_STORAGE_WRITE_SERIALIZE_FAILED
+};
+
 class AuthHandler {
 public:
     // Constructor
@@ -103,6 +114,9 @@ public:
     String getUserBackupPIN(const String& uid);
     int getUserCount() const;
     String getUserUIDAt(int index) const;
+    AuthStorageError getLastStorageError() const;
+    String getLastStorageErrorLabel() const;
+    bool getStorageUsage(size_t* usedBytes, size_t* totalBytes) const;
     
     // Factory reset
     bool checkFactoryReset();       // Check if BOOT button held 10s
@@ -148,14 +162,14 @@ private:
     static const unsigned long FACTORY_RESET_TIME = 10000;  // 10 seconds
     static const unsigned long RFID_COOLDOWN_MS = 450;      // Fast re-detect while still debouncing held cards
     static const unsigned long RFID_RECOVERY_INTERVAL_MS = 1500;
-    static const unsigned long KEYPAD_MIN_KEY_INTERVAL_MS = 60;
+    static const unsigned long KEYPAD_MIN_KEY_INTERVAL_MS = 32;
     static const unsigned long KEYPAD_NOISE_WINDOW_MS = 2000;
     static const int KEYPAD_NOISE_THRESHOLD = 20;
     static const unsigned long KEYPAD_MUTE_DURATION_MS = 3000;
-    static const unsigned long KEYPAD_STARTUP_SETTLE_MS = 600;
-    static const unsigned long KEYPAD_STABLE_PRESS_MS = 12;
-    static const unsigned long KEYPAD_STABLE_RELEASE_MS = 10;
-    static const unsigned long KEYPAD_SAME_KEY_REPRESS_MS = 140;
+    static const unsigned long KEYPAD_STARTUP_SETTLE_MS = 250;
+    static const unsigned long KEYPAD_STABLE_PRESS_MS = 8;
+    static const unsigned long KEYPAD_STABLE_RELEASE_MS = 6;
+    static const unsigned long KEYPAD_SAME_KEY_RETRIGGER_MS = 220;
     
     // Hardware objects
     MFRC522 _rfid;
@@ -172,17 +186,19 @@ private:
     char _lastAcceptedKeyChar;
     char _lastRawKey;
     unsigned long _lastRawKeyChangeMs;
-    bool _sameKeyRetriggerUsed;
     unsigned long _keypadNoiseWindowStartMs;
     int _keypadNoiseCount;
     unsigned long _keypadMutedUntilMs;
     unsigned long _keypadReadyAtMs;
     bool _keypadRuntimeSettlingStarted;
     char _heldKey;
+    unsigned long _heldKeySinceMs;
+    bool _sameKeyRetriggerUsed;
     int _activeRfidRstPin;
     bool _rfidReady;
     unsigned long _factoryPressStart;
     bool _factoryPressed;
+    AuthStorageError _lastStorageError;
     
     // Private methods
     String _readRFIDUID();
@@ -198,6 +214,7 @@ private:
     bool _ensureFileSystemReady();
     bool _compactUsers();
     char _scanKeypadRaw();
+    void _setStorageError(AuthStorageError error);
     
     // User tracking (UIDs of registered users for iteration)
     static const int MAX_USERS = 20;

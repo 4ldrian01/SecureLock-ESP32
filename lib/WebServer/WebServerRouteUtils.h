@@ -5,6 +5,7 @@
 #include <ESPAsyncWebServer.h>
 #include <ctype.h>
 #include "AuthHandler.h"
+#include "WebServerRouteLimits.h"
 
 namespace webserver_route_utils {
 
@@ -81,11 +82,23 @@ inline bool isFourDigitCode(const String& code) {
 inline bool isValidTelegramChatId(const String& chatId) {
     String value = chatId;
     value.trim();
-    if (value.length() != 10) {
+
+    if (value.length() == 0) {
         return false;
     }
 
-    for (size_t i = 0; i < value.length(); i++) {
+    size_t startIndex = 0;
+    if (value.charAt(0) == '-') {
+        startIndex = 1;
+    }
+
+    const size_t digitsLen = value.length() - startIndex;
+    if (digitsLen < webserver_limits::MIN_TELEGRAM_CHAT_ID_DIGITS
+        || digitsLen > webserver_limits::MAX_TELEGRAM_CHAT_ID_DIGITS) {
+        return false;
+    }
+
+    for (size_t i = startIndex; i < value.length(); i++) {
         if (!isDigit(value.charAt(i))) {
             return false;
         }

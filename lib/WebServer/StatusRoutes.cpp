@@ -107,7 +107,7 @@ void WebServer::_handleAPIUnlock(AsyncWebServerRequest* request) {
 
     const unsigned long guestLockRemainingMs = getTemporaryGuestCodeRemainingMs();
     if (guestLockRemainingMs > 0) {
-        _addLogEntry("Admin (Web)", "Emergency Override Blocked (Guest Code Active)", "fail");
+        _addLogEntry(_activeApiActorLabel(), "Emergency Override Blocked (Guest Code Active)", "fail");
 
         JsonDocument doc;
         doc["success"] = false;
@@ -122,7 +122,7 @@ void WebServer::_handleAPIUnlock(AsyncWebServerRequest* request) {
 
     const unsigned long retryAfterMs = _remainingCooldownMs(_lastEmergencyUnlockMs, EMERGENCY_COOLDOWN_MS);
     if (retryAfterMs > 0) {
-        _addLogEntry("Admin (Web)", "Emergency Override Cooldown", "fail");
+        _addLogEntry(_activeApiActorLabel(), "Emergency Override Cooldown", "fail");
 
         JsonDocument doc;
         doc["success"] = false;
@@ -145,7 +145,7 @@ void WebServer::_handleAPIUnlock(AsyncWebServerRequest* request) {
     _security->beep(2);
 
     _lastEmergencyUnlockMs = millis();
-    _addLogEntry("Admin (Web)", "Emergency Override", "success");
+    _addLogEntry(_activeApiActorLabel(), "Emergency Override", "success");
 
     JsonDocument doc;
     doc["success"] = true;
@@ -171,7 +171,7 @@ void WebServer::_handleAPIGuestCode(AsyncWebServerRequest* request) {
     const bool generated = requestWebGuestCode(&issuedCode, &remainingMs, &reusedExisting);
 
     if (!generated || issuedCode.length() != 4) {
-        _addLogEntry("Admin (Web)", "Guest PIN Generation", "fail");
+        _addLogEntry(_activeApiActorLabel(), "Guest PIN Generation", "fail");
 
         JsonDocument doc;
         doc["success"] = false;
@@ -180,7 +180,7 @@ void WebServer::_handleAPIGuestCode(AsyncWebServerRequest* request) {
         return;
     }
 
-    _addLogEntry("Admin (Web)", reusedExisting ? "Guest PIN Reused" : "Guest PIN Generated", "success");
+    _addLogEntry(_activeApiActorLabel(), reusedExisting ? "Guest PIN Reused" : "Guest PIN Generated", "success");
 
     JsonDocument doc;
     doc["success"] = true;

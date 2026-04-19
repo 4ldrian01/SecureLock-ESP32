@@ -11,6 +11,28 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
         return `${ms}ms`;
     }
 
+    function setNodeText(node, nextText) {
+        if (!node) {
+            return;
+        }
+
+        const normalizedText = String(nextText ?? '');
+        if (node.textContent !== normalizedText) {
+            node.textContent = normalizedText;
+        }
+    }
+
+    function setNodeColor(node, nextColor) {
+        if (!node) {
+            return;
+        }
+
+        const normalizedColor = String(nextColor ?? '');
+        if (node.style.color !== normalizedColor) {
+            node.style.color = normalizedColor;
+        }
+    }
+
     function updateTelemetryPanel() {
         if (!DOM.telemetryPanel) {
             return;
@@ -18,7 +40,8 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
 
         if (DOM.telemetryApiRtt) {
             const rtt = Number(state.statusApiRttSmoothedMs || state.statusApiRttMs || 0);
-            DOM.telemetryApiRtt.textContent = rtt > 0 ? formatMs(rtt) : '--';
+            const nextRttText = rtt > 0 ? formatMs(rtt) : '--';
+            setNodeText(DOM.telemetryApiRtt, nextRttText);
         }
 
         if (DOM.telemetryQueue) {
@@ -27,18 +50,19 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
             const oldestAgeMs = Math.max(0, Number(state.telegramNotifyQueueOldestAgeMs || 0));
 
             if (capacity > 0) {
-                DOM.telemetryQueue.textContent = `${depth}/${capacity} (${Math.ceil(oldestAgeMs / 1000)}s)`;
+                setNodeText(DOM.telemetryQueue, `${depth}/${capacity} (${Math.ceil(oldestAgeMs / 1000)}s)`);
             } else {
-                DOM.telemetryQueue.textContent = `${depth}`;
+                setNodeText(DOM.telemetryQueue, `${depth}`);
             }
         }
 
         if (DOM.telemetryPoll) {
             const pollDuration = Math.max(0, Number(state.telegramLastPollDurationMs || 0));
             const pollInterval = Math.max(0, Number(state.telegramPollIntervalMs || 0));
-            DOM.telemetryPoll.textContent = (pollDuration > 0 || pollInterval > 0)
+            const nextPollText = (pollDuration > 0 || pollInterval > 0)
                 ? `${pollDuration}ms @ ${pollInterval}ms`
                 : '--';
+            setNodeText(DOM.telemetryPoll, nextPollText);
         }
     }
 
@@ -55,43 +79,36 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
     }
 
     function renderLockStatusSub() {
+        let nextText = '';
+        let nextColor = '';
+
         if (state.alarm) {
-            DOM.lockStatusSub.textContent = '\u26A0 ALARM ACTIVE';
-            DOM.lockStatusSub.style.color = 'var(--danger)';
-            return;
+            nextText = '\u26A0 ALARM ACTIVE';
+            nextColor = 'var(--danger)';
+        } else if (state.buzzerActive) {
+            nextText = state.sirenActive ? 'Siren Pulse Active' : 'Buzzer Feedback Active';
+            nextColor = 'var(--warning, #f59e0b)';
+        } else if (state.authPrompt) {
+            nextText = state.authPrompt;
+            nextColor = 'var(--accent, #60A5FA)';
+        } else if (state.locked) {
+            nextText = 'System Armed \u2022 Secure';
+        } else if (state.lockCountdownSeconds > 0) {
+            nextText = `Door Open \u2022 Auto-lock in ${state.lockCountdownSeconds}s`;
+        } else {
+            nextText = 'Door Open \u2022 Auto-locking...';
         }
 
-        if (state.buzzerActive) {
-            DOM.lockStatusSub.textContent = state.sirenActive ? 'Siren Pulse Active' : 'Buzzer Feedback Active';
-            DOM.lockStatusSub.style.color = 'var(--warning, #f59e0b)';
-            return;
-        }
-
-        if (state.authPrompt) {
-            DOM.lockStatusSub.textContent = state.authPrompt;
-            DOM.lockStatusSub.style.color = 'var(--accent, #60A5FA)';
-            return;
-        }
-
-        DOM.lockStatusSub.style.color = '';
-
-        if (state.locked) {
-            DOM.lockStatusSub.textContent = 'System Armed \u2022 Secure';
-            return;
-        }
-
-        if (state.lockCountdownSeconds > 0) {
-            DOM.lockStatusSub.textContent = `Door Open \u2022 Auto-lock in ${state.lockCountdownSeconds}s`;
-            return;
-        }
-
-        DOM.lockStatusSub.textContent = 'Door Open \u2022 Auto-locking...';
+        setNodeColor(DOM.lockStatusSub, nextColor);
+        setNodeText(DOM.lockStatusSub, nextText);
     }
 
     function updateLockUI(locked) {
         const lockState = locked ? 'locked' : 'unlocked';
-        DOM.lockVisual.dataset.lockState = lockState;
-        DOM.lockStatusLabel.textContent = locked ? 'LOCKED' : 'UNLOCKED';
+        if (DOM.lockVisual?.dataset?.lockState !== lockState) {
+            DOM.lockVisual.dataset.lockState = lockState;
+        }
+        setNodeText(DOM.lockStatusLabel, locked ? 'LOCKED' : 'UNLOCKED');
         renderLockStatusSub();
     }
 

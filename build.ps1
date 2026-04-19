@@ -1,41 +1,129 @@
-# SecureLock Build Script
-# Cleans and builds the project
+# SecureLock Build & Deploy Helper
+# Default behavior: full "latest" deployment (clean -> build -> uploadfs -> upload)
+# Optional behavior: build-only mode for local compile verification.
 
-Write-Host "=== SecureLock Build Script ===" -ForegroundColor Cyan
-
-# Set PlatformIO path (prefer stable local core install on this workstation)
-$pioCandidates = @(
-    "C:\pio_core\penv\Scripts\platformio.exe",
-    "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe"
+[CmdletBinding()]
+param(
+    [switch]$BuildOnly,
+    [switch]$NoMonitor,
+    [switch]$SkipClean,
+    [switch]$ForceUploadFS,
+    [switch]$RefreshPlatform,
+    [string]$UploadPort = "",
+    [string]$ExpectedIp = "",
+    [int]$UploadMaxAttempts = 3,
+    [int]$RetryDelaySec = 2,
+    [switch]$InteractiveRetry
 )
 
-$pioPath = $pioCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
 
-# Check if PlatformIO exists
-if (-not $pioPath) {
-    Write-Host "ERROR: PlatformIO not found. Checked: $($pioCandidates -join ', ')" -ForegroundColor Red
-    exit 1
+function Resolve-PlatformIO {
+    $pioCandidates = @(
+        "C:\pio_core\penv\Scripts\platformio.exe",
+        "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe"
+    )
+
+    $resolved = $pioCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if (-not $resolved) {
+        throw "PlatformIO not found. Checked: $($pioCandidates -join ', ')"
+    }
+
+    return $resolved
 }
 
-Write-Host "Using PlatformIO: $pioPath" -ForegroundColor DarkGray
+function Invoke-PioStep {
+    param(
+        [Parameter(Mandatory = $true)][string]$Title,
+        [Parameter(Mandatory = $true)][string]$PioPath,
+        [Parameter(Mandatory = $true)][string[]]$Args
+    )
 
-# Clean .pio folder
-Write-Host "`n[1/4] Cleaning build folder..." -ForegroundColor Yellow
-if (Test-Path ".pio") {
-    Remove-Item ".pio" -Recurse -Force
-    Write-Host "      Removed .pio folder" -ForegroundColor Green
+    Write-Host "`n$Title" -ForegroundColor Yellow
+    & $PioPath @Args
+    if ($LASTEXITCODE -ne 0) {
+        throw "Step failed: $Title (exit code $LASTEXITCODE)"
+    }
 }
 
-# Install libraries
-Write-Host "`n[2/4] Installing libraries..." -ForegroundColor Yellow
-& $pioPath pkg install
+Write-Host "=== SecureLock Build / Deploy Script ===" -ForegroundColor Cyan
 
-# Update platform
-Write-Host "`n[3/4] Updating ESP32 platform..." -ForegroundColor Yellow
-& $pioPath platform update espressif32
+if ($UploadMaxAttempts -lt 1) {
+    throw "UploadMaxAttempts must be >= 1"
+}
 
-# Build
-Write-Host "`n[4/4] Building project..." -ForegroundColor Yellow
-& $pioPath run
+if ($RetryDelaySec -lt 0) {
+    throw "RetryDelaySec must be >= 0"
+}
 
-Write-Host "`n=== Build Complete ===" -ForegroundColor Cyan
+if ($BuildOnly) {
+    $pioPath = Resolve-PlatformIO
+    Write-Host "Mode: BUILD ONLY" -ForegroundColor Cyan
+    Write-Host "Using PlatformIO: $pioPath" -ForegroundColor DarkGray
+
+    if (-not $SkipClean) {
+        Write-Host "`n[clean] Removing .pio build cache" -ForegroundColor Yellow
+        if (Test-Path ".pio") {
+            Remove-Item ".pio" -Recurse -Force
+            Write-Host "      Removed .pio folder" -ForegroundColor Green
+        }
+    }
+
+    Invoke-PioStep -Title "[deps] Installing project packages" -PioPath $pioPath -Args @("pkg", "install")
+
+    if ($RefreshPlatform) {
+        Invoke-PioStep -Title "[platform] Updating espressif32 platform" -PioPath $pioPath -Args @("platform", "update", "espressif32")
+    }
+
+    Invoke-PioStep -Title "[build] Compiling firmware" -PioPath $pioPath -Args @("run")
+    Write-Host "`n=== Build completed successfully ===" -ForegroundColor Green
+    exit 0
+}
+
+Write-Host "Mode: FULL DEPLOY (latest dashboard + firmware)" -ForegroundColor Cyan
+
+$deployScript = Join-Path $PSScriptRoot "scripts\deploy_all.ps1"
+if (-not (Test-Path $deployScript)) {
+    throw "Missing deployment script: $deployScript"
+}
+
+$deployArgs = @(
+    "-NoProfile",
+    "-ExecutionPolicy", "Bypass",
+    "-File", $deployScript,
+    "-UploadMaxAttempts", "$UploadMaxAttempts",
+    "-RetryDelaySec", "$RetryDelaySec"
+)
+
+if ($UploadPort) {
+    $deployArgs += @("-UploadPort", $UploadPort)
+}
+
+if ($ExpectedIp) {
+    $deployArgs += @("-ExpectedIp", $ExpectedIp)
+}
+
+if ($NoMonitor) {
+    $deployArgs += "-NoMonitor"
+}
+
+if ($SkipClean) {
+    $deployArgs += "-SkipClean"
+}
+
+if ($InteractiveRetry) {
+    $deployArgs += "-InteractiveRetry"
+}
+
+if ($ForceUploadFS) {
+    $deployArgs += "-ForceUploadFS"
+}
+
+Write-Host "Delegating to: $deployScript" -ForegroundColor DarkGray
+& powershell @deployArgs
+if ($LASTEXITCODE -ne 0) {
+    throw "Full deploy failed (exit code $LASTEXITCODE)"
+}
+
+Write-Host "`n=== Full deploy completed successfully ===" -ForegroundColor Green

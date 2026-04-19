@@ -47,6 +47,7 @@ export function getDOM() {
         btnClearLogs: document.getElementById('btnClearLogs'),
 
         usersGrid: document.getElementById('usersGrid'),
+        usersSummary: document.getElementById('usersSummary'),
         btnAddUser: document.getElementById('btnAddUser'),
         btnResetUsers: document.getElementById('btnResetUsers'),
 

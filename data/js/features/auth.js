@@ -353,7 +353,11 @@ export function createAuthFeature({
                 });
 
                 if (started) {
-                    feedback.showToast('Admin login successful', 'success');
+                    const actorLabel = String(data?.adminLabel || '').trim();
+                    feedback.showToast(
+                        actorLabel ? `${actorLabel} login successful` : 'Admin login successful',
+                        'success'
+                    );
                     return;
                 }
             }

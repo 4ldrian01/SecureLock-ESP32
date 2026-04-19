@@ -10,6 +10,22 @@
 #define DASHBOARD_ADMIN_PASSWORD "CHANGE_ME_NOW"
 #endif
 
+#ifndef DASHBOARD_ADMIN_1_USERNAME
+#define DASHBOARD_ADMIN_1_USERNAME DASHBOARD_ADMIN_USERNAME
+#endif
+
+#ifndef DASHBOARD_ADMIN_1_PASSWORD
+#define DASHBOARD_ADMIN_1_PASSWORD DASHBOARD_ADMIN_PASSWORD
+#endif
+
+#ifndef DASHBOARD_ADMIN_2_USERNAME
+#define DASHBOARD_ADMIN_2_USERNAME ""
+#endif
+
+#ifndef DASHBOARD_ADMIN_2_PASSWORD
+#define DASHBOARD_ADMIN_2_PASSWORD ""
+#endif
+
 void WebServer::_handleAPIAuthLogin(AsyncWebServerRequest* request, uint8_t* data, size_t len) {
     if (len > webserver_limits::MAX_AUTH_PAYLOAD_BYTES) {
         JsonDocument doc;
@@ -58,22 +74,57 @@ void WebServer::_handleAPIAuthLogin(AsyncWebServerRequest* request, uint8_t* dat
         return;
     }
 
-    String expectedUsername = String(DASHBOARD_ADMIN_USERNAME);
-    String expectedPassword = String(DASHBOARD_ADMIN_PASSWORD);
-    expectedUsername.trim();
-    expectedPassword.trim();
+    String expectedUsernames[2] = {
+        String(DASHBOARD_ADMIN_1_USERNAME),
+        String(DASHBOARD_ADMIN_2_USERNAME)
+    };
+    String expectedPasswords[2] = {
+        String(DASHBOARD_ADMIN_1_PASSWORD),
+        String(DASHBOARD_ADMIN_2_PASSWORD)
+    };
 
-    if (_secureEquals(expectedPassword, String("CHANGE_ME_NOW"))) {
+    bool hasConfiguredCredential = false;
+    for (int i = 0; i < 2; i++) {
+        expectedUsernames[i].trim();
+        expectedPasswords[i].trim();
+
+        const bool configured = expectedUsernames[i].length() > 0
+            && expectedPasswords[i].length() > 0
+            && !_secureEquals(expectedPasswords[i], String("CHANGE_ME_NOW"));
+        if (configured) {
+            hasConfiguredCredential = true;
+        }
+    }
+
+    if (!hasConfiguredCredential) {
         JsonDocument doc;
         doc["success"] = false;
         doc["authenticated"] = false;
-        doc["message"] = "Dashboard admin password is not configured. Set DASHBOARD_ADMIN_PASSWORD in include/secrets.h";
+        doc["message"] = "Dashboard admin credentials are not configured. Set DASHBOARD_ADMIN_1_* (and optionally DASHBOARD_ADMIN_2_*) in include/secrets.h";
         _sendJSON(request, 503, doc);
         return;
     }
 
-    const bool authSuccess = _secureEquals(username, expectedUsername)
-        && _secureEquals(password, expectedPassword);
+    int matchedAdminSlot = 0;
+    String matchedAdminUsername = "";
+    for (int i = 0; i < 2; i++) {
+        const bool configured = expectedUsernames[i].length() > 0
+            && expectedPasswords[i].length() > 0
+            && !_secureEquals(expectedPasswords[i], String("CHANGE_ME_NOW"));
+
+        if (!configured) {
+            continue;
+        }
+
+        if (_secureEquals(username, expectedUsernames[i])
+            && _secureEquals(password, expectedPasswords[i])) {
+            matchedAdminSlot = i + 1;
+            matchedAdminUsername = expectedUsernames[i];
+            break;
+        }
+    }
+
+    const bool authSuccess = matchedAdminSlot > 0;
 
     if (!authSuccess) {
         _authFailedAttempts++;
@@ -113,14 +164,20 @@ void WebServer::_handleAPIAuthLogin(AsyncWebServerRequest* request, uint8_t* dat
     _apiSessionToken = _generateApiSessionToken();
     _apiSessionIssuedAtMs = nowMs;
     _apiSessionExpiresAtMs = nowMs + API_SESSION_TTL_MS;
+    _apiSessionAdminSlot = matchedAdminSlot;
+    _apiSessionAdminUsername = matchedAdminUsername;
+    _apiSessionActorLabel = "Admin " + String(matchedAdminSlot) + " (Web)";
 
     JsonDocument doc;
     doc["success"] = true;
     doc["authenticated"] = true;
     doc["token"] = _apiSessionToken;
     doc["expiresInMs"] = API_SESSION_TTL_MS;
+    doc["adminSlot"] = _activeApiAdminSlot();
+    doc["adminLabel"] = _activeApiActorLabel();
+    doc["adminUsername"] = _activeApiAdminUsername();
     _sendJSON(request, 200, doc);
-    _addLogEntry("Admin (Web)", "API Auth Login", "success");
+    _addLogEntry(_activeApiActorLabel(), "API Auth Login", "success");
 }
 
 void WebServer::_handleAPIAuthLogout(AsyncWebServerRequest* request) {
@@ -128,6 +185,7 @@ void WebServer::_handleAPIAuthLogout(AsyncWebServerRequest* request) {
         return;
     }
 
+    const String actor = _activeApiActorLabel();
     _invalidateApiSession();
 
     JsonDocument doc;
@@ -135,7 +193,7 @@ void WebServer::_handleAPIAuthLogout(AsyncWebServerRequest* request) {
     doc["authenticated"] = false;
     doc["message"] = "Logged out";
     _sendJSON(request, 200, doc);
-    _addLogEntry("Admin (Web)", "API Auth Logout", "success");
+    _addLogEntry(actor, "API Auth Logout", "success");
 }
 
 void WebServer::_handleAPIAuthStatus(AsyncWebServerRequest* request) {
@@ -158,5 +216,10 @@ void WebServer::_handleAPIAuthStatus(AsyncWebServerRequest* request) {
     doc["success"] = true;
     doc["authenticated"] = authenticated;
     doc["expiresInMs"] = expiresInMs;
+    if (authenticated) {
+        doc["adminSlot"] = _activeApiAdminSlot();
+        doc["adminLabel"] = _activeApiActorLabel();
+        doc["adminUsername"] = _activeApiAdminUsername();
+    }
     _sendJSON(request, 200, doc);
 }

@@ -128,6 +128,9 @@ WebServer::WebServer(LockManager* lockManager, SecurityManager* securityManager,
       _apiSessionToken(""),
       _apiSessionIssuedAtMs(0),
       _apiSessionExpiresAtMs(0),
+    _apiSessionActorLabel(""),
+    _apiSessionAdminUsername(""),
+    _apiSessionAdminSlot(0),
       _authFailedAttempts(0),
       _authLockoutUntilMs(0) {
 }
@@ -593,6 +596,14 @@ void WebServer::_setupRoutes() {
         _handleAPIClearLogs(request);
     });
 
+    _server.on("/api/rfid/enroll/start", HTTP_POST, [this](AsyncWebServerRequest* request) {
+        _handleAPIRfidEnrollStart(request);
+    });
+
+    _server.on("/api/rfid/enroll/stop", HTTP_POST, [this](AsyncWebServerRequest* request) {
+        _handleAPIRfidEnrollStop(request);
+    });
+
     _server.on("/api/rfid/scan", HTTP_GET, [this](AsyncWebServerRequest* request) {
         _handleAPIRfidScan(request);
     });
@@ -609,131 +620,8 @@ void WebServer::_setupRoutes() {
 }
 
 // ============================================================
-// PRIVATE - Static File Handlers
-// ============================================================
-
-void WebServer::_handleRoot(AsyncWebServerRequest* request) {
-    const char* candidates[] = {
-        "/html/pages/dashboard.html",
-        "/html/index.html",
-        "/index.html"
-    };
-
-    for (const char* path : candidates) {
-        if (LittleFS.exists(path)) {
-            AsyncWebServerResponse* response = request->beginResponse(LittleFS, path, "text/html");
-            _addNoCacheHeaders(response);
-            request->send(response);
-            if (kVerboseHttpLogs) {
-                Serial.print("[WEB] GET / -> ");
-                Serial.println(path);
-            }
-            return;
-        }
-    }
-
-    Serial.println("[WEB] ✗ dashboard HTML not found in LittleFS!");
-    request->send(404, "text/html",
-        "<!doctype html><html><head><meta charset='utf-8'>"
-        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        "<title>SecureLock Dashboard Missing</title></head><body>"
-        "<h2>SecureLock Dashboard files are missing</h2>"
-        "<p>Upload LittleFS data first, then reload this page.</p>"
-        "<pre>platformio run --target uploadfs</pre>"
-        "<p>Expected file: <code>data/html/pages/dashboard.html</code></p>"
-        "</body></html>");
-}
-
-void WebServer::_handleCSS(AsyncWebServerRequest* request) {
-    if (LittleFS.exists("/css/style.css")) {
-        AsyncWebServerResponse* response = request->beginResponse(LittleFS, "/css/style.css", "text/css");
-        _addStaticCacheHeaders(response);
-        request->send(response);
-        if (kVerboseHttpLogs) {
-            Serial.println("[WEB] GET /css/style.css -> OK");
-        }
-    } else if (LittleFS.exists("/style.css")) {
-        AsyncWebServerResponse* response = request->beginResponse(LittleFS, "/style.css", "text/css");
-        _addStaticCacheHeaders(response);
-        request->send(response);
-        if (kVerboseHttpLogs) {
-            Serial.println("[WEB] GET /css/style.css -> fallback /style.css");
-        }
-    } else {
-        Serial.println("[WEB] ✗ style.css not found!");
-        request->send(404, "text/plain", "CSS not found");
-    }
-}
-
-void WebServer::_handleNotFound(AsyncWebServerRequest* request) {
-    const String url = request->url();
-    String staticPath = url;
-
-    const int queryPos = staticPath.indexOf('?');
-    if (queryPos >= 0) {
-        staticPath = staticPath.substring(0, queryPos);
-    }
-
-    const int fragmentPos = staticPath.indexOf('#');
-    if (fragmentPos >= 0) {
-        staticPath = staticPath.substring(0, fragmentPos);
-    }
-
-    if (!staticPath.startsWith("/api/")) {
-        const bool spaAliasRoute = staticPath == "/login"
-            || staticPath == "/login/"
-            || staticPath == "/dashboard"
-            || staticPath == "/dashboard/"
-            || staticPath.startsWith("/dashboard/");
-
-        if (spaAliasRoute) {
-            _handleRoot(request);
-            if (kVerboseHttpLogs) {
-                Serial.print("[WEB] SPA alias route -> dashboard HTML: ");
-                Serial.println(staticPath);
-            }
-            return;
-        }
-    }
-
-    if (!staticPath.startsWith("/api/") && LittleFS.exists(staticPath)) {
-        AsyncWebServerResponse* response = request->beginResponse(LittleFS, staticPath, _getMimeType(staticPath));
-        const bool noCacheUiAsset = staticPath.endsWith(".html");
-
-        if (noCacheUiAsset) {
-            _addNoCacheHeaders(response);
-        } else {
-            _addStaticCacheHeaders(response);
-        }
-        request->send(response);
-        if (kVerboseHttpLogs) {
-            Serial.print("[WEB] Static fallback served: ");
-            Serial.println(staticPath);
-        }
-        return;
-    }
-
-    Serial.print("[WEB] 404: ");
-    Serial.println(url);
-
-    request->send(404, "text/plain", "404 - Not Found");
-}
-
-// ============================================================
 // PRIVATE - Utilities
 // ============================================================
-
-String WebServer::_getMimeType(const String& filename) {
-    if (filename.endsWith(".html")) return "text/html";
-    if (filename.endsWith(".css"))  return "text/css";
-    if (filename.endsWith(".js"))   return "application/javascript";
-    if (filename.endsWith(".json")) return "application/json";
-    if (filename.endsWith(".png"))  return "image/png";
-    if (filename.endsWith(".jpg"))  return "image/jpeg";
-    if (filename.endsWith(".ico"))  return "image/x-icon";
-    if (filename.endsWith(".svg"))  return "image/svg+xml";
-    return "text/plain";
-}
 
 void WebServer::_sendJSON(AsyncWebServerRequest* request, int code, const JsonDocument& doc) {
     String response;
@@ -867,7 +755,7 @@ bool WebServer::_syncUsersFileFromAuth(JsonDocument* responseDoc) {
     }
 
     if (!currentDoc["users"].is<JsonArray>()) {
-        currentDoc["users"] = JsonArray();
+        currentDoc["users"].to<JsonArray>();
     }
 
     JsonArray existingUsers = currentDoc["users"].as<JsonArray>();
@@ -910,6 +798,7 @@ bool WebServer::_syncUsersFileFromAuth(JsonDocument* responseDoc) {
         user["lastName"] = lastName;
         user["type"] = type;
         user["telegramChatID"] = userChatId;
+        user["chat_id"] = userChatId;
         user["isAdminChat"] = isAdminChat;
         user["backupPIN"] = _auth->getUserBackupPIN(uid);
     }
@@ -967,6 +856,12 @@ bool WebServer::_syncUsersFileFromAuth(JsonDocument* responseDoc) {
 
                 String lhsChat = lhsUser["telegramChatID"] | "";
                 String rhsChat = rhsUser["telegramChatID"] | "";
+                if (lhsChat.length() == 0) {
+                    lhsChat = lhsUser["chat_id"] | "";
+                }
+                if (rhsChat.length() == 0) {
+                    rhsChat = rhsUser["chat_id"] | "";
+                }
                 lhsChat.trim();
                 rhsChat.trim();
 

@@ -54,6 +54,34 @@ void WebServer::_invalidateApiSession() {
     _apiSessionToken = "";
     _apiSessionIssuedAtMs = 0;
     _apiSessionExpiresAtMs = 0;
+    _apiSessionActorLabel = "";
+    _apiSessionAdminUsername = "";
+    _apiSessionAdminSlot = 0;
+}
+
+String WebServer::_activeApiActorLabel() const {
+    String label = _apiSessionActorLabel;
+    label.trim();
+
+    if (label.length() == 0) {
+        return "Admin (Web)";
+    }
+
+    return label;
+}
+
+String WebServer::_activeApiAdminUsername() const {
+    String username = _apiSessionAdminUsername;
+    username.trim();
+    return username;
+}
+
+int WebServer::_activeApiAdminSlot() const {
+    if (_apiSessionAdminSlot < 1) {
+        return 0;
+    }
+
+    return _apiSessionAdminSlot;
 }
 
 bool WebServer::_isApiSessionValid() const {

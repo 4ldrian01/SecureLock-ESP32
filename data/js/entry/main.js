@@ -1,4 +1,4 @@
-import { initApp } from '../app/index.js?v=20260418r5';
+import { initApp } from '../app/index.js?v=20260418r7';
 
 function activateDeferredStylesheet() {
     const deferredStylesheet = document.getElementById('dashboardStyle');

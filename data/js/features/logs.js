@@ -1,4 +1,4 @@
-import { escapeHtml, formatLogTime } from '../core/helpers.js?v=20260418r5';
+import { escapeHtml, formatLogTime } from '../core/helpers.js?v=20260418r7';
 
 const LOG_STATUS_OPTIONS = ['all', 'success', 'fail', 'alarm', 'info'];
 const LOG_STATUS_LABELS = {
@@ -296,7 +296,9 @@ export function createLogsFeature({ CONFIG, state, DOM, apiFetch, feedback }) {
             state.logsClockTimer = null;
         }
 
-        const tickMs = Math.max(5000, Number(CONFIG.LOGS_CLOCK_TICK_MS || 10000));
+        const desktopTickMs = Math.max(5000, Number(CONFIG.LOGS_CLOCK_TICK_MS || 20000));
+        const mobileTickMs = Math.max(desktopTickMs, Number(CONFIG.LOGS_CLOCK_TICK_MS_MOBILE || 30000));
+        const tickMs = window.matchMedia('(max-width: 768px)').matches ? mobileTickMs : desktopTickMs;
 
         state.logsClockTimer = setInterval(() => {
             if (document.hidden) {
@@ -305,6 +307,18 @@ export function createLogsFeature({ CONFIG, state, DOM, apiFetch, feedback }) {
 
             if (!Array.isArray(state.allLogs) || state.allLogs.length === 0) {
                 return;
+            }
+
+            if (DOM.logsSection) {
+                const rect = DOM.logsSection.getBoundingClientRect();
+                const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+                const sectionVisible = !DOM.logsSection.hidden
+                    && DOM.logsSection.getAttribute('aria-hidden') !== 'true';
+                const sectionNearViewport = rect.bottom > -120 && rect.top < viewportHeight + 120;
+
+                if (!sectionVisible || !sectionNearViewport) {
+                    return;
+                }
             }
 
             // Force row HTML refresh so relative time labels stay fresh.

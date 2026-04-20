@@ -7,14 +7,6 @@
 #include "SecurityManager.h"
 
 namespace {
-inline bool isVibrationActiveLevel(int rawDigitalState) {
-#if SECURELOCK_VIBRATION_ACTIVE_HIGH
-    return rawDigitalState == HIGH;
-#else
-    return rawDigitalState == LOW;
-#endif
-}
-
 constexpr int BUZZER_PRIORITY_IDLE = 0;
 constexpr int BUZZER_PRIORITY_BEEP1 = 10;
 constexpr int BUZZER_PRIORITY_TIMED = 15;
@@ -31,24 +23,32 @@ SecurityManager::SecurityManager()
     : _alarming(false),
       _vibrationDetected(false),
       _lastVibeTime(0),
-      _lastVibeState(LOW),
-            _stableVibeState(LOW),
+    _lastVibeState(false),
+    _stableVibeState(false),
+    _rawVibeState(false),
+    _idleVibeRawState(false),
+    _vibrationArmed(false),
+    _vibrationArmAtMs(0),
+    _lastVibrationStrikeMs(0),
+    _vibrationStrikeCount(0),
+    _vibrationSuppressedStartupCount(0),
+    _vibrationSuppressedCooldownCount(0),
       _buzzerActive(false),
       _beepCount(0),
       _currentBeep(0),
       _buzzerStartTime(0),
       _buzzerState(false),
-        _sirenMode(false),
-            _beepOnDuration(KEYPRESS_ON_MS),
-            _beepOffDuration(KEYPRESS_OFF_MS),
-            _lastFeedbackBeepMs(0),
-            _lastPatternStartMs(0),
-            _timedBuzzMode(false),
-                _timedBuzzDurationMs(0),
-                _customSequenceMode(false),
-                _customSequencePriority(BUZZER_PRIORITY_IDLE),
-                _customSequenceStep(0),
-                _customSequenceLength(0)
+    _sirenMode(false),
+    _beepOnDuration(KEYPRESS_ON_MS),
+    _beepOffDuration(KEYPRESS_OFF_MS),
+    _lastFeedbackBeepMs(0),
+    _lastPatternStartMs(0),
+    _timedBuzzMode(false),
+    _timedBuzzDurationMs(0),
+    _customSequenceMode(false),
+    _customSequencePriority(BUZZER_PRIORITY_IDLE),
+    _customSequenceStep(0),
+    _customSequenceLength(0)
 {
 }
 
@@ -59,10 +59,24 @@ void SecurityManager::init() {
     pinMode(PIN_BUZZER, OUTPUT);
     pinMode(PIN_VIBE, INPUT);
 
-    // Establish current sensor baseline to avoid false first-edge strikes.
-    _lastVibeState = isVibrationActiveLevel(digitalRead(PIN_VIBE));
-    _stableVibeState = _lastVibeState;
+    uint8_t highSamples = 0;
+    for (uint8_t i = 0; i < VIBE_IDLE_CALIBRATION_SAMPLES; i++) {
+        if (_readVibrationRawLevel()) {
+            highSamples++;
+        }
+        delayMicroseconds(VIBE_IDLE_CALIBRATION_SAMPLE_US);
+    }
+
+    _idleVibeRawState = highSamples >= (VIBE_IDLE_CALIBRATION_SAMPLES / 2);
+    _rawVibeState = _idleVibeRawState;
+    _lastVibeState = false;
+    _stableVibeState = false;
     _lastVibeTime = millis();
+    _lastVibrationStrikeMs = 0;
+    _vibrationStrikeCount = 0;
+    _vibrationSuppressedStartupCount = 0;
+    _vibrationSuppressedCooldownCount = 0;
+    _scheduleVibrationRearm(VIBE_STARTUP_ARM_DELAY_MS);
     
     _setBuzzer(false);
     
@@ -77,12 +91,11 @@ void SecurityManager::init() {
 #else
     Serial.println("ACTIVE-LOW (LOW = ON)");
 #endif
-    Serial.print("[SECURITY] Vibration polarity: ");
-#if SECURELOCK_VIBRATION_ACTIVE_HIGH
-    Serial.println("ACTIVE-HIGH (HIGH = strike)");
-#else
-    Serial.println("ACTIVE-LOW (LOW = strike)");
-#endif
+    Serial.print("[SECURITY] Vibration idle baseline: ");
+    Serial.println(_idleVibeRawState ? "HIGH" : "LOW");
+    Serial.print("[SECURITY] Vibration arming delay: ");
+    Serial.print(VIBE_STARTUP_ARM_DELAY_MS);
+    Serial.println("ms");
 }
 
 /**
@@ -102,11 +115,24 @@ bool SecurityManager::isVibrationDetected() {
 
 bool SecurityManager::pollVibrationStrike() {
     const unsigned long now = millis();
-    const bool rawState = isVibrationActiveLevel(digitalRead(PIN_VIBE));
+    _rawVibeState = _readVibrationRawLevel();
+    const bool activeState = (_rawVibeState != _idleVibeRawState);
 
-    if (rawState != _lastVibeState) {
+    if (!_vibrationArmed && static_cast<long>(now - _vibrationArmAtMs) >= 0) {
+        _vibrationArmed = true;
+        _lastVibeState = activeState;
+        _stableVibeState = activeState;
         _lastVibeTime = now;
-        _lastVibeState = rawState;
+        if (_stableVibeState) {
+            // When the line is already active on arm boundary, suppress immediate strike.
+            _vibrationSuppressedStartupCount++;
+        }
+        return false;
+    }
+
+    if (activeState != _lastVibeState) {
+        _lastVibeTime = now;
+        _lastVibeState = activeState;
     }
 
     if ((now - _lastVibeTime) < VIBE_DEBOUNCE) {
@@ -118,16 +144,56 @@ bool SecurityManager::pollVibrationStrike() {
     }
 
     _stableVibeState = _lastVibeState;
-    if (_stableVibeState) {
-        _vibrationDetected = true;
-        return true;
+    if (!_stableVibeState) {
+        return false;
     }
 
-    return false;
+    if (!_vibrationArmed) {
+        _vibrationSuppressedStartupCount++;
+        return false;
+    }
+
+    if (_lastVibrationStrikeMs > 0 && (now - _lastVibrationStrikeMs) < VIBE_STRIKE_COOLDOWN_MS) {
+        _vibrationSuppressedCooldownCount++;
+        return false;
+    }
+
+    _vibrationDetected = true;
+    _lastVibrationStrikeMs = now;
+    _vibrationStrikeCount++;
+    return true;
 }
 
 bool SecurityManager::isVibrationLatched() const {
     return _vibrationDetected;
+}
+
+bool SecurityManager::isVibrationSignalActive() const {
+    return (_rawVibeState != _idleVibeRawState);
+}
+
+bool SecurityManager::isVibrationArmed() const {
+    return _vibrationArmed;
+}
+
+bool SecurityManager::isVibrationIdleLevelHigh() const {
+    return _idleVibeRawState;
+}
+
+unsigned long SecurityManager::getLastVibrationStrikeMs() const {
+    return _lastVibrationStrikeMs;
+}
+
+unsigned long SecurityManager::getVibrationStrikeCount() const {
+    return _vibrationStrikeCount;
+}
+
+unsigned long SecurityManager::getVibrationSuppressedStartupCount() const {
+    return _vibrationSuppressedStartupCount;
+}
+
+unsigned long SecurityManager::getVibrationSuppressedCooldownCount() const {
+    return _vibrationSuppressedCooldownCount;
 }
 
 /**
@@ -135,8 +201,11 @@ bool SecurityManager::isVibrationLatched() const {
  */
 void SecurityManager::resetVibration() {
     _vibrationDetected = false;
-    _lastVibeState = isVibrationActiveLevel(digitalRead(PIN_VIBE));
+    _rawVibeState = _readVibrationRawLevel();
+    _lastVibeState = (_rawVibeState != _idleVibeRawState);
     _stableVibeState = _lastVibeState;
+    _lastVibeTime = millis();
+    _scheduleVibrationRearm(VIBE_REARM_DELAY_MS);
 }
 
 /**
@@ -589,4 +658,13 @@ void SecurityManager::_setBuzzer(bool on) {
 #else
     digitalWrite(PIN_BUZZER, on ? LOW : HIGH);
 #endif
+}
+
+bool SecurityManager::_readVibrationRawLevel() const {
+    return digitalRead(PIN_VIBE) == HIGH;
+}
+
+void SecurityManager::_scheduleVibrationRearm(unsigned long delayMs) {
+    _vibrationArmed = false;
+    _vibrationArmAtMs = millis() + delayMs;
 }

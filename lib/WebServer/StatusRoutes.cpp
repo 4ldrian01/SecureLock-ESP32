@@ -49,6 +49,14 @@ void WebServer::_handleAPIStatus(AsyncWebServerRequest* request) {
 
     doc["alarm"] = _security->isAlarming();
     doc["vibration"] = _security->isVibrationLatched();
+    doc["vibrationSignalActive"] = _security->isVibrationSignalActive();
+    doc["vibrationArmed"] = _security->isVibrationArmed();
+    doc["vibrationIdleHigh"] = _security->isVibrationIdleLevelHigh();
+    const unsigned long lastVibrationStrikeMs = _security->getLastVibrationStrikeMs();
+    doc["vibrationLastStrikeMs"] = lastVibrationStrikeMs;
+    doc["vibrationStrikeCount"] = _security->getVibrationStrikeCount();
+    doc["vibrationSuppressedStartupCount"] = _security->getVibrationSuppressedStartupCount();
+    doc["vibrationSuppressedCooldownCount"] = _security->getVibrationSuppressedCooldownCount();
     doc["buzzerActive"] = _security->isBuzzerActive();
     doc["sirenActive"] = _security->isSirenActive();
 
@@ -78,6 +86,9 @@ void WebServer::_handleAPIStatus(AsyncWebServerRequest* request) {
     doc["timestampMs"] = millis();
 
     const unsigned long nowMs = millis();
+    doc["vibrationLastStrikeAgeMs"] = (lastVibrationStrikeMs > 0)
+        ? static_cast<long>(nowMs - lastVibrationStrikeMs)
+        : -1;
     const unsigned long lastTgCommandMs = getTelegramLastCommandMs();
     const unsigned long lastTgErrorMs = getTelegramLastErrorMs();
     doc["telegramPollIntervalMs"] = getTelegramPollIntervalMs();

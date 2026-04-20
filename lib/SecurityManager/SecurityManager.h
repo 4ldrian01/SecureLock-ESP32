@@ -10,7 +10,8 @@
  *   - Active Buzzer: GPIO 14 (PWM capable)
  * 
  * FEATURES:
- *   - Vibration detection with debouncing
+ *   - Dynamic vibration baseline calibration (no fixed polarity assumption)
+ *   - Vibration strike debouncing + arming guard + strike cooldown
  *   - Enterprise audio profiles (keypress/accepted/rejected/mode/alarm)
  *   - Alarm state management
  *   - Non-blocking alarm patterns
@@ -53,6 +54,13 @@ public:
     bool isVibrationDetected();     // Latched event indicator
     bool pollVibrationStrike();     // Rising-edge strike event (debounced)
     bool isVibrationLatched() const;
+    bool isVibrationSignalActive() const;
+    bool isVibrationArmed() const;
+    bool isVibrationIdleLevelHigh() const;
+    unsigned long getLastVibrationStrikeMs() const;
+    unsigned long getVibrationStrikeCount() const;
+    unsigned long getVibrationSuppressedStartupCount() const;
+    unsigned long getVibrationSuppressedCooldownCount() const;
     void resetVibration();          // Clear vibration flag
     
     // Buzzer control
@@ -80,7 +88,12 @@ private:
     
     // Timing constants
     static const unsigned long SIREN_PULSE = 95;         // ms per siren pulse (rapid pulse profile)
-    static const unsigned long VIBE_DEBOUNCE = 50;       // ms strict debounce for vibration edges
+    static const unsigned long VIBE_DEBOUNCE = 90;       // ms strict debounce for vibration edges
+    static const unsigned long VIBE_STARTUP_ARM_DELAY_MS = 4000;
+    static const unsigned long VIBE_REARM_DELAY_MS = 1200;
+    static const unsigned long VIBE_STRIKE_COOLDOWN_MS = 800;
+    static const uint8_t VIBE_IDLE_CALIBRATION_SAMPLES = 16;
+    static const unsigned int VIBE_IDLE_CALIBRATION_SAMPLE_US = 250;
     // Enterprise profile timings (active buzzer).
     static const unsigned long KEYPRESS_ON_MS = 50;
     static const unsigned long KEYPRESS_OFF_MS = 55;
@@ -102,6 +115,14 @@ private:
     unsigned long _lastVibeTime;
     bool _lastVibeState;
     bool _stableVibeState;
+    bool _rawVibeState;
+    bool _idleVibeRawState;
+    bool _vibrationArmed;
+    unsigned long _vibrationArmAtMs;
+    unsigned long _lastVibrationStrikeMs;
+    unsigned long _vibrationStrikeCount;
+    unsigned long _vibrationSuppressedStartupCount;
+    unsigned long _vibrationSuppressedCooldownCount;
     
     // Buzzer pattern state
     bool _buzzerActive;
@@ -131,6 +152,8 @@ private:
     void _selectBeepDurations(int count);
     void _updateBuzzer();
     void _setBuzzer(bool on);
+    bool _readVibrationRawLevel() const;
+    void _scheduleVibrationRearm(unsigned long delayMs);
 };
 
 #endif // SECURITY_MANAGER_H

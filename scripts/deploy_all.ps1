@@ -1,11 +1,13 @@
 # SecureLock one-command deployment script (Windows / PowerShell)
-# Runs clean -> build -> uploadfs -> upload -> monitor in sequence.
+# Runs clean -> build -> uploadfs -> upload with endpoint validation.
+# Serial monitor is optional and disabled by default.
 
 [CmdletBinding()]
 param(
     [string]$UploadPort = "",
     [int]$MonitorBaud = 115200,
     [switch]$NoMonitor,
+    [switch]$WithMonitor,
     [switch]$SkipClean,
     [switch]$ForceUploadFS,
     [string]$ExpectedIp = "",
@@ -260,12 +262,21 @@ function Test-PostDeployEndpoints {
         [int]$TimeoutSec = 4
     )
 
-    $urls = @('http://securelock.local/')
+    $baseUrls = @('http://securelock.local')
     if ($ExpectedIp) {
-        $urls += "http://$ExpectedIp/"
+        $baseUrls += "http://$ExpectedIp"
     }
 
-    $urls = $urls | Where-Object { $_ -and $_.Trim().Length -gt 0 } | Select-Object -Unique
+    $baseUrls = $baseUrls | Where-Object { $_ -and $_.Trim().Length -gt 0 } | Select-Object -Unique
+
+    $urls = @()
+    foreach ($baseUrl in $baseUrls) {
+        $normalizedBase = $baseUrl.TrimEnd('/')
+        $urls += "$normalizedBase/"
+        $urls += "$normalizedBase/api/auth/status"
+    }
+
+    $urls = $urls | Select-Object -Unique
 
     Write-Host "`n[DEPLOY] Post-deploy endpoint checks" -ForegroundColor Cyan
     foreach ($url in $urls) {
@@ -416,6 +427,9 @@ if (-not $InteractiveRetry) {
 if ($SkipEndpointChecks) {
     Write-Host "[DEPLOY] Endpoint checks: skipped by -SkipEndpointChecks" -ForegroundColor Yellow
 }
+if ($WithMonitor -and $NoMonitor) {
+    Write-Host "[DEPLOY][WARN] Both -WithMonitor and -NoMonitor were supplied. -NoMonitor wins." -ForegroundColor DarkYellow
+}
 if ($ForceUploadFS) {
     Write-Host "[DEPLOY] UploadFS skip optimization: disabled by -ForceUploadFS" -ForegroundColor Yellow
 }
@@ -520,7 +534,8 @@ try {
     $deployStopwatch.Stop()
     Write-Host "`n[DEPLOY] Total pipeline time: $($deployStopwatch.Elapsed.ToString())" -ForegroundColor Green
 
-    if (-not $NoMonitor) {
+    $startMonitor = $WithMonitor -and -not $NoMonitor
+    if ($startMonitor) {
         Write-Host "`n[DEPLOY] Starting serial monitor (Ctrl+C to stop)..." -ForegroundColor Magenta
         if ($resolvedUploadPort) {
             & $pioExe device monitor -p $resolvedUploadPort -b $MonitorBaud -f direct
@@ -530,7 +545,7 @@ try {
         }
     }
     else {
-        Write-Host "`n[DEPLOY] Done. Monitor skipped by -NoMonitor." -ForegroundColor Green
+        Write-Host "`n[DEPLOY] Done. Monitor skipped (default). Use -WithMonitor when you explicitly need serial output." -ForegroundColor Green
     }
 }
 finally {

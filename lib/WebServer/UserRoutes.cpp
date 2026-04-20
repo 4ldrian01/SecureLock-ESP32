@@ -1749,6 +1749,14 @@ void WebServer::_handleAPIDiagnostics(AsyncWebServerRequest* request) {
     doc["buzzerActive"] = _security->isBuzzerActive();
     doc["sirenActive"] = _security->isSirenActive();
     doc["vibrationLatched"] = _security->isVibrationLatched();
+    doc["vibrationSignalActive"] = _security->isVibrationSignalActive();
+    doc["vibrationArmed"] = _security->isVibrationArmed();
+    doc["vibrationIdleHigh"] = _security->isVibrationIdleLevelHigh();
+    const unsigned long lastVibrationStrikeMs = _security->getLastVibrationStrikeMs();
+    doc["vibrationLastStrikeMs"] = lastVibrationStrikeMs;
+    doc["vibrationStrikeCount"] = _security->getVibrationStrikeCount();
+    doc["vibrationSuppressedStartupCount"] = _security->getVibrationSuppressedStartupCount();
+    doc["vibrationSuppressedCooldownCount"] = _security->getVibrationSuppressedCooldownCount();
     doc["activeUsers"] = _auth->getUserCount();
     doc["rawUsers"] = rawUsers;
     doc["uniqueUsers"] = uniqueUsers;
@@ -1758,6 +1766,9 @@ void WebServer::_handleAPIDiagnostics(AsyncWebServerRequest* request) {
     appendAuthStorageTelemetry(&doc, _auth);
 
     const unsigned long nowMs = millis();
+    doc["vibrationLastStrikeAgeMs"] = (lastVibrationStrikeMs > 0)
+        ? static_cast<long>(nowMs - lastVibrationStrikeMs)
+        : -1;
     const int queueDepth = getTelegramNotificationQueueDepth();
     const int queueCapacity = getTelegramNotificationQueueCapacity();
     doc["telegramNotifyQueueDepth"] = queueDepth;

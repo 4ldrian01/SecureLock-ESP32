@@ -6,6 +6,7 @@
 param(
     [switch]$BuildOnly,
     [switch]$NoMonitor,
+    [switch]$WithMonitor,
     [switch]$SkipClean,
     [switch]$ForceUploadFS,
     [switch]$RefreshPlatform,
@@ -106,6 +107,10 @@ if ($ExpectedIp) {
 
 if ($NoMonitor) {
     $deployArgs += "-NoMonitor"
+}
+
+if ($WithMonitor) {
+    $deployArgs += "-WithMonitor"
 }
 
 if ($SkipClean) {

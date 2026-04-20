@@ -88,6 +88,9 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
         } else if (state.buzzerActive) {
             nextText = state.sirenActive ? 'Siren Pulse Active' : 'Buzzer Feedback Active';
             nextColor = 'var(--warning, #f59e0b)';
+        } else if (state.locked && !state.vibrationArmed) {
+            nextText = 'System Armed • Calibrating vibration guard...';
+            nextColor = 'var(--accent, #60A5FA)';
         } else if (state.authPrompt) {
             nextText = state.authPrompt;
             nextColor = 'var(--accent, #60A5FA)';
@@ -291,14 +294,24 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
                 const badUsers = Number(diag.invalidUsers || 0) + Number(diag.duplicateUsers || 0);
                 const usersFlag = diag.usersStorageMismatch ? `MISMATCH(${badUsers})` : 'OK';
                 const usersText = `USERS ${activeUsers}/${rawUsers} ${usersFlag}`;
+                const vibeArmed = Boolean(diag.vibrationArmed ?? state.vibrationArmed);
+                const vibeActive = Boolean(diag.vibrationSignalActive ?? state.vibrationSignalActive);
+                const vibeStrikeCount = Math.max(0, Number(diag.vibrationStrikeCount ?? state.vibrationStrikeCount || 0));
+                const vibeSuppressedStartup = Math.max(0, Number(diag.vibrationSuppressedStartupCount || 0));
+                const vibeSuppressedCooldown = Math.max(0, Number(diag.vibrationSuppressedCooldownCount || 0));
+                const vibeSuppressed = vibeSuppressedStartup + vibeSuppressedCooldown;
+                const vibeAgeMs = Number(diag.vibrationLastStrikeAgeMs ?? state.vibrationLastStrikeAgeMs ?? -1);
+                const vibeAgeText = vibeAgeMs >= 0 ? `${Math.ceil(vibeAgeMs / 1000)}s` : '-';
+                const vibeText = `VIBE ${vibeArmed ? 'ARM' : 'CAL'} ${vibeActive ? 'ACT' : 'IDLE'} h${vibeStrikeCount} sup${vibeSuppressed} last ${vibeAgeText}`;
 
                 if (compactMobile) {
                     const tgCompact = `TG q${state.telegramPendingApprox} nq${tgNotifyDepth}/${tgNotifyCap} e${state.telegramPollErrors}`;
                     const apCompact = fallbackApText ? ` • ${fallbackApText}` : '';
-                    lastDiagnosticsText = `Diagnostics: ${rfidText} • ${keypadText} • ${usersText} • ${tgCompact}${apCompact}`;
+                    const vibeCompact = `VIBE ${vibeArmed ? 'A' : 'C'}${vibeActive ? '!' : '-'} h${vibeStrikeCount}`;
+                    lastDiagnosticsText = `Diagnostics: ${rfidText} • ${keypadText} • ${vibeCompact} • ${usersText} • ${tgCompact}${apCompact}`;
                 } else {
                     const apDetail = fallbackApText ? ` • ${fallbackApText}` : '';
-                    lastDiagnosticsText = `Diagnostics: ${rfidText} • ${keypadText} • ${keyText} • ${usersText} • ${tgText}${apDetail}`;
+                    lastDiagnosticsText = `Diagnostics: ${rfidText} • ${keypadText} • ${keyText} • ${vibeText} • ${usersText} • ${tgText}${apDetail}`;
                 }
 
                 lastDiagnosticsFetchMs = Date.now();
@@ -383,6 +396,14 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
             state.locked = Boolean(data.locked);
             state.autoLockActive = Boolean(data.autoLockActive);
             state.alarm = Boolean(data.alarm);
+            state.vibration = Boolean(data.vibration);
+            state.vibrationSignalActive = Boolean(data.vibrationSignalActive);
+            state.vibrationArmed = Boolean(data.vibrationArmed);
+            state.vibrationIdleHigh = Boolean(data.vibrationIdleHigh);
+            state.vibrationStrikeCount = Math.max(0, Number(data.vibrationStrikeCount || 0));
+            state.vibrationLastStrikeAgeMs = Number(data.vibrationLastStrikeAgeMs ?? -1);
+            state.vibrationSuppressedStartupCount = Math.max(0, Number(data.vibrationSuppressedStartupCount || 0));
+            state.vibrationSuppressedCooldownCount = Math.max(0, Number(data.vibrationSuppressedCooldownCount || 0));
             state.buzzerActive = Boolean(data.buzzerActive);
             state.sirenActive = Boolean(data.sirenActive);
             state.authPrompt = String(data.authPrompt || '');

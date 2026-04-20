@@ -3,4 +3,4 @@
  *
  * Canonical dashboard bootstrap now lives at /js/entry/main.js.
  */
-import './entry/main.js?v=20260418r7';
+import './entry/main.js?v=20260419r2';

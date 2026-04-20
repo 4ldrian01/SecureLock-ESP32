@@ -1,4 +1,4 @@
-import { escapeHtml, formatLogTime } from '../core/helpers.js?v=20260418r7';
+import { escapeHtml, formatLogTime } from '../core/helpers.js?v=20260419r2';
 
 const LOG_STATUS_OPTIONS = ['all', 'success', 'fail', 'alarm', 'info'];
 const LOG_STATUS_LABELS = {

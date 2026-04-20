@@ -1,4 +1,4 @@
-import { clearFormErrors, setFormError, escapeHtml } from '../core/helpers.js?v=20260418r7';
+import { clearFormErrors, setFormError, escapeHtml } from '../core/helpers.js?v=20260419r2';
 
 export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onLogsUpdated }) {
     const ADD_USER_SUBMIT_IDLE_LABEL = DOM.btnSubmitAdd
@@ -467,6 +467,41 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         });
     }
 
+    function isDuplicateBackupPin(backupPin, excludeUid = '') {
+        const normalizedPin = String(backupPin || '').trim();
+        if (!/^\d{4}$/.test(normalizedPin)) {
+            return false;
+        }
+
+        const normalizedExcludeUid = String(excludeUid || '').trim().toUpperCase();
+        return Object.entries(state.usersByUid || {}).some(([uid, user]) => {
+            const normalizedUid = String(uid || '').trim().toUpperCase();
+            if (normalizedUid && normalizedUid === normalizedExcludeUid) {
+                return false;
+            }
+
+            const userBackupPin = String(user?.backupPIN || user?.backup_pin || user?.pin || '').trim();
+            return /^\d{4}$/.test(userBackupPin) && userBackupPin === normalizedPin;
+        });
+    }
+
+    function isDuplicateUid(uid, excludeUid = '') {
+        const normalizedUid = String(uid || '').trim().toUpperCase();
+        if (!normalizedUid) {
+            return false;
+        }
+
+        const normalizedExcludeUid = String(excludeUid || '').trim().toUpperCase();
+        return Object.keys(state.usersByUid || {}).some((existingUid) => {
+            const normalizedExistingUid = String(existingUid || '').trim().toUpperCase();
+            if (!normalizedExistingUid || normalizedExistingUid === normalizedExcludeUid) {
+                return false;
+            }
+
+            return normalizedExistingUid === normalizedUid;
+        });
+    }
+
     function bindNameInputRestrictions() {
         const fields = [
             DOM.userFirstName,
@@ -746,15 +781,40 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
                     const data = await apiFetch(`${CONFIG.API.USERS}?uid=${encodeURIComponent(uid)}`, {
                         method: 'DELETE'
                     });
-                    if (data.success) {
+                    if (data?.success) {
                         feedback.showToast('User deleted successfully', 'success');
-                        loadUsers();
-                        if (typeof onLogsUpdated === 'function') onLogsUpdated();
+                        await loadUsers();
+                        if (typeof onLogsUpdated === 'function') {
+                            await onLogsUpdated();
+                        }
                     } else {
-                        feedback.showToast(data.message || 'Failed to delete user', 'error');
+                        feedback.showToast(data?.message || 'Failed to delete user', 'error');
                     }
-                } catch {
-                    feedback.showToast('Connection error — could not delete user', 'error');
+                } catch (error) {
+                    const status = Number(error?.status || 0);
+                    const errorCode = String(error?.payload?.errorCode || '').trim();
+
+                    if (status === 403 || errorCode === 'PROTECTED_ADMIN_USER') {
+                        feedback.showToast(
+                            error?.payload?.message || 'Protected admin user cannot be deleted',
+                            'info'
+                        );
+                        return;
+                    }
+
+                    if (status === 404) {
+                        feedback.showToast(
+                            error?.payload?.message || 'User was not found. Refreshing list...',
+                            'info'
+                        );
+                        await loadUsers();
+                        return;
+                    }
+
+                    feedback.showToast(
+                        error?.payload?.message || error?.message || 'Connection error — could not delete user',
+                        'error'
+                    );
                 }
             }
         );
@@ -1341,6 +1401,9 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         if (!backupPin || !/^\d{4}$/.test(backupPin)) {
             setFormError('userBackupPinError', 'Backup PIN must be exactly 4 digits');
             valid = false;
+        } else if (isDuplicateBackupPin(backupPin)) {
+            setFormError('userBackupPinError', 'Backup PIN already assigned to another user');
+            valid = false;
         }
         if (!rfid) {
             const rfidRequiredMessage = state.addUserScanRequested
@@ -1355,6 +1418,11 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             setFormError('userRfidError', 'RFID UID must be 8-20 hex characters (A-F, 0-9)');
             DOM.userRfid.classList.add('input-error');
             feedback.showToast('Invalid RFID format. Scan again or enter a valid UID.', 'error');
+            valid = false;
+        } else if (isDuplicateUid(rfid)) {
+            setFormError('userRfidError', 'RFID already registered. Scan a different card.');
+            DOM.userRfid.classList.add('input-error');
+            feedback.showToast('RFID already registered — please use another card', 'error');
             valid = false;
         }
         if (!valid) return;
@@ -1435,6 +1503,17 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
                     error?.payload?.message || 'Telegram Chat ID already linked to another user'
                 );
                 feedback.showToast('Telegram Chat ID already registered — use a different account', 'error');
+                return;
+            }
+
+            if (Number(error?.status) === 409
+                && (error?.payload?.errorCode === 'BACKUP_PIN_ALREADY_REGISTERED'
+                    || error?.payload?.field === 'backupPIN')) {
+                setFormError(
+                    'userBackupPinError',
+                    error?.payload?.message || 'Backup PIN already assigned to another user'
+                );
+                feedback.showToast('Backup PIN already in use — choose another 4-digit code', 'error');
                 return;
             }
 
@@ -1559,6 +1638,9 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
         } else if (!backupPin) {
             setFormError('editUserBackupPinError', 'Backup PIN is required');
             valid = false;
+        } else if (isDuplicateBackupPin(backupPin, editingUid)) {
+            setFormError('editUserBackupPinError', 'Backup PIN already assigned to another user');
+            valid = false;
         }
         if (!rfid) {
             setFormError('editUserRfidError', 'RFID tag is required');
@@ -1566,6 +1648,10 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
             valid = false;
         } else if (!isValidUid(rfid)) {
             setFormError('editUserRfidError', 'RFID UID must be 8-20 hex characters (A-F, 0-9)');
+            DOM.editUserRfid.classList.add('input-error');
+            valid = false;
+        } else if (isDuplicateUid(rfid, editingUid)) {
+            setFormError('editUserRfidError', 'RFID already belongs to another user. Scan another card.');
             DOM.editUserRfid.classList.add('input-error');
             valid = false;
         }
@@ -1649,6 +1735,17 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
                 return;
             }
 
+            if (Number(error?.status) === 409
+                && (error?.payload?.errorCode === 'BACKUP_PIN_ALREADY_REGISTERED'
+                    || error?.payload?.field === 'backupPIN')) {
+                setFormError(
+                    'editUserBackupPinError',
+                    error?.payload?.message || 'Backup PIN already assigned to another user'
+                );
+                feedback.showToast('Backup PIN already in use — choose another 4-digit code', 'error');
+                return;
+            }
+
             const isDuplicateRFID =
                 Number(error?.status) === 409 &&
                 (error?.payload?.errorCode === 'RFID_ALREADY_REGISTERED' || error?.payload?.field === 'uid');
@@ -1660,6 +1757,14 @@ export function createUsersFeature({ CONFIG, state, DOM, apiFetch, feedback, onL
                     error?.payload?.message || 'This RFID is already registered. Please scan another card.'
                 );
                 feedback.showToast('RFID already registered — please use another card', 'error');
+                return;
+            }
+
+            if (Number(error?.status) === 403 && error?.payload?.errorCode === 'PROTECTED_ADMIN_USER') {
+                feedback.showToast(
+                    error?.payload?.message || 'Protected admin profile cannot be edited here',
+                    'info'
+                );
                 return;
             }
 

@@ -12,7 +12,7 @@
  * 
  * FEATURES:
  *   - Non-blocking auto-lock timer (5 seconds)
- *   - Door state monitoring via reed switch
+ *   - Door state monitoring via reed switch (status/tamper telemetry)
  *   - Status LED indicators (blinking, steady)
  *   - Secure state transitions
  * 
@@ -59,6 +59,7 @@ public:
     void setAutoLockDelay(unsigned long delayMs);
     unsigned long getAutoLockDelayMs() const;
     unsigned long getRemainingAutoLockMs() const;
+    bool isAutoLockActive() const;
     
 private:
     // Hardware pins

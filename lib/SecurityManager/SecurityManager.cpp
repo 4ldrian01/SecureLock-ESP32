@@ -14,6 +14,14 @@ inline bool isVibrationActiveLevel(int rawDigitalState) {
     return rawDigitalState == LOW;
 #endif
 }
+
+constexpr int BUZZER_PRIORITY_IDLE = 0;
+constexpr int BUZZER_PRIORITY_BEEP1 = 10;
+constexpr int BUZZER_PRIORITY_TIMED = 15;
+constexpr int BUZZER_PRIORITY_MODE = 18;
+constexpr int BUZZER_PRIORITY_BEEP2 = 20;
+constexpr int BUZZER_PRIORITY_BEEP3 = 30;
+constexpr int BUZZER_PRIORITY_SIREN = 100;
 }
 
 /**
@@ -30,10 +38,17 @@ SecurityManager::SecurityManager()
       _currentBeep(0),
       _buzzerStartTime(0),
       _buzzerState(false),
-    _sirenMode(false),
-    _beepOnDuration(28),
-    _beepOffDuration(45),
-    _lastFeedbackBeepMs(0)
+        _sirenMode(false),
+            _beepOnDuration(KEYPRESS_ON_MS),
+            _beepOffDuration(KEYPRESS_OFF_MS),
+            _lastFeedbackBeepMs(0),
+            _lastPatternStartMs(0),
+            _timedBuzzMode(false),
+                _timedBuzzDurationMs(0),
+                _customSequenceMode(false),
+                _customSequencePriority(BUZZER_PRIORITY_IDLE),
+                _customSequenceStep(0),
+                _customSequenceLength(0)
 {
 }
 
@@ -128,63 +143,150 @@ void SecurityManager::resetVibration() {
  * Beep buzzer N times
  */
 void SecurityManager::beep(int count) {
-    if (_sirenMode) return;  // Don't interrupt siren
-
-    if (count <= 0) {
+    if (count <= 1) {
+        beepKeyPress();
         return;
     }
 
-    if (count > 3) {
-        count = 3;
+    if (count == 2) {
+        beepAccepted();
+        return;
+    }
+
+    beepRejected();
+}
+
+void SecurityManager::beepKeyPress() {
+    // Never interrupt active alarm siren feedback.
+    if (_sirenMode) {
+        return;
     }
 
     const unsigned long now = millis();
-    if (count == 1) {
-        if ((now - _lastFeedbackBeepMs) < FEEDBACK_BEEP_COOLDOWN_MS) {
-            return;
-        }
+    const int count = 1;
+    const int requestPriority = _priorityForBeepCount(count);
+    const int activePriority = _activePatternPriority();
 
-        // Keep stronger tones (success/error) intact.
-        if (_buzzerActive && _beepCount > 1) {
-            return;
-        }
-    }
-
-    if (_buzzerActive && !_sirenMode && count <= _beepCount && _currentBeep < _beepCount) {
+    // Keep high-rate lightweight UI feedback from sounding jittery/noisy.
+    if ((now - _lastFeedbackBeepMs) < FEEDBACK_BEEP_COOLDOWN_MS) {
         return;
     }
 
-    if (count == 1) {
-        _beepOnDuration = 16;
-        _beepOffDuration = 26;
-    } else if (count == 2) {
-        _beepOnDuration = 20;
-        _beepOffDuration = 30;
-    } else {
-        // Denied feedback stays distinct but shorter to avoid nuisance long sound.
-        _beepOnDuration = 16;
-        _beepOffDuration = 24;
+    // Ignore weaker feedback while a stronger pattern is active.
+    if (_buzzerActive && requestPriority < activePriority) {
+        return;
     }
-    
-    _beepCount = count;
+
+    // During timed buzz windows (guest-code generation), only medium/high
+    // feedback may preempt.
+    if (_timedBuzzMode && requestPriority <= BUZZER_PRIORITY_TIMED) {
+        return;
+    }
+
+    // Suppress ultra-fast restarts of same/lower priority to avoid buzz chatter.
+    if (_buzzerActive && _lastPatternStartMs > 0
+        && (now - _lastPatternStartMs) < BEEP_RESTART_GUARD_MS
+        && requestPriority <= activePriority) {
+        return;
+    }
+
+    _startBeepPattern(1, KEYPRESS_ON_MS, KEYPRESS_OFF_MS, requestPriority);
+}
+
+void SecurityManager::beepAccepted() {
+    if (_sirenMode) {
+        return;
+    }
+
+    _startBeepPattern(2, ACCEPT_ON_MS, ACCEPT_OFF_MS, BUZZER_PRIORITY_BEEP2);
+}
+
+void SecurityManager::beepRejected() {
+    if (_sirenMode) {
+        return;
+    }
+
+    _startBeepPattern(1, REJECT_ON_MS, REJECT_OFF_MS, BUZZER_PRIORITY_BEEP3);
+}
+
+void SecurityManager::beepModeChange() {
+    if (_sirenMode) {
+        return;
+    }
+
+    const unsigned long sequence[] = {
+        MODE_STEP1_ON_MS,
+        MODE_STEP_GAP_MS,
+        MODE_STEP2_ON_MS,
+        MODE_STEP_GAP_MS,
+        MODE_STEP3_ON_MS
+    };
+
+    _startCustomSequence(sequence, sizeof(sequence) / sizeof(sequence[0]), BUZZER_PRIORITY_MODE);
+}
+
+void SecurityManager::beepAlarmSiren() {
+    siren();
+}
+
+void SecurityManager::buzzFor(unsigned long durationMs) {
+    if (_sirenMode) {
+        return;
+    }
+
+    if (durationMs == 0) {
+        return;
+    }
+
+    if (durationMs > TIMED_BUZZ_MAX_MS) {
+        durationMs = TIMED_BUZZ_MAX_MS;
+    }
+
+    const unsigned long now = millis();
+    const int activePriority = _activePatternPriority();
+
+    // Do not downgrade stronger active feedback (notably denial/error beeps).
+    if (_buzzerActive && activePriority > BUZZER_PRIORITY_TIMED) {
+        return;
+    }
+
+    _customSequenceMode = false;
+    _customSequencePriority = BUZZER_PRIORITY_IDLE;
+    _customSequenceStep = 0;
+    _customSequenceLength = 0;
+
+    _beepCount = 0;
     _currentBeep = 0;
     _buzzerActive = true;
+    _timedBuzzMode = true;
+    _timedBuzzDurationMs = durationMs;
     _buzzerStartTime = now;
+    _lastPatternStartMs = now;
     _buzzerState = true;
     _setBuzzer(true);
     _lastFeedbackBeepMs = now;
-    
-    Serial.print("[SECURITY] Beep x");
-    Serial.println(count);
+
+    Serial.print("[SECURITY] Timed buzz ");
+    Serial.print(durationMs);
+    Serial.println("ms");
 }
 
 /**
  * Start continuous siren
  */
 void SecurityManager::siren() {
+    _beepCount = 0;
+    _currentBeep = 0;
+    _timedBuzzMode = false;
+    _timedBuzzDurationMs = 0;
+    _customSequenceMode = false;
+    _customSequencePriority = BUZZER_PRIORITY_IDLE;
+    _customSequenceStep = 0;
+    _customSequenceLength = 0;
     _sirenMode = true;
     _buzzerActive = true;
     _buzzerStartTime = millis();
+    _lastPatternStartMs = _buzzerStartTime;
     _buzzerState = true;
     _setBuzzer(true);
     
@@ -195,8 +297,19 @@ void SecurityManager::siren() {
  * Stop alarm/siren
  */
 void SecurityManager::stopAlarm() {
+    _beepCount = 0;
+    _currentBeep = 0;
     _sirenMode = false;
     _buzzerActive = false;
+    _timedBuzzMode = false;
+    _timedBuzzDurationMs = 0;
+    _customSequenceMode = false;
+    _customSequencePriority = BUZZER_PRIORITY_IDLE;
+    _customSequenceStep = 0;
+    _customSequenceLength = 0;
+    _lastPatternStartMs = 0;
+    _buzzerStartTime = 0;
+    _buzzerState = false;
     _alarming = false;
     _setBuzzer(false);
     
@@ -215,7 +328,7 @@ bool SecurityManager::isAlarming() const {
  */
 void SecurityManager::startAlarm() {
     _alarming = true;
-    siren();
+    beepAlarmSiren();
     
     Serial.println("[SECURITY] 🚨 ALARM TRIGGERED!");
 }
@@ -238,6 +351,143 @@ bool SecurityManager::isSirenActive() const {
     return _sirenMode;
 }
 
+int SecurityManager::_priorityForBeepCount(int count) const {
+    if (count >= 3) {
+        return BUZZER_PRIORITY_BEEP3;
+    }
+
+    if (count == 2) {
+        return BUZZER_PRIORITY_BEEP2;
+    }
+
+    return BUZZER_PRIORITY_BEEP1;
+}
+
+int SecurityManager::_activePatternPriority() const {
+    if (_sirenMode) {
+        return BUZZER_PRIORITY_SIREN;
+    }
+
+    if (_customSequenceMode) {
+        return _customSequencePriority;
+    }
+
+    if (_timedBuzzMode) {
+        return BUZZER_PRIORITY_TIMED;
+    }
+
+    if (_buzzerActive && _beepCount > 0) {
+        return _priorityForBeepCount(_beepCount);
+    }
+
+    return BUZZER_PRIORITY_IDLE;
+}
+
+void SecurityManager::_startBeepPattern(int count, unsigned long onMs, unsigned long offMs, int priority) {
+    if (count <= 0) {
+        return;
+    }
+
+    const unsigned long now = millis();
+    const int activePriority = _activePatternPriority();
+
+    if (_buzzerActive && priority < activePriority) {
+        return;
+    }
+
+    if (_timedBuzzMode && priority <= BUZZER_PRIORITY_TIMED) {
+        return;
+    }
+
+    if (_buzzerActive && _lastPatternStartMs > 0
+        && (now - _lastPatternStartMs) < BEEP_RESTART_GUARD_MS
+        && priority <= activePriority) {
+        return;
+    }
+
+    _timedBuzzMode = false;
+    _timedBuzzDurationMs = 0;
+    _customSequenceMode = false;
+    _customSequencePriority = BUZZER_PRIORITY_IDLE;
+    _customSequenceStep = 0;
+    _customSequenceLength = 0;
+
+    _beepOnDuration = onMs;
+    _beepOffDuration = offMs;
+    _beepCount = count;
+    _currentBeep = 0;
+    _buzzerActive = true;
+    _buzzerStartTime = now;
+    _lastPatternStartMs = now;
+    _buzzerState = true;
+    _setBuzzer(true);
+    _lastFeedbackBeepMs = now;
+}
+
+void SecurityManager::_startCustomSequence(const unsigned long* steps, uint8_t stepCount, int priority) {
+    if (steps == nullptr || stepCount == 0) {
+        return;
+    }
+
+    if (stepCount > CUSTOM_SEQUENCE_MAX_STEPS) {
+        stepCount = CUSTOM_SEQUENCE_MAX_STEPS;
+    }
+
+    const unsigned long now = millis();
+    const int activePriority = _activePatternPriority();
+
+    if (_buzzerActive && priority < activePriority) {
+        return;
+    }
+
+    if (_timedBuzzMode && priority <= BUZZER_PRIORITY_TIMED) {
+        return;
+    }
+
+    if (_buzzerActive && _lastPatternStartMs > 0
+        && (now - _lastPatternStartMs) < BEEP_RESTART_GUARD_MS
+        && priority <= activePriority) {
+        return;
+    }
+
+    _timedBuzzMode = false;
+    _timedBuzzDurationMs = 0;
+    _beepCount = 0;
+    _currentBeep = 0;
+
+    for (uint8_t i = 0; i < stepCount; i++) {
+        _customSequenceStepsMs[i] = steps[i];
+    }
+
+    _customSequenceMode = true;
+    _customSequencePriority = priority;
+    _customSequenceStep = 0;
+    _customSequenceLength = stepCount;
+    _buzzerActive = true;
+    _buzzerStartTime = now;
+    _lastPatternStartMs = now;
+    _buzzerState = true;
+    _setBuzzer(true);
+    _lastFeedbackBeepMs = now;
+}
+
+void SecurityManager::_selectBeepDurations(int count) {
+    if (count >= 3) {
+        _beepOnDuration = REJECT_ON_MS;
+        _beepOffDuration = REJECT_OFF_MS;
+        return;
+    }
+
+    if (count == 2) {
+        _beepOnDuration = ACCEPT_ON_MS;
+        _beepOffDuration = ACCEPT_OFF_MS;
+        return;
+    }
+
+    _beepOnDuration = KEYPRESS_ON_MS;
+    _beepOffDuration = KEYPRESS_OFF_MS;
+}
+
 /**
  * Private: Update buzzer patterns (non-blocking)
  */
@@ -246,6 +496,52 @@ void SecurityManager::_updateBuzzer() {
     
     unsigned long now = millis();
     unsigned long elapsed = now - _buzzerStartTime;
+
+    if (_timedBuzzMode) {
+        if (elapsed >= _timedBuzzDurationMs) {
+            _beepCount = 0;
+            _currentBeep = 0;
+            _timedBuzzMode = false;
+            _timedBuzzDurationMs = 0;
+            _buzzerActive = false;
+            _lastPatternStartMs = 0;
+            _setBuzzer(false);
+        }
+        return;
+    }
+
+    if (_customSequenceMode) {
+        if (_customSequenceStep >= _customSequenceLength) {
+            _customSequenceMode = false;
+            _customSequencePriority = BUZZER_PRIORITY_IDLE;
+            _customSequenceStep = 0;
+            _customSequenceLength = 0;
+            _buzzerActive = false;
+            _lastPatternStartMs = 0;
+            _setBuzzer(false);
+            return;
+        }
+
+        const unsigned long stepDuration = _customSequenceStepsMs[_customSequenceStep];
+        if (elapsed >= stepDuration) {
+            _customSequenceStep++;
+            _buzzerStartTime = now;
+
+            if (_customSequenceStep >= _customSequenceLength) {
+                _customSequenceMode = false;
+                _customSequencePriority = BUZZER_PRIORITY_IDLE;
+                _customSequenceStep = 0;
+                _customSequenceLength = 0;
+                _buzzerActive = false;
+                _lastPatternStartMs = 0;
+                _setBuzzer(false);
+            } else {
+                _buzzerState = !_buzzerState;
+                _setBuzzer(_buzzerState);
+            }
+        }
+        return;
+    }
     
     // Siren mode - continuous pulsing
     if (_sirenMode) {
@@ -276,7 +572,10 @@ void SecurityManager::_updateBuzzer() {
         }
     } else {
         // Pattern complete
+        _beepCount = 0;
+        _currentBeep = 0;
         _buzzerActive = false;
+        _lastPatternStartMs = 0;
         _setBuzzer(false);
     }
 }

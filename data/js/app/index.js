@@ -1,18 +1,18 @@
-import { CONFIG } from '../core/config.js?v=20260418r7';
-import { createInitialState } from '../core/state.js?v=20260418r7';
-import { getDOM } from '../core/dom.js?v=20260418r7';
+import { CONFIG } from '../core/config.js?v=20260419r2';
+import { createInitialState } from '../core/state.js?v=20260419r2';
+import { getDOM } from '../core/dom.js?v=20260419r2';
 import {
     apiFetch,
     setApiAuthToken,
     clearApiAuthToken,
     setApiUnauthorizedHandler
-} from '../core/api.js?v=20260418r7';
-import { createFeedback } from '../ui/feedback.js?v=20260418r7';
-import { createAuthFeature } from '../features/auth.js?v=20260418r7';
-import { createStatusFeature } from '../features/status.js?v=20260418r7';
-import { createGuestFeature } from '../features/guest.js?v=20260418r7';
-import { createLogsFeature } from '../features/logs.js?v=20260418r7';
-import { createUsersFeature } from '../features/users.js?v=20260418r7';
+} from '../core/api.js?v=20260419r2';
+import { createFeedback } from '../ui/feedback.js?v=20260419r2';
+import { createAuthFeature } from '../features/auth.js?v=20260419r2';
+import { createStatusFeature } from '../features/status.js?v=20260419r2';
+import { createGuestFeature } from '../features/guest.js?v=20260419r2';
+import { createLogsFeature } from '../features/logs.js?v=20260419r2';
+import { createUsersFeature } from '../features/users.js?v=20260419r2';
 
 export function initApp() {
     const DOM = getDOM();
@@ -411,6 +411,8 @@ export function initApp() {
         const visibleMobile = Number(CONFIG.POLL_INTERVAL_MOBILE || visibleDefault);
         const hiddenMobile = Number(CONFIG.POLL_INTERVAL_HIDDEN_MOBILE || hiddenDefault);
         const maxInterval = Math.max(1500, Number(CONFIG.POLL_INTERVAL_MAX || 15000));
+        const guestActiveInterval = Math.max(500, Number(CONFIG.POLL_INTERVAL_GUEST_ACTIVE || 700));
+        const unlockedInterval = Math.max(500, Number(CONFIG.POLL_INTERVAL_UNLOCKED || 650));
         const pressureMultiplier = getNetworkPressureMultiplier();
 
         const preferredBase = document.hidden
@@ -418,7 +420,19 @@ export function initApp() {
             : (isMobileViewport() ? visibleMobile : visibleDefault);
 
         const pressureAdjusted = Math.max(900, Math.round(preferredBase * pressureMultiplier));
-        return Math.min(maxInterval, pressureAdjusted);
+        const bounded = Math.min(maxInterval, pressureAdjusted);
+
+        if (!document.hidden) {
+            if (!state.locked) {
+                return Math.min(bounded, unlockedInterval);
+            }
+
+            if (state.guestCode && state.guestExpiry > 0) {
+                return Math.min(bounded, guestActiveInterval);
+            }
+        }
+
+        return bounded;
     }
 
     function stopPollingLoops() {

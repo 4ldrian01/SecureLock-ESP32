@@ -283,6 +283,9 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
                 const tgNotifyCap = Math.max(0, Number(state.telegramNotifyQueueCapacity || 0));
                 const tgNotifyAgeSec = Math.ceil(Math.max(0, Number(state.telegramNotifyQueueOldestAgeMs || 0)) / 1000);
                 const tgText = `TG ${state.telegramLastPollDurationMs}ms@${state.telegramPollIntervalMs}ms, cmd ${tgAge}, q${state.telegramPendingApprox}, nq${tgNotifyDepth}/${tgNotifyCap}(${tgNotifyAgeSec}s), e${state.telegramPollErrors}, last ${tgCmd}`;
+                const fallbackApText = state.fallbackApActive
+                    ? `AP ${state.fallbackApSSID || 'active'} @ ${state.fallbackApIP || '192.168.4.1'}`
+                    : '';
                 const activeUsers = Number(diag.activeUsers || 0);
                 const rawUsers = Number(diag.rawUsers || 0);
                 const badUsers = Number(diag.invalidUsers || 0) + Number(diag.duplicateUsers || 0);
@@ -291,9 +294,11 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
 
                 if (compactMobile) {
                     const tgCompact = `TG q${state.telegramPendingApprox} nq${tgNotifyDepth}/${tgNotifyCap} e${state.telegramPollErrors}`;
-                    lastDiagnosticsText = `Diagnostics: ${rfidText} • ${keypadText} • ${usersText} • ${tgCompact}`;
+                    const apCompact = fallbackApText ? ` • ${fallbackApText}` : '';
+                    lastDiagnosticsText = `Diagnostics: ${rfidText} • ${keypadText} • ${usersText} • ${tgCompact}${apCompact}`;
                 } else {
-                    lastDiagnosticsText = `Diagnostics: ${rfidText} • ${keypadText} • ${keyText} • ${usersText} • ${tgText}`;
+                    const apDetail = fallbackApText ? ` • ${fallbackApText}` : '';
+                    lastDiagnosticsText = `Diagnostics: ${rfidText} • ${keypadText} • ${keyText} • ${usersText} • ${tgText}${apDetail}`;
                 }
 
                 lastDiagnosticsFetchMs = Date.now();
@@ -376,6 +381,7 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
             setConnectionState(true);
 
             state.locked = Boolean(data.locked);
+            state.autoLockActive = Boolean(data.autoLockActive);
             state.alarm = Boolean(data.alarm);
             state.buzzerActive = Boolean(data.buzzerActive);
             state.sirenActive = Boolean(data.sirenActive);
@@ -392,6 +398,9 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
             state.telegramNotifyQueueDepth = Number(data.telegramNotifyQueueDepth || 0);
             state.telegramNotifyQueueCapacity = Number(data.telegramNotifyQueueCapacity || 0);
             state.telegramNotifyQueueOldestAgeMs = Number(data.telegramNotifyQueueOldestAgeMs || 0);
+            state.fallbackApActive = Boolean(data.fallbackApActive);
+            state.fallbackApSSID = String(data.fallbackApSSID || '');
+            state.fallbackApIP = String(data.fallbackApIP || '');
             state.emergencyGuestLock = Math.max(
                 0,
                 Math.ceil(Number(data.emergencyGuestLockRemainingMs || 0) / 1000)
@@ -415,6 +424,8 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
                     setDoorCountdownFromMs(remainingMs);
                 } else if (!state.lockCountdownTimer && state.lockCountdownSeconds <= 0 && hasValidDelay) {
                     setDoorCountdownFromMs(autoLockDelayMs);
+                } else if (!hasValidDelay && state.lockCountdownSeconds <= 0) {
+                    stopDoorCountdown();
                 }
             } else {
                 stopDoorCountdown();
@@ -464,6 +475,7 @@ export function createStatusFeature({ CONFIG, state, DOM, apiFetch, feedback, on
 
                     if (data.success) {
                         state.locked = false;
+                        state.autoLockActive = true;
                         const unlockRemainingMs = Number(data.unlockRemainingMs || data.autoLockDelayMs || 5000);
                         setDoorCountdownFromMs(unlockRemainingMs);
                         updateLockUI(false);

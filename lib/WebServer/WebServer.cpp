@@ -148,9 +148,14 @@ void WebServer::init(const char* ssid, const char* password) {
         WiFi.begin(ssid, (password != nullptr) ? password : "");
 
         const unsigned long startMs = millis();
+        unsigned long lastDotMs = 0;
         while (WiFi.status() != WL_CONNECTED && (millis() - startMs) < 15000UL) {
-            delay(250);
-            Serial.print('.');
+            const unsigned long now = millis();
+            if (lastDotMs == 0 || (now - lastDotMs) >= 250UL) {
+                Serial.print('.');
+                lastDotMs = now;
+            }
+            yield();
         }
         Serial.println();
     }
@@ -174,6 +179,17 @@ void WebServer::init() {
         Serial.print("[WEB] Fallback IP URL: http://");
         Serial.print(_ipAddress);
         Serial.println("/");
+    }
+
+    const wifi_mode_t mode = WiFi.getMode();
+    const bool fallbackApActive = (mode == WIFI_AP || mode == WIFI_AP_STA)
+        && WiFi.softAPSSID().length() > 0;
+    if (fallbackApActive) {
+        Serial.print("[WEB] Fallback AP URL: http://");
+        Serial.print(WiFi.softAPIP());
+        Serial.print("/ (SSID: ");
+        Serial.print(WiFi.softAPSSID());
+        Serial.println(")");
     }
 }
 
@@ -728,7 +744,7 @@ void WebServer::_addSecurityHeaders(AsyncWebServerResponse* response) {
 void WebServer::_addStaticCacheHeaders(AsyncWebServerResponse* response) {
     _addSecurityHeaders(response);
 
-    response->addHeader("Cache-Control", "public, max-age=1800, stale-while-revalidate=86400");
+    response->addHeader("Cache-Control", "public, max-age=60, must-revalidate, stale-while-revalidate=120");
     response->addHeader("Vary", "Accept-Encoding");
 }
 

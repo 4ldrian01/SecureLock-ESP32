@@ -53,11 +53,9 @@ void LockManager::update() {
     _updateDoorState();   // Monitor reed switch for tamper detection
     
     // Check auto-lock timer (non-blocking)
-    if (_autoLockActive && !_locked) {
-        if (millis() - _unlockStartTime >= _autoLockDelay) {
-            lock();       // Automatically re-lock after delay
-            Serial.println("[LOCK] Auto-lock timer expired");
-        }
+    if (_autoLockActive && !_locked && (millis() - _unlockStartTime >= _autoLockDelay)) {
+        lock();       // Automatically re-lock after delay
+        Serial.println("[LOCK] Auto-lock timer expired");
     }
 }
 
@@ -74,12 +72,16 @@ void LockManager::unlock() {
         _unlockStartTime = millis();  // Start timer for auto-lock
         _autoLockActive = true;
         _tampered = false;            // Clear tamper flag on legitimate unlock
-        
-        Serial.println("[LOCK] 🔓 UNLOCKED - Auto-lock in 5s");
+
+        const unsigned long autoLockSec = (_autoLockDelay + 999UL) / 1000UL;
+        Serial.print("[LOCK] 🔓 UNLOCKED - Auto-lock in ");
+        Serial.print(autoLockSec);
+        Serial.println("s");
         setLEDSolid(true);  // LED solid when unlocked
     } else {
         // Already unlocked, reset timer
         _unlockStartTime = millis();
+        _autoLockActive = true;
         Serial.println("[LOCK] Unlock timer reset");
     }
 }
@@ -88,14 +90,16 @@ void LockManager::unlock() {
  * Lock the door immediately
  */
 void LockManager::lock() {
-    if (!_locked) {
-        _setRelay(false);
-        _locked = true;
-        _autoLockActive = false;
-        
-        Serial.println("[LOCK] 🔒 LOCKED");
-        setLEDBlink(true);  // LED blinks when locked
+    if (_locked) {
+        return;
     }
+
+    _setRelay(false);
+    _locked = true;
+    _autoLockActive = false;
+
+    Serial.println("[LOCK] 🔒 LOCKED");
+    setLEDBlink(true);  // LED blinks when locked
 }
 
 /**
@@ -172,6 +176,10 @@ unsigned long LockManager::getRemainingAutoLockMs() const {
     return _autoLockDelay - elapsed;
 }
 
+bool LockManager::isAutoLockActive() const {
+    return !_locked && _autoLockActive;
+}
+
 /**
  * Private: Set relay state
  */
@@ -210,12 +218,6 @@ void LockManager::_updateDoorState() {
         if (_doorOpen && _locked) {
             _tampered = true;
             Serial.println("[LOCK] ⚠️ TAMPER DETECTED - Door opened while locked!");
-        }
-        
-        // Auto-lock when door closes (if unlocked)
-        if (!_doorOpen && !_locked) {
-            Serial.println("[LOCK] Door closed - Triggering lock");
-            lock();
         }
     }
 }

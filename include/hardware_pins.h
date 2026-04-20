@@ -5,7 +5,8 @@
  *
  * IMPORTANT:
  * - This file is the single source of truth for GPIO mapping.
- * - MFRC522 is configured for: SS=5, RST=4, SCK=18, MOSI=25, MISO=19.
+ * - MFRC522 is configured for hardware VSPI: SS=5, RST=4, SCK=18, MOSI=23, MISO=19.
+ * - Vibration sensor uses GPIO34 (input-only). Keep it as INPUT (no INPUT_PULLUP).
  * - ESP32 GPIO34-39 are input-only. Never assign them to any signal
  *   that is actively driven HIGH/LOW by software.
  *
@@ -23,7 +24,7 @@
 #define SECURELOCK_PIN_RELAY           22
 #define SECURELOCK_PIN_LED             2
 #define SECURELOCK_PIN_DOOR            13
-#define SECURELOCK_PIN_VIBRATION       27
+#define SECURELOCK_PIN_VIBRATION       34
 #define SECURELOCK_PIN_BOOT            0
 
 // ------------------------------------------------------------
@@ -32,26 +33,24 @@
 #define SECURELOCK_PIN_RFID_SS         5
 #define SECURELOCK_PIN_RFID_RST        4
 #define SECURELOCK_PIN_SPI_SCK         18
-#define SECURELOCK_PIN_SPI_MOSI        25
+#define SECURELOCK_PIN_SPI_MOSI        23
 #define SECURELOCK_PIN_SPI_MISO        19
 
 // ------------------------------------------------------------
 // Keypad 4x4
 // ------------------------------------------------------------
-// Safe scan mapping: keep columns on output-capable NON-STRAPPING GPIOs.
-// Rows use input-capable ADC pins (34/35/39/36) and are never driven.
-// Board silkscreen equivalents: GPIO39 = VN, GPIO36 = VP.
-// This avoids: "gpio_set_level(...): GPIO output gpio_num error".
-#define SECURELOCK_PIN_KEYPAD_R1       34
-#define SECURELOCK_PIN_KEYPAD_R2       35
-#define SECURELOCK_PIN_KEYPAD_R3       39
-#define SECURELOCK_PIN_KEYPAD_R4       36
+// Wiring blueprint:
+// Rows (inputs): 32, 33, 25, 26
+// Cols (outputs): 27, 16(RX2), 17(TX2), 21
+#define SECURELOCK_PIN_KEYPAD_R1       32
+#define SECURELOCK_PIN_KEYPAD_R2       33
+#define SECURELOCK_PIN_KEYPAD_R3       25
+#define SECURELOCK_PIN_KEYPAD_R4       26
 
-// Many ESP32 dev boards label GPIO16/17 as RX2/TX2.
-#define SECURELOCK_PIN_KEYPAD_C1       16
-#define SECURELOCK_PIN_KEYPAD_C2       17
-#define SECURELOCK_PIN_KEYPAD_C3       21
-#define SECURELOCK_PIN_KEYPAD_C4       23
+#define SECURELOCK_PIN_KEYPAD_C1       27
+#define SECURELOCK_PIN_KEYPAD_C2       16
+#define SECURELOCK_PIN_KEYPAD_C3       17
+#define SECURELOCK_PIN_KEYPAD_C4       21
 
 // ------------------------------------------------------------
 // Buzzer configuration (can be overridden from secrets.h)
@@ -112,15 +111,17 @@ static_assert(SECURELOCK_PIN_KEYPAD_C2 != SECURELOCK_PIN_KEYPAD_C3, "KEYPAD cols
 static_assert(SECURELOCK_PIN_KEYPAD_C2 != SECURELOCK_PIN_KEYPAD_C4, "KEYPAD cols must be unique");
 static_assert(SECURELOCK_PIN_KEYPAD_C3 != SECURELOCK_PIN_KEYPAD_C4, "KEYPAD cols must be unique");
 
-static_assert(SECURELOCK_IS_INPUT_ONLY_GPIO(SECURELOCK_PIN_KEYPAD_R1), "KEYPAD R1 should be input-only GPIO34/35/36/39");
-static_assert(SECURELOCK_IS_INPUT_ONLY_GPIO(SECURELOCK_PIN_KEYPAD_R2), "KEYPAD R2 should be input-only GPIO34/35/36/39");
-static_assert(SECURELOCK_IS_INPUT_ONLY_GPIO(SECURELOCK_PIN_KEYPAD_R3), "KEYPAD R3 should be input-only GPIO34/35/36/39");
-static_assert(SECURELOCK_IS_INPUT_ONLY_GPIO(SECURELOCK_PIN_KEYPAD_R4), "KEYPAD R4 should be input-only GPIO34/35/36/39");
+static_assert(!SECURELOCK_IS_INPUT_ONLY_GPIO(SECURELOCK_PIN_KEYPAD_R1), "KEYPAD R1 must support INPUT_PULLUP");
+static_assert(!SECURELOCK_IS_INPUT_ONLY_GPIO(SECURELOCK_PIN_KEYPAD_R2), "KEYPAD R2 must support INPUT_PULLUP");
+static_assert(!SECURELOCK_IS_INPUT_ONLY_GPIO(SECURELOCK_PIN_KEYPAD_R3), "KEYPAD R3 must support INPUT_PULLUP");
+static_assert(!SECURELOCK_IS_INPUT_ONLY_GPIO(SECURELOCK_PIN_KEYPAD_R4), "KEYPAD R4 must support INPUT_PULLUP");
 
 static_assert(!SECURELOCK_IS_INPUT_ONLY_GPIO(SECURELOCK_PIN_KEYPAD_C1), "KEYPAD C1 must be output-capable GPIO");
 static_assert(!SECURELOCK_IS_INPUT_ONLY_GPIO(SECURELOCK_PIN_KEYPAD_C2), "KEYPAD C2 must be output-capable GPIO");
 static_assert(!SECURELOCK_IS_INPUT_ONLY_GPIO(SECURELOCK_PIN_KEYPAD_C3), "KEYPAD C3 must be output-capable GPIO");
 static_assert(!SECURELOCK_IS_INPUT_ONLY_GPIO(SECURELOCK_PIN_KEYPAD_C4), "KEYPAD C4 must be output-capable GPIO");
+
+static_assert(SECURELOCK_PIN_VIBRATION == 34, "VIBRATION sensor pin is fixed to GPIO34 by wiring blueprint");
 
 static_assert(SECURELOCK_PIN_BOOT == 0, "BOOT pin is expected on GPIO0 for factory reset button");
 

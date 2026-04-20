@@ -85,6 +85,7 @@ bool guestCodeActive = false;
 unsigned long guestCodeIssuedAtMs = 0;
 static const unsigned long GUEST_CODE_TTL_MS = 30000;
 static const unsigned long GUEST_CODE_COMMAND_COOLDOWN_MS = 30000;
+static const unsigned long GUEST_CODE_SUCCESS_BUZZER_MS = 1000;
 
 String pendingUID = "";
 String pendingUserName = "";
@@ -92,6 +93,7 @@ String pendingUserChatId = "";
 String pendingBackupPin = "";
 String pendingOtp = "";
 unsigned long pendingOtpIssuedAtMs = 0;
+unsigned long pendingOtpLastSentAtMs = 0;
 String keypadBuffer = "";
 String authPrompt = "";
 
@@ -99,20 +101,21 @@ static const size_t OTP_LENGTH = 4;
 static const size_t BACKUP_PIN_LENGTH = 4;
 static const char* DURESS_CODE = "2580";
 static const unsigned long OTP_TTL_MS = 30000;
+static const unsigned long OTP_RESEND_COOLDOWN_MS = 3000;
 static const unsigned long TELEGRAM_STARTUP_GRACE_MS = 12000;
 static const unsigned long KEYPAD_LAST_KEY_FRESH_MS = 20000;
 
 unsigned long lastTelegramPollMs = 0;
 static const unsigned long TELEGRAM_POLL_FAST_MS = 1400;
-static const unsigned long TELEGRAM_POLL_IDLE_MS = 5000;
-static const unsigned long TELEGRAM_POLL_ERROR_MS = 12000;
+static const unsigned long TELEGRAM_POLL_IDLE_MS = 3500;
+static const unsigned long TELEGRAM_POLL_ERROR_MS = 9000;
 static const unsigned long TELEGRAM_COMMAND_MIN_INTERVAL_MS = 1200;
 static const unsigned long TELEGRAM_DANGEROUS_COMMAND_COOLDOWN_MS = 5000;
 static const unsigned long TELEGRAM_UNKNOWN_NOTICE_COOLDOWN_MS = 15000;
 static const unsigned long TELEGRAM_UNAUTHORIZED_ALERT_COOLDOWN_MS = 60000;
 static const int TELEGRAM_TRACKED_CHATS_MAX = 24;
-static const int TELEGRAM_MAX_PROCESS_PER_CYCLE = 5;
-static const int TELEGRAM_SAFE_MESSAGE_SLOTS = 5;
+static const int TELEGRAM_MAX_PROCESS_PER_CYCLE = 6;
+static const int TELEGRAM_SAFE_MESSAGE_SLOTS = 6;
 static const int TELEGRAM_WEB_ACTIVITY_QUEUE_MAX = 32;
 static const int TELEGRAM_DIRECT_MESSAGE_QUEUE_MAX = 16;
 static const int TELEGRAM_ADMIN_METRICS_MAX = 16;
@@ -183,13 +186,13 @@ static const unsigned long RFID_DENIED_FEEDBACK_MIN_INTERVAL_MS = 1200;
 static const unsigned long RFID_ENROLLMENT_WINDOW_DEFAULT_MS = 25000;
 static const unsigned long RFID_ENROLLMENT_WINDOW_MIN_MS = 3000;
 static const unsigned long RFID_ENROLLMENT_WINDOW_MAX_MS = 60000;
-static const unsigned long RFID_ENROLLMENT_FEEDBACK_MIN_INTERVAL_MS = 300;
+static const unsigned long RFID_ENROLLMENT_HEARTBEAT_STALE_MS = 4500;
 volatile unsigned long rfidEnrollmentWindowStartedMs = 0;
 volatile unsigned long rfidEnrollmentWindowUntilMs = 0;
+volatile unsigned long rfidEnrollmentLastHeartbeatMs = 0;
 char rfidEnrollmentWindowSource[25] = "idle";
 portMUX_TYPE rfidEnrollmentMux = portMUX_INITIALIZER_UNLOCKED;
 unsigned long lastEnrollmentRfidHandledScanMs = 0;
-unsigned long lastEnrollmentRfidFeedbackMs = 0;
 static const unsigned long PENDING_2FA_CONFLICT_FEEDBACK_MS = 1500;
 static const unsigned long PENDING_2FA_CONFLICT_LOG_MS = 4000;
 static const unsigned long KEYPAD_AUTH_ALERT_MIN_INTERVAL_MS = 5000;
@@ -221,9 +224,12 @@ int theftStrikeCount = 0;
 bool theftAlertSent = false;
 bool tamperAlertSent = false;
 unsigned long lastTheftAlertMs = 0;
-static const unsigned long THEFT_WINDOW_MS = 2000;
-static const int THEFT_STRIKE_THRESHOLD = 5;
+static const unsigned long THEFT_WINDOW_MS = 10000;
+static const int THEFT_STRIKE_THRESHOLD = 3;
 static const unsigned long THEFT_ALERT_COOLDOWN_MS = 30000;
+bool rebootRequested = false;
+unsigned long rebootRequestedAtMs = 0;
+static const unsigned long REBOOT_GRACE_MS = 180;
 
 void clearPending2FA(const String& reason, bool logFailure);
 void clearBackupOnlyMode(const String& reason, bool logFailure);
@@ -276,11 +282,12 @@ bool shouldThrottleUnauthorizedAdminAlert(const String& chatId, unsigned long* r
 String roleToText(TelegramRole role);
 void beginRfidEnrollmentWindow(const String& source, unsigned long durationMs = RFID_ENROLLMENT_WINDOW_DEFAULT_MS);
 void endRfidEnrollmentWindow(const String& source = "");
+void touchRfidEnrollmentWindowHeartbeat();
 bool isRfidEnrollmentWindowActive();
 unsigned long getRfidEnrollmentWindowRemainingMs();
 String getRfidEnrollmentWindowSource();
 bool handleRfidScanDuringEnrollment(AuthResult rfidResult);
-bool requestWebGuestCode(String* issuedCode, unsigned long* remainingMs, bool* reusedExisting);
+bool requestWebGuestCode(String* issuedCode, unsigned long* remainingMs, bool* reusedExisting, bool* blockedByCooldown = nullptr);
 
 String getActiveGuestCode();
 bool isTemporaryGuestCodeActive();
@@ -604,6 +611,7 @@ void beginRfidEnrollmentWindow(const String& source, unsigned long durationMs) {
     portENTER_CRITICAL(&rfidEnrollmentMux);
     rfidEnrollmentWindowStartedMs = now;
     rfidEnrollmentWindowUntilMs = untilMs;
+    rfidEnrollmentLastHeartbeatMs = now;
     normalizedSource.toCharArray(rfidEnrollmentWindowSource, sizeof(rfidEnrollmentWindowSource));
     portEXIT_CRITICAL(&rfidEnrollmentMux);
 
@@ -611,6 +619,16 @@ void beginRfidEnrollmentWindow(const String& source, unsigned long durationMs) {
     Serial.print(normalizedSource);
     Serial.print(" ttlMs=");
     Serial.println(windowMs);
+}
+
+void touchRfidEnrollmentWindowHeartbeat() {
+    const unsigned long now = millis();
+
+    portENTER_CRITICAL(&rfidEnrollmentMux);
+    if (rfidEnrollmentWindowUntilMs != 0) {
+        rfidEnrollmentLastHeartbeatMs = now;
+    }
+    portEXIT_CRITICAL(&rfidEnrollmentMux);
 }
 
 void endRfidEnrollmentWindow(const String& source) {
@@ -625,6 +643,7 @@ void endRfidEnrollmentWindow(const String& source) {
     portENTER_CRITICAL(&rfidEnrollmentMux);
     rfidEnrollmentWindowStartedMs = 0;
     rfidEnrollmentWindowUntilMs = 0;
+    rfidEnrollmentLastHeartbeatMs = 0;
     snprintf(rfidEnrollmentWindowSource, sizeof(rfidEnrollmentWindowSource), "%s", "idle");
     portEXIT_CRITICAL(&rfidEnrollmentMux);
 
@@ -654,6 +673,7 @@ bool isRfidEnrollmentWindowActive() {
     if (rfidEnrollmentWindowUntilMs != 0) {
         rfidEnrollmentWindowStartedMs = 0;
         rfidEnrollmentWindowUntilMs = 0;
+        rfidEnrollmentLastHeartbeatMs = 0;
         snprintf(rfidEnrollmentWindowSource, sizeof(rfidEnrollmentWindowSource), "%s", "idle");
     }
     portEXIT_CRITICAL(&rfidEnrollmentMux);
@@ -705,6 +725,18 @@ bool handleRfidScanDuringEnrollment(AuthResult rfidResult) {
         return false;
     }
 
+    const unsigned long nowMs = millis();
+    unsigned long heartbeatMs = 0;
+    portENTER_CRITICAL(&rfidEnrollmentMux);
+    heartbeatMs = rfidEnrollmentLastHeartbeatMs;
+    portEXIT_CRITICAL(&rfidEnrollmentMux);
+
+    if (heartbeatMs > 0 && (nowMs - heartbeatMs) > RFID_ENROLLMENT_HEARTBEAT_STALE_MS) {
+        Serial.println("[RFID][ENROLL] Window released (stale dashboard heartbeat)");
+        endRfidEnrollmentWindow("stale-heartbeat");
+        return false;
+    }
+
     authHandler.startRFIDCooldown();
 
     const String uid = authHandler.getLastRFIDUID();
@@ -730,12 +762,6 @@ bool handleRfidScanDuringEnrollment(AuthResult rfidResult) {
                 "ℹ️ RFID enrollment mode: registered card scanned [" + uid + "] from " + source + "."
             );
         }
-    }
-
-    const unsigned long nowMs = millis();
-    if ((nowMs - lastEnrollmentRfidFeedbackMs) >= RFID_ENROLLMENT_FEEDBACK_MIN_INTERVAL_MS) {
-        securityManager.beep(1);
-        lastEnrollmentRfidFeedbackMs = nowMs;
     }
 
     return true;
@@ -773,7 +799,6 @@ void setup() {
     const unsigned long wifiBootstrapStartMs = millis();
     while (!wifiController.isConnected() && (millis() - wifiBootstrapStartMs) < 15000UL) {
         updateNetworkServices();
-        delay(50);
         yield();
     }
 
@@ -793,6 +818,11 @@ void loop() {
     updateNetworkServices();
     webServer.update();
     initializeTelegramBotIfNeeded();
+
+    if (rebootRequested && (millis() - rebootRequestedAtMs) >= REBOOT_GRACE_MS) {
+        ESP.restart();
+        return;
+    }
 
     checkGuestCodeExpiry();
 
@@ -817,6 +847,10 @@ void loop() {
         if (!securityManager.isAlarming()) {
             securityManager.startAlarm();
         }
+        if (!isLockdown) {
+            isLockdown = true;
+            webServer.logActivity("System", "Lockdown Enabled (Tamper Alarm)", "alarm");
+        }
         webServer.logActivity("System", "Door Tamper Detected", "alarm");
         sendTamperAlert();
         tamperAlertSent = true;
@@ -835,9 +869,14 @@ void loop() {
             }
 
             theftStrikeCount++;
-            if (theftStrikeCount > THEFT_STRIKE_THRESHOLD && !theftAlertSent) {
+            if (theftStrikeCount >= THEFT_STRIKE_THRESHOLD && !theftAlertSent) {
                 if (!securityManager.isAlarming()) {
                     securityManager.startAlarm();
+                }
+
+                if (!isLockdown) {
+                    isLockdown = true;
+                    webServer.logActivity("System", "Lockdown Enabled (Theft Alarm)", "alarm");
                 }
 
                 if (lastTheftAlertMs == 0 || (now - lastTheftAlertMs) >= THEFT_ALERT_COOLDOWN_MS) {
@@ -864,6 +903,11 @@ void loop() {
         securityManager.resetVibration();
     }
 
+    if (isLockdown && !securityManager.isAlarming() && !lockManager.isLocked()) {
+        isLockdown = false;
+        webServer.logActivity("System", "Lockdown Cleared (Admin Override)", "success");
+    }
+
     if (!isLockdown && keypadState != STATE_BACKUP_ONLY) {
         AuthResult rfidResult = authHandler.checkRFID();
         if (handleRfidScanDuringEnrollment(rfidResult)) {
@@ -879,6 +923,45 @@ void loop() {
             if (keypadState == STATE_AWAITING_2FA) {
                 if (uid == pendingUID) {
                     authHandler.startRFIDCooldown();
+
+                    if (!awaitingOfflineBackupMode) {
+                        String otpTargetChat = pendingUserChatId;
+                        otpTargetChat.trim();
+
+                        const bool canAttemptResend = otpTargetChat.length() > 0
+                            && ((nowMs - pendingOtpLastSentAtMs) >= OTP_RESEND_COOLDOWN_MS);
+
+                        if (canAttemptResend) {
+                            const String nextOtp = generateNumericCode(OTP_LENGTH);
+                            bool otpQueuedFallback = false;
+                            const bool otpDispatched = sendOTP(otpTargetChat, nextOtp, &otpQueuedFallback);
+
+                            if (otpDispatched) {
+                                pendingOtp = nextOtp;
+                                pendingOtpIssuedAtMs = nowMs;
+                                pendingOtpLastSentAtMs = nowMs;
+
+                                if (otpQueuedFallback) {
+                                    webServer.logActivity(pendingUserName, "OTP Re-Queued (RFID Re-scan)", "info");
+                                    authPrompt = "Enter 4-digit OTP (delivery retry in progress, auto-submit at 4 digits, or press B for Offline Mode)";
+                                } else {
+                                    webServer.logActivity(pendingUserName, "OTP Resent (RFID Re-scan)", "success");
+                                    authPrompt = "Enter 4-digit OTP (auto-submit at 4 digits, or press B for Offline Mode)";
+                                }
+                            } else {
+                                awaitingOfflineBackupMode = true;
+                                pendingOtp = "";
+                                pendingOtpIssuedAtMs = 0;
+                                pendingOtpLastSentAtMs = 0;
+                                authPrompt = "Offline Mode: Enter Backup PIN";
+                                webServer.logActivity(pendingUserName, "OTP Re-send Failed - Backup PIN", "fail");
+                                enqueueAdminNotification(
+                                    "⚠️ OTP re-send failed for " + pendingUserName + ". Switched to Backup PIN mode."
+                                );
+                            }
+                        }
+                    }
+
                     shouldEnter2FA = false;
                 }
 
@@ -985,7 +1068,10 @@ void loop() {
     if (isLockdown) {
         // Keep keypad telemetry responsive for diagnostics/echo even in lockdown mode,
         // while intentionally skipping all local auth actions.
-        authHandler.getKeypadKey();
+        const char lockdownKey = authHandler.getKeypadKey();
+        if (lockdownKey != '\0') {
+            securityManager.beepKeyPress();
+        }
 
         if (keypadState == STATE_AWAITING_2FA) {
             clearPending2FA("Lockdown activated", false);
@@ -1021,11 +1107,16 @@ void processKeypad() {
     Serial.print(" len=");
     Serial.println(keypadBuffer.length());
 
+    securityManager.beepKeyPress();
+
     if (keypadState == STATE_IDLE && keypadBuffer.length() > 0) {
         const unsigned long nowMs = millis();
+        const unsigned long idleBufferTimeoutMs = guestCodeActive
+            ? GUEST_CODE_TTL_MS
+            : KEYPAD_IDLE_BUFFER_TIMEOUT_MS;
         const bool noRecentIdleInput = (keypadIdleBufferLastInputMs == 0);
         const bool idleBufferExpired = !noRecentIdleInput
-            && ((nowMs - keypadIdleBufferLastInputMs) >= KEYPAD_IDLE_BUFFER_TIMEOUT_MS);
+            && ((nowMs - keypadIdleBufferLastInputMs) >= idleBufferTimeoutMs);
 
         if (noRecentIdleInput || idleBufferExpired) {
             keypadBuffer = "";
@@ -1040,11 +1131,9 @@ void processKeypad() {
         authHandler.clearBuffer();
         if (keypadState == STATE_AWAITING_2FA) {
             clearPending2FA("User cancelled", false);
-            securityManager.beep(1);
             Serial.println("[KEYPAD] 2FA cancelled by user");
         } else if (keypadState == STATE_BACKUP_ONLY) {
             clearBackupOnlyMode("Backup mode cancelled", false);
-            securityManager.beep(1);
             Serial.println("[KEYPAD] Backup-only mode cancelled");
         }
         return;
@@ -1057,7 +1146,7 @@ void processKeypad() {
             authHandler.clearBuffer();
             authPrompt = "Offline Mode: Enter Backup PIN";
             webServer.logActivity(pendingUserName, "Offline Backup Mode", "success");
-            securityManager.beep(1);
+            securityManager.beepModeChange();
             Serial.println("[KEYPAD] Switched to offline backup mode (2FA)");
         } else if (keypadState == STATE_IDLE) {
             keypadState = STATE_BACKUP_ONLY;
@@ -1068,7 +1157,7 @@ void processKeypad() {
             backupOnlyModeStartedAtMs = millis();
             authPrompt = "Backup Access: Enter 4-digit Backup PIN";
             webServer.logActivity("Backup Access", "Backup Mode Started", "success");
-            securityManager.beep(1);
+            securityManager.beepModeChange();
             Serial.println("[KEYPAD] Backup-only mode started via B key");
         }
         return;
@@ -1076,12 +1165,25 @@ void processKeypad() {
 
     if (key == '#') {
         if (keypadState == STATE_IDLE) {
-            if (guestCodeActive && keypadBuffer.length() > 0) {
-                if (keypadBuffer.length() == BACKUP_PIN_LENGTH && keypadBuffer == guestCode) {
+            if (guestCodeActive) {
+                if (keypadBuffer.length() == 0) {
+                    authPrompt = "Guest PIN active: Enter 4 digits";
+                    Serial.println("[KEYPAD] # ignored: awaiting guest PIN digits");
+                    return;
+                }
+
+                if (keypadBuffer.length() < BACKUP_PIN_LENGTH) {
+                    authPrompt = "Guest PIN active: Enter exactly 4 digits";
+                    Serial.println("[KEYPAD] # ignored: incomplete guest PIN");
+                    return;
+                }
+
+                if (keypadBuffer == guestCode) {
                     grantAccess("Guest", "Guest PIN");
                     guestCode = "";
                     guestCodeActive = false;
                     guestPinFailureCount = 0;
+                    authPrompt = "";
                     Serial.println("[KEYPAD] Guest PIN accepted via # submit");
                 } else {
                     securityManager.beep(3);
@@ -1126,7 +1228,7 @@ void processKeypad() {
             backupOnlyModeStartedAtMs = millis();
             authPrompt = "Backup Access: Enter 4-digit Backup PIN";
             webServer.logActivity("Backup Access", "Backup Mode Started", "success");
-            securityManager.beep(1);
+            securityManager.beepModeChange();
             Serial.println("[KEYPAD] Backup-only mode started via #");
         } else if (keypadState == STATE_AWAITING_2FA) {
             if (!awaitingOfflineBackupMode) {
@@ -1141,7 +1243,6 @@ void processKeypad() {
                 } else if (keypadBuffer.length() == OTP_LENGTH) {
                     evaluateAwaiting2FABuffer(true);
                 } else {
-                    securityManager.beep(1);
                     authPrompt = "Enter 4-digit OTP (auto-submit at 4 digits, or press B for Offline Mode)";
                     Serial.println("[KEYPAD] # ignored: waiting for complete 4-digit OTP");
                 }
@@ -1229,7 +1330,6 @@ void processKeypad() {
         keypadBuffer += key;
         if (!awaitingOfflineBackupMode && keypadBuffer.length() == OTP_LENGTH) {
             authPrompt = "Verifying OTP...";
-            securityManager.beep(1);
             evaluateAwaiting2FABuffer(true);
             return;
         }
@@ -1244,7 +1344,7 @@ bool evaluateAwaiting2FABuffer(bool explicitSubmit) {
         if (keypadBuffer == String(DURESS_CODE)) {
             lockManager.unlock();
             authHandler.startRFIDCooldown();
-            securityManager.beep(2);
+            securityManager.beepAccepted();
             pendingDoorSecuredLog = true;
             webServer.logActivity(pendingUserName, "Duress Code", "alarm");
             sendDuressAlert(pendingUserName);
@@ -1441,6 +1541,7 @@ void enterAwaiting2FAForUser(const String& uid) {
     pendingBackupPin = authHandler.getUserBackupPIN(uid);
     pendingOtp = "";
     pendingOtpIssuedAtMs = 0;
+    pendingOtpLastSentAtMs = 0;
 
     keypadBuffer = "";
     keypadIdleBufferLastInputMs = 0;
@@ -1456,6 +1557,7 @@ void enterAwaiting2FAForUser(const String& uid) {
     if (bot) {
         pendingOtp = generateNumericCode(OTP_LENGTH);
         pendingOtpIssuedAtMs = millis();
+        pendingOtpLastSentAtMs = pendingOtpIssuedAtMs;
 
         String otpTargetChat = pendingUserChatId;
         otpTargetChat.trim();
@@ -1463,8 +1565,9 @@ void enterAwaiting2FAForUser(const String& uid) {
             awaitingOfflineBackupMode = true;
             pendingOtp = "";
             pendingOtpIssuedAtMs = 0;
+            pendingOtpLastSentAtMs = 0;
             authPrompt = "Offline Mode: Enter Backup PIN";
-            securityManager.beep(1);
+            securityManager.beepModeChange();
             webServer.logActivity(pendingUserName, "OTP Unavailable - Missing Chat ID", "fail");
             enqueueAdminNotification(
                 "⚠️ OTP delivery blocked for " + pendingUserName + " (missing Telegram Chat ID)."
@@ -1478,8 +1581,9 @@ void enterAwaiting2FAForUser(const String& uid) {
             awaitingOfflineBackupMode = true;
             pendingOtp = "";
             pendingOtpIssuedAtMs = 0;
+            pendingOtpLastSentAtMs = 0;
             authPrompt = "Offline Mode: Enter Backup PIN";
-            securityManager.beep(1);
+            securityManager.beepModeChange();
             webServer.logActivity(pendingUserName, "OTP Send Failed - Backup PIN", "fail");
             enqueueAdminNotification(
                 "⚠️ OTP delivery failed for " + pendingUserName + ". Switched to Backup PIN mode."
@@ -1510,17 +1614,19 @@ void enterAwaiting2FAForUser(const String& uid) {
 void grantAccess(const String& actor, const String& method, const String& userChatId) {
     lockManager.unlock();
     authHandler.startRFIDCooldown();
-    securityManager.beep(2);
+
+    if (securityManager.isAlarming()) {
+        securityManager.clearAlarm();
+    }
+
+    securityManager.beepAccepted();
+    isLockdown = false;
     pendingDoorSecuredLog = true;
     guestPinFailureCount = 0;
     backupPinFailureCount = 0;
     lastGuestPinFailureMs = 0;
     lastBackupPinFailureMs = 0;
     keypadIdleBufferLastInputMs = 0;
-
-    if (securityManager.isAlarming()) {
-        securityManager.clearAlarm();
-    }
 
     webServer.logActivity(actor, method, "success");
     queueAccessEventForAdmins(actor, method);
@@ -1574,6 +1680,7 @@ void clearPending2FA(const String& reason, bool logFailure) {
     pendingBackupPin = "";
     pendingOtp = "";
     pendingOtpIssuedAtMs = 0;
+    pendingOtpLastSentAtMs = 0;
     awaitingOfflineBackupMode = false;
     backupOnlyModeStartedAtMs = 0;
     authPrompt = "";
@@ -1591,7 +1698,7 @@ String generateNumericCode(size_t length) {
     return out;
 }
 
-bool requestWebGuestCode(String* issuedCode, unsigned long* remainingMs, bool* reusedExisting) {
+bool requestWebGuestCode(String* issuedCode, unsigned long* remainingMs, bool* reusedExisting, bool* blockedByCooldown) {
     if (issuedCode) {
         *issuedCode = "";
     }
@@ -1601,8 +1708,37 @@ bool requestWebGuestCode(String* issuedCode, unsigned long* remainingMs, bool* r
     if (reusedExisting) {
         *reusedExisting = false;
     }
+    if (blockedByCooldown) {
+        *blockedByCooldown = false;
+    }
+
+    auto prepareGuestEntryWindow = []() {
+        if (keypadState == STATE_AWAITING_2FA) {
+            clearPending2FA("Guest PIN window started", false);
+        } else if (keypadState == STATE_BACKUP_ONLY) {
+            clearBackupOnlyMode("Guest PIN window started", false);
+        }
+
+        keypadBuffer = "";
+        keypadIdleBufferLastInputMs = 0;
+        authHandler.clearBuffer();
+        authPrompt = "Guest PIN active: Enter 4 digits";
+    };
+
+    const unsigned long cooldownRemainingMs = getGuestCodeCommandCooldownRemainingMs();
+    if (!guestCodeActive && cooldownRemainingMs > 0) {
+        if (remainingMs) {
+            *remainingMs = cooldownRemainingMs;
+        }
+        if (blockedByCooldown) {
+            *blockedByCooldown = true;
+        }
+        return false;
+    }
 
     if (guestCodeActive) {
+        prepareGuestEntryWindow();
+
         if (issuedCode) {
             *issuedCode = guestCode;
         }
@@ -1621,13 +1757,9 @@ bool requestWebGuestCode(String* issuedCode, unsigned long* remainingMs, bool* r
     guestPinFailureCount = 0;
     lastGuestPinFailureMs = 0;
 
-    if (keypadState == STATE_IDLE) {
-        keypadBuffer = "";
-        keypadIdleBufferLastInputMs = 0;
-        authHandler.clearBuffer();
-    }
+    prepareGuestEntryWindow();
 
-    securityManager.beep(1);
+    securityManager.buzzFor(GUEST_CODE_SUCCESS_BUZZER_MS);
 
     if (issuedCode) {
         *issuedCode = guestCode;
@@ -2193,6 +2325,7 @@ bool isAdmin(String incoming_chat_id) {
 
 bool notifyAdmins(const String& message) {
     bool deliveredToAtLeastOne = false;
+    bool queuedForRetry = false;
     const int trackedSlots = (NUM_ADMINS < TELEGRAM_ADMIN_METRICS_MAX)
         ? NUM_ADMINS
         : TELEGRAM_ADMIN_METRICS_MAX;
@@ -2219,10 +2352,12 @@ bool notifyAdmins(const String& message) {
 
         if (sent) {
             deliveredToAtLeastOne = true;
+        } else if (enqueueTelegramUserNotification(adminChatId, message)) {
+            queuedForRetry = true;
         }
     }
 
-    return deliveredToAtLeastOne;
+    return deliveredToAtLeastOne || queuedForRetry;
 }
 
 String getUserNameByTelegramChatId(const String& chatId) {
@@ -2356,7 +2491,13 @@ void handleAdminCommand(const String& chatId, const String& text) {
 
         lockManager.unlock();
         authHandler.startRFIDCooldown();
-        securityManager.beep(2);
+
+        if (securityManager.isAlarming()) {
+            securityManager.clearAlarm();
+        }
+
+        securityManager.beepAccepted();
+        isLockdown = false;
         pendingDoorSecuredLog = true;
         webServer.markEmergencyOverride();
         webServer.logActivity(actorLabel, "Emergency Override", "success");
@@ -2368,32 +2509,38 @@ void handleAdminCommand(const String& chatId, const String& text) {
     }
 
     if (text == "/guest_code") {
-        if (guestCodeActive) {
-            const unsigned long remainingSec = (getTemporaryGuestCodeRemainingMs() + 999) / 1000;
+        String issuedCode = "";
+        unsigned long remainingMs = 0;
+        bool reusedExisting = false;
+        bool blockedByCooldown = false;
+        const bool generated = requestWebGuestCode(&issuedCode, &remainingMs, &reusedExisting, &blockedByCooldown);
+
+        if (!generated && blockedByCooldown) {
+            const unsigned long retrySec = (remainingMs + 999) / 1000;
             const bool sent = sendTelegramText(
                 chatId,
-                "ℹ️ Guest PIN is already active: " + guestCode + " (expires in " + String(remainingSec) + "s)."
+                "⏳ Guest PIN generation is cooling down. Retry in " + String(retrySec) + "s."
             );
-            webServer.logActivity(actorLabel, "Guest PIN Reused", sent ? "success" : "fail");
-            trackTelegramCommand("admin", text, sent ? "existing_active" : "send_fail", millis() - cmdStartMs);
+            webServer.logActivity(actorLabel, "Guest PIN Cooldown", "fail");
+            trackTelegramCommand("admin", text, sent ? "cooldown" : "send_fail", millis() - cmdStartMs);
             return;
         }
 
-        guestCode = generateNumericCode(BACKUP_PIN_LENGTH);
-        guestCodeActive = true;
-        guestCodeIssuedAtMs = millis();
-        guestPinFailureCount = 0;
-
-        if (keypadState == STATE_IDLE) {
-            keypadBuffer = "";
-            keypadIdleBufferLastInputMs = 0;
-            authHandler.clearBuffer();
+        if (!generated || issuedCode.length() != BACKUP_PIN_LENGTH) {
+            const bool sent = sendTelegramText(chatId, "❌ Unable to generate guest PIN right now. Please retry.");
+            webServer.logActivity(actorLabel, "Guest PIN Generation", "fail");
+            trackTelegramCommand("admin", text, sent ? "guest_generation_failed" : "send_fail", millis() - cmdStartMs);
+            return;
         }
 
-        securityManager.beep(1);
-        const bool sent = sendTelegramText(chatId, "🔐 Guest PIN: " + guestCode + " (valid for 30 seconds). Share only with authorized visitors.");
-        webServer.logActivity(actorLabel, "Guest PIN Generated", sent ? "success" : "fail");
-        trackTelegramCommand("admin", text, sent ? "ok" : "send_fail", millis() - cmdStartMs);
+        const unsigned long remainingSec = (remainingMs + 999) / 1000;
+        const String message = reusedExisting
+            ? ("ℹ️ Guest PIN is already active: " + issuedCode + " (expires in " + String(remainingSec) + "s).")
+            : ("🔐 Guest PIN: " + issuedCode + " (valid for 30 seconds). Share only with authorized visitors.");
+
+        const bool sent = sendTelegramText(chatId, message);
+        webServer.logActivity(actorLabel, reusedExisting ? "Guest PIN Reused" : "Guest PIN Generated", sent ? "success" : "fail");
+        trackTelegramCommand("admin", text, sent ? (reusedExisting ? "existing_active" : "ok") : "send_fail", millis() - cmdStartMs);
         return;
     }
 
@@ -2416,7 +2563,7 @@ void handleAdminCommand(const String& chatId, const String& text) {
     }
 
     if (text == "/buzzer_test") {
-        securityManager.beep(2);
+        securityManager.beepAccepted();
         const bool sent = sendTelegramText(chatId, "🔔 Buzzer diagnostic executed (short double tone).");
         webServer.logActivity(actorLabel, "Buzzer Test", sent ? "success" : "fail");
         trackTelegramCommand("admin", text, sent ? "ok" : "send_fail", millis() - cmdStartMs);
@@ -2461,8 +2608,8 @@ void handleAdminCommand(const String& chatId, const String& text) {
         const bool sent = sendTelegramText(chatId, "♻️ System rebooting now...");
         webServer.logActivity(actorLabel, "Reboot Command", sent ? "success" : "fail");
         trackTelegramCommand("admin", text, sent ? "ok" : "send_fail", millis() - cmdStartMs);
-        delay(150);
-        ESP.restart();
+        rebootRequested = true;
+        rebootRequestedAtMs = millis();
         return;
     }
 
@@ -2967,10 +3114,17 @@ void checkGuestCodeExpiry() {
         guestPinFailureCount = 0;
         lastGuestPinFailureMs = 0;
 
+        webServer.logActivity("System", "Guest PIN Expired", "info");
+        enqueueAdminNotification("⌛ Guest PIN expired and is no longer valid.");
+
         if (keypadState == STATE_IDLE) {
             keypadBuffer = "";
             keypadIdleBufferLastInputMs = 0;
             authHandler.clearBuffer();
+
+            if (authPrompt.startsWith("Guest PIN active")) {
+                authPrompt = "";
+            }
         }
     }
 }

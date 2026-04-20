@@ -27,7 +27,7 @@ extern unsigned long getTelegramNotificationDeliveredTotal();
 extern unsigned long getTelegramNotificationDeliveryFailures();
 extern unsigned long getTelegramNotificationDroppedFullTotal();
 extern unsigned long getTelegramNotificationDroppedRetryTotal();
-extern bool requestWebGuestCode(String* issuedCode, unsigned long* remainingMs, bool* reusedExisting);
+extern bool requestWebGuestCode(String* issuedCode, unsigned long* remainingMs, bool* reusedExisting, bool* blockedByCooldown);
 
 void WebServer::_handleAPIStatus(AsyncWebServerRequest* request) {
     if (!_requireApiAuth(request)) {
@@ -41,6 +41,7 @@ void WebServer::_handleAPIStatus(AsyncWebServerRequest* request) {
     doc["tampered"] = _lock->isDoorTampered();
     doc["autoLockDelayMs"] = _lock->getAutoLockDelayMs();
     doc["unlockRemainingMs"] = _lock->getRemainingAutoLockMs();
+    doc["autoLockActive"] = _lock->isAutoLockActive();
     doc["emergencyCooldownRemainingMs"] = _remainingCooldownMs(_lastEmergencyUnlockMs, EMERGENCY_COOLDOWN_MS);
     const unsigned long emergencyGuestLockRemainingMs = getTemporaryGuestCodeRemainingMs();
     doc["emergencyGuestLockRemainingMs"] = emergencyGuestLockRemainingMs;
@@ -56,6 +57,13 @@ void WebServer::_handleAPIStatus(AsyncWebServerRequest* request) {
     doc["wifiConnected"] = _wifiConnected;
     doc["ipAddress"] = _ipAddress;
     doc["rssi"] = WiFi.RSSI();
+
+    const wifi_mode_t wifiMode = WiFi.getMode();
+    const bool fallbackApActive = (wifiMode == WIFI_AP || wifiMode == WIFI_AP_STA)
+        && WiFi.softAPSSID().length() > 0;
+    doc["fallbackApActive"] = fallbackApActive;
+    doc["fallbackApSSID"] = fallbackApActive ? WiFi.softAPSSID() : "";
+    doc["fallbackApIP"] = fallbackApActive ? WiFi.softAPIP().toString() : "";
 
     const bool telegramGuestActive = isTemporaryGuestCodeActive();
     const String telegramGuestCode = getActiveGuestCode();
@@ -142,7 +150,7 @@ void WebServer::_handleAPIUnlock(AsyncWebServerRequest* request) {
         _security->clearAlarm();
     }
 
-    _security->beep(2);
+    _security->beepAccepted();
 
     _lastEmergencyUnlockMs = millis();
     _addLogEntry(_activeApiActorLabel(), "Emergency Override", "success");
@@ -154,6 +162,7 @@ void WebServer::_handleAPIUnlock(AsyncWebServerRequest* request) {
     doc["cooldownMs"] = EMERGENCY_COOLDOWN_MS;
     doc["autoLockDelayMs"] = _lock->getAutoLockDelayMs();
     doc["unlockRemainingMs"] = _lock->getRemainingAutoLockMs();
+    doc["autoLockActive"] = _lock->isAutoLockActive();
 
     _sendJSON(request, 200, doc);
 }
@@ -168,7 +177,22 @@ void WebServer::_handleAPIGuestCode(AsyncWebServerRequest* request) {
     String issuedCode = "";
     unsigned long remainingMs = 0;
     bool reusedExisting = false;
-    const bool generated = requestWebGuestCode(&issuedCode, &remainingMs, &reusedExisting);
+    bool blockedByCooldown = false;
+    const bool generated = requestWebGuestCode(&issuedCode, &remainingMs, &reusedExisting, &blockedByCooldown);
+
+    if (!generated && blockedByCooldown) {
+        _addLogEntry(_activeApiActorLabel(), "Guest PIN Cooldown", "fail");
+
+        JsonDocument doc;
+        doc["success"] = false;
+        doc["errorCode"] = "GUEST_CODE_COOLDOWN";
+        doc["message"] = "Guest code generation is cooling down";
+        doc["retryAfterMs"] = remainingMs;
+        doc["retryAfterSec"] = (remainingMs + 999) / 1000;
+        doc["cooldownRemainingMs"] = remainingMs;
+        _sendJSON(request, 429, doc);
+        return;
+    }
 
     if (!generated || issuedCode.length() != 4) {
         _addLogEntry(_activeApiActorLabel(), "Guest PIN Generation", "fail");

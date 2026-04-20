@@ -92,12 +92,8 @@ void AuthHandler::init() {
     pinMode(PIN_RFID_SS, OUTPUT);
     digitalWrite(PIN_RFID_SS, HIGH);
 
-    SPI.begin(
-        SECURELOCK_PIN_SPI_SCK,
-        SECURELOCK_PIN_SPI_MISO,
-        SECURELOCK_PIN_SPI_MOSI,
-        PIN_RFID_SS
-    );
+    // Use standard hardware SPI (VSPI) initialization for RC522.
+    SPI.begin();
 
     _activeRfidRstPin = PIN_RFID_RST;
 
@@ -235,7 +231,11 @@ AuthResult AuthHandler::checkRFID() {
     }
 
     if (!_rfid.PICC_ReadCardSerial()) {
-        return AUTH_NONE;
+        // Single immediate retry improves marginal/read-noise cases
+        // without introducing blocking delays.
+        if (!_rfid.PICC_ReadCardSerial()) {
+            return AUTH_NONE;
+        }
     }
 
     if (isRFIDCooldownActive()) {
@@ -414,7 +414,7 @@ char AuthHandler::getKeypadKey() {
 
     if (modeControlKey
         && _lastAcceptedKeyChar == rawKey
-        && (now - _lastAcceptedKeyMs) < 16) {
+        && (now - _lastAcceptedKeyMs) < KEYPAD_MODE_CONTROL_REPEAT_GUARD_MS) {
         return '\0';
     }
 

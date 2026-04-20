@@ -6,8 +6,8 @@
  * PURPOSE: Handles multi-factor authentication (RFID + Keypad + Duress)
  * 
  * HARDWARE:
- *   - RFID RC522 (SPI): SS=5, SCK=18, MOSI=25, MISO=19, RST=4
- *   - Keypad 4x4 (safe scan): Rows[34,35,39,36], Cols[16,17,21,23] (16=RX2, 17=TX2)
+ *   - RFID RC522 (hardware VSPI): SS=5, SCK=18, MOSI=23, MISO=19, RST=4
+ *   - Keypad 4x4: Rows[32,33,25,26], Cols[27,16,17,21] (16=RX2, 17=TX2)
  *   - Factory Reset: GPIO 0 (BOOT button - long press)
  * 
  * FEATURES:
@@ -162,13 +162,14 @@ private:
     static const unsigned long FACTORY_RESET_TIME = 10000;  // 10 seconds
     static const unsigned long RFID_COOLDOWN_MS = 450;      // Fast re-detect while still debouncing held cards
     static const unsigned long RFID_RECOVERY_INTERVAL_MS = 1500;
-    static const unsigned long KEYPAD_MIN_KEY_INTERVAL_MS = 32;
+    static const unsigned long KEYPAD_MIN_KEY_INTERVAL_MS = 50;
     static const unsigned long KEYPAD_NOISE_WINDOW_MS = 2000;
     static const int KEYPAD_NOISE_THRESHOLD = 20;
     static const unsigned long KEYPAD_MUTE_DURATION_MS = 3000;
     static const unsigned long KEYPAD_STARTUP_SETTLE_MS = 250;
-    static const unsigned long KEYPAD_STABLE_PRESS_MS = 8;
-    static const unsigned long KEYPAD_STABLE_RELEASE_MS = 6;
+    static const unsigned long KEYPAD_STABLE_PRESS_MS = 50;
+    static const unsigned long KEYPAD_STABLE_RELEASE_MS = 50;
+    static const unsigned long KEYPAD_MODE_CONTROL_REPEAT_GUARD_MS = 50;
     static const unsigned long KEYPAD_SAME_KEY_RETRIGGER_MS = 220;
     
     // Hardware objects

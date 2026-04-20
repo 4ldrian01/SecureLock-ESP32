@@ -2,6 +2,7 @@ export function createInitialState() {
     return {
         connected: false,
         locked: true,
+        autoLockActive: false,
         alarm: false,
         buzzerActive: false,
         sirenActive: false,
@@ -47,6 +48,9 @@ export function createInitialState() {
         telegramNotifyQueueDepth: 0,
         telegramNotifyQueueCapacity: 0,
         telegramNotifyQueueOldestAgeMs: 0,
+        fallbackApActive: false,
+        fallbackApSSID: '',
+        fallbackApIP: '',
         guestCooldown: 0,
         guestCooldownTimer: null,
         guestRequestInFlight: false,

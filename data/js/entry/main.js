@@ -1,4 +1,4 @@
-import { initApp } from '../app/index.js?v=20260418r7';
+import { initApp } from '../app/index.js?v=20260419r2';
 
 function activateDeferredStylesheet() {
     const deferredStylesheet = document.getElementById('dashboardStyle');
@@ -118,14 +118,14 @@ function installAuthPendingFailsafe() {
 
         const checking = document.getElementById('authChecking');
         if (checking) {
-            checking.textContent = 'Session check timed out. Please login.';
+            checking.textContent = 'Secure connection check timed out. Please login.';
         }
 
         const loginError = document.getElementById('adminLoginError');
         if (loginError && !String(loginError.textContent || '').trim()) {
-            loginError.textContent = 'Session verification timed out. Please login.';
+            loginError.textContent = 'Secure connection check timed out. Please login.';
         }
-    }, 9000);
+    }, 5000);
 }
 
 function boot() {

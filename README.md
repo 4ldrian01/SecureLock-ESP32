@@ -62,6 +62,7 @@ The system is designed around non-blocking patterns (`millis()` timers + async H
 - Anti-theft vibration strike window detection
 - Alarm siren + buzzer feedback patterns
 - Emergency lock/unlock state transitions with cooldown protections
+- Reed switch is telemetry/status only (door open/closed + tamper); it does not delay auto-relock timing
 
 ### Admin Dashboard
 - Token-based admin login (`/api/auth/login`)
@@ -113,16 +114,19 @@ SecureLock uses a 4-component modular firmware design:
 | Relay (solenoid lock) | 22 |
 | Status LED | 2 |
 | Door reed switch | 13 |
-| Vibration sensor (SW-420) | 27 |
+| Vibration sensor (SW-420) | 34 *(input-only)* |
 | Buzzer | 14 *(override-capable)* |
 | Factory reset / BOOT | 0 |
 | RFID SS | 5 |
 | RFID RST | 4 |
 | SPI SCK | 18 |
-| SPI MOSI | 25 |
+| SPI MOSI | 23 |
 | SPI MISO | 19 |
-| Keypad rows | 34, 35, 39, 36 |
-| Keypad cols | 16, 17, 21, 23 |
+| Keypad rows | 32, 33, 25, 26 |
+| Keypad cols | 27, 16, 17, 21 |
+
+Notes:
+- GPIO34 is input-only and does not support internal pull-up/down; keep vibration input as `pinMode(..., INPUT)`.
 
 ---
 
@@ -193,6 +197,7 @@ SecureLock/
 6. **Open dashboard**
    - Visit `http://securelock.local/`
    - Fallback: `http://<ESP32_IP>/` if `.local` is not resolved on your client
+   - If your router/hotspot isolates clients, join the device fallback AP (`SecureLock-Setup-XXXXXX`) and open `http://192.168.4.1/`
 
 ---
 
@@ -338,6 +343,11 @@ Runtime behavior:
 ### Dashboard loads but styles/scripts missing
 - Upload filesystem first: `pio run --target uploadfs`
 
+### Device is online but desktop/mobile cannot reach dashboard
+- Verify client and ESP32 are on the same subnet
+- Some mobile hotspots block client-to-client traffic; in that case use fallback AP (`SecureLock-Setup-XXXXXX`) and browse to `http://192.168.4.1/`
+- Confirm serial output shows either station IP (`[WIFI] IP`) or fallback AP URL (`[WIFI] AP URL`)
+
 ### Upload fails / serial port busy
 - Close monitor sessions, retry upload
 - Re-check active COM port and USB cable quality
@@ -345,6 +355,11 @@ Runtime behavior:
 ### WiFi not connecting
 - Verify credentials in `include/secrets.h`
 - Ensure 2.4GHz AP availability
+
+### Telegram bot shows DNS failures (`hostByName(): DNS Failed for api.telegram.org`)
+- Keep `WIFI_FORCE_PUBLIC_DNS` set to `0` (default) so DHCP DNS is used
+- Some hotspots block external DNS (8.8.8.8/1.1.1.1); forcing public DNS can break Telegram lookups
+- If your DHCP DNS is empty, firmware auto-applies fallback DNS and logs a warning
 
 ### API returns 401
 - Login first via dashboard (`/api/auth/login`)

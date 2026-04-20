@@ -9,21 +9,21 @@
  * - /css/features/*
  */
 
-@import url('/css/tokens.css?v=20260418r7');
-@import url('/css/base.css?v=20260418r7');
-@import url('/css/components.css?v=20260418r7');
-@import url('/css/layout.css?v=20260418r7');
-@import url('/css/components/brand.css?v=20260418r7');
-@import url('/css/components/lock.css?v=20260418r7');
-@import url('/css/components/modal.css?v=20260418r7');
-@import url('/css/components/forms.css?v=20260418r7');
-@import url('/css/components/toast.css?v=20260418r7');
-@import url('/css/components/footer.css?v=20260418r7');
-@import url('/css/features/auth.css?v=20260418r7');
-@import url('/css/features/guest.css?v=20260418r7');
-@import url('/css/features/logs.css?v=20260418r7');
-@import url('/css/features/users.css?v=20260418r7');
-@import url('/css/features/pagination.css?v=20260418r7');
+@import url('/css/tokens.css?v=20260419r2');
+@import url('/css/base.css?v=20260419r2');
+@import url('/css/components.css?v=20260419r2');
+@import url('/css/layout.css?v=20260419r2');
+@import url('/css/components/brand.css?v=20260419r2');
+@import url('/css/components/lock.css?v=20260419r2');
+@import url('/css/components/modal.css?v=20260419r2');
+@import url('/css/components/forms.css?v=20260419r2');
+@import url('/css/components/toast.css?v=20260419r2');
+@import url('/css/components/footer.css?v=20260419r2');
+@import url('/css/features/auth.css?v=20260419r2');
+@import url('/css/features/guest.css?v=20260419r2');
+@import url('/css/features/logs.css?v=20260419r2');
+@import url('/css/features/users.css?v=20260419r2');
+@import url('/css/features/pagination.css?v=20260419r2');
 
 /*
  * Critical resilience fallback

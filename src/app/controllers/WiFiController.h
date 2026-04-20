@@ -19,11 +19,17 @@ public:
 
     bool isConnected() const;
     String connectedSSID() const;
+    bool isFallbackApActive() const;
+    String fallbackApSSID() const;
+    String fallbackApIPAddress() const;
 
 private:
     WiFiMulti _wifiMulti;
     bool _started;
     bool _connected;
+    bool _fallbackApActive;
+    String _fallbackApSsid;
+    String _fallbackApIpAddress;
     unsigned long _lastMaintenanceMs;
 
     static const unsigned long MAINTENANCE_INTERVAL_MS = 750;

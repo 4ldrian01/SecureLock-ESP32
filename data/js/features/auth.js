@@ -27,6 +27,18 @@ function formatLockout(msRemaining) {
     return `${toTwoDigits(min)}:${toTwoDigits(sec)}`;
 }
 
+function parsePositiveMs(value, fallbackMs) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed > 0) {
+        return Math.max(200, Math.floor(parsed));
+    }
+
+    const fallback = Number(fallbackMs);
+    return Number.isFinite(fallback) && fallback > 0
+        ? Math.max(200, Math.floor(fallback))
+        : 200;
+}
+
 export function createAuthFeature({
     CONFIG,
     DOM,
@@ -44,10 +56,16 @@ export function createAuthFeature({
     let lockoutUntilMs = 0;
     let adminPasswordVisible = false;
     let loginRequestInFlight = false;
+    const OFFLINE_HINT_PREFIX = 'Unable to reach SecureLock device.';
 
     const authConfig = CONFIG.ADMIN_AUTH || {};
     const SESSION_TTL_MS = Number(authConfig.SESSION_TTL_MS || (15 * 60 * 1000));
     const SESSION_KEY = String(CONFIG.AUTH_SESSION_KEY || DEFAULT_SESSION_KEY);
+    const AUTH_REACHABILITY_TIMEOUT_MS = parsePositiveMs(CONFIG.AUTH_REACHABILITY_TIMEOUT_MS, 1600);
+    const AUTH_BOOT_STATUS_TIMEOUT_MS = parsePositiveMs(CONFIG.AUTH_BOOT_STATUS_TIMEOUT_MS, 1800);
+    const AUTH_BOOT_STATUS_RETRIES = Math.max(0, Number(CONFIG.AUTH_BOOT_STATUS_RETRIES || 0));
+    const AUTH_PENDING_FALLBACK_MS = parsePositiveMs(CONFIG.AUTH_PENDING_FALLBACK_MS, 2200);
+    const AUTH_PREAUTH_HEALTH_INTERVAL_MS = parsePositiveMs(CONFIG.AUTH_PREAUTH_HEALTH_INTERVAL_MS, 7000);
 
     function readSession() {
         return safeParse(sessionStorage.getItem(SESSION_KEY), null);
@@ -104,20 +122,55 @@ export function createAuthFeature({
         DOM.statusText.textContent = reachable ? 'Login Required' : 'Offline';
     }
 
+    function getOfflineConnectivityHint() {
+        const apBaseSsid = String(CONFIG.FALLBACK_AP_BASE_SSID || 'SecureLock-Setup').trim() || 'SecureLock-Setup';
+        const apIp = String(CONFIG.FALLBACK_AP_DEFAULT_IP || '192.168.4.1').trim() || '192.168.4.1';
+
+        return `${OFFLINE_HINT_PREFIX} Connect this phone/PC to the same Wi-Fi as the lock, or join fallback AP "${apBaseSsid}-XXXXXX" and open http://${apIp}/.`;
+    }
+
+    function setOfflineConnectivityHint() {
+        if (!DOM.adminLoginError || loginRequestInFlight) {
+            return;
+        }
+
+        const current = String(DOM.adminLoginError.textContent || '').trim();
+        if (current.length > 0 && !current.startsWith(OFFLINE_HINT_PREFIX)) {
+            return;
+        }
+
+        DOM.adminLoginError.textContent = getOfflineConnectivityHint();
+    }
+
+    function clearOfflineConnectivityHint() {
+        if (!DOM.adminLoginError) {
+            return;
+        }
+
+        const current = String(DOM.adminLoginError.textContent || '').trim();
+        if (current.startsWith(OFFLINE_HINT_PREFIX)) {
+            DOM.adminLoginError.textContent = '';
+        }
+    }
+
     async function probeBackendReachability() {
         try {
             await apiFetch(CONFIG.API.AUTH_STATUS, {
                 method: 'GET',
                 skipAuthHandling: true,
-                timeoutMs: 2500
+                timeoutMs: AUTH_REACHABILITY_TIMEOUT_MS,
+                retries: 0,
+                dedupeKey: 'auth-reachability'
             });
             if (!authenticated) {
                 setAuthenticatedUI(false, { reachable: true });
+                clearOfflineConnectivityHint();
             }
             return true;
         } catch {
             if (!authenticated) {
                 setAuthenticatedUI(false, { reachable: false });
+                setOfflineConnectivityHint();
             }
             return false;
         }
@@ -134,7 +187,7 @@ export function createAuthFeature({
                 return;
             }
             probeBackendReachability();
-        }, 10000);
+        }, AUTH_PREAUTH_HEALTH_INTERVAL_MS);
     }
 
     function stopPreAuthHealthPolling() {
@@ -241,6 +294,7 @@ export function createAuthFeature({
         writeSession(session);
 
         DOM.adminLoginError.textContent = '';
+        clearOfflineConnectivityHint();
         DOM.adminLockoutMessage.textContent = '';
         DOM.adminLoginPassword.value = '';
         setAdminPasswordVisibility(false);
@@ -416,7 +470,9 @@ export function createAuthFeature({
                     Authorization: `Bearer ${token}`
                 },
                 skipAuthHandling: true,
-                timeoutMs: 2500
+                timeoutMs: AUTH_BOOT_STATUS_TIMEOUT_MS,
+                retries: AUTH_BOOT_STATUS_RETRIES,
+                dedupeKey: 'auth-restore-status'
             });
 
             if (!status?.authenticated) {
@@ -474,16 +530,16 @@ export function createAuthFeature({
         setAuthenticatedUI('pending', { reachable: true });
 
         if (DOM.authChecking) {
-            DOM.authChecking.textContent = 'Verifying secure session…';
+            DOM.authChecking.textContent = 'Verifying secure connection…';
         }
 
         const pendingFallbackTimer = setTimeout(() => {
             if (!authenticated && document.body.dataset.authenticated === 'pending') {
                 setAuthenticatedUI(false, { reachable: false });
-                DOM.adminLoginError.textContent = 'Session verification timed out. Please login.';
+                DOM.adminLoginError.textContent = getOfflineConnectivityHint();
                 DOM.adminLoginUsername.focus();
             }
-        }, 3200);
+        }, AUTH_PENDING_FALLBACK_MS);
 
         restoreSession()
             .then((restored) => {

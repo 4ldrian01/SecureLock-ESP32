@@ -24,6 +24,7 @@ extern unsigned long getTelegramAdminLastFailureMsAt(int index);
 extern bool enqueueTelegramUserNotification(const String& chatId, const String& message);
 extern void beginRfidEnrollmentWindow(const String& source, unsigned long durationMs);
 extern void endRfidEnrollmentWindow(const String& source);
+extern void touchRfidEnrollmentWindowHeartbeat();
 extern bool isRfidEnrollmentWindowActive();
 extern unsigned long getRfidEnrollmentWindowRemainingMs();
 extern String getRfidEnrollmentWindowSource();
@@ -89,6 +90,37 @@ bool isSeededAdminChatId(const String& chatId) {
         }
 
         if (seededAdminChatId == normalizedChatId) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool isBackupPinInUse(AuthHandler* auth, const String& backupPin, const String& excludeUid = "") {
+    if (!auth) {
+        return false;
+    }
+
+    String normalizedBackupPin = backupPin;
+    normalizedBackupPin.trim();
+    if (!webserver_route_utils::isFourDigitCode(normalizedBackupPin)) {
+        return false;
+    }
+
+    const String normalizedExcludeUid = webserver_route_utils::normalizeUID(excludeUid);
+    const int userCount = auth->getUserCount();
+
+    for (int i = 0; i < userCount; i++) {
+        String userUid = webserver_route_utils::normalizeUID(auth->getUserUIDAt(i));
+        if (userUid.length() == 0 || userUid == normalizedExcludeUid || userUid.startsWith("GUEST_")) {
+            continue;
+        }
+
+        String existingBackupPin = auth->getUserBackupPIN(userUid);
+        existingBackupPin.trim();
+
+        if (existingBackupPin == normalizedBackupPin) {
             return true;
         }
     }
@@ -730,7 +762,6 @@ void WebServer::_handleAPIDeleteUser(AsyncWebServerRequest* request) {
     const bool deleted = removedFromAuth;
 
     if (deleted) {
-        _security->beep(1);
         _syncUsersFileFromAuth();
     }
 
@@ -789,7 +820,6 @@ void WebServer::_handleAPIResetUsers(AsyncWebServerRequest* request, uint8_t* da
     const int before = _auth->getUserCount();
     _auth->performFactoryReset();
     _syncUsersFileFromAuth();
-    _security->beep(2);
 
     int seededAdminsRetained = 0;
     for (int i = 0; i < NUM_ADMINS; i++) {
@@ -984,6 +1014,21 @@ void WebServer::_handleAPIAddUser(AsyncWebServerRequest* request, uint8_t* data,
         return;
     }
 
+    String effectiveBackupPIN = backupPIN;
+    if (effectiveBackupPIN.isEmpty()) {
+        effectiveBackupPIN = pin;
+    }
+
+    if (!effectiveBackupPIN.isEmpty() && isBackupPinInUse(_auth, effectiveBackupPIN)) {
+        JsonDocument doc;
+        doc["success"] = false;
+        doc["errorCode"] = "BACKUP_PIN_ALREADY_REGISTERED";
+        doc["field"] = "backupPIN";
+        doc["message"] = "This backup PIN is already assigned to another user";
+        _sendJSON(request, 409, doc);
+        return;
+    }
+
     bool duplicateRFID = _auth->userExists(uid);
     if (!duplicateRFID && LittleFS.exists("/users.json")) {
         JsonDocument usersDoc;
@@ -1012,7 +1057,6 @@ void WebServer::_handleAPIAddUser(AsyncWebServerRequest* request, uint8_t* data,
     if (duplicateRFID) {
         Serial.print("[API][WARN] Duplicate RFID enrollment blocked (Add User): ");
         Serial.println(uid);
-        _security->beep(3);
         _addLogEntry(_activeApiActorLabel(), "Duplicate RFID " + uid, "fail");
 
         JsonDocument doc;
@@ -1043,8 +1087,8 @@ void WebServer::_handleAPIAddUser(AsyncWebServerRequest* request, uint8_t* data,
             failureReason = "Failed to persist Telegram Chat ID for this user.";
         }
 
-        if (added && !backupPIN.isEmpty()) {
-            const bool backupSaved = _auth->setUserBackupPIN(uid, backupPIN);
+        if (added && effectiveBackupPIN.length() == 4) {
+            const bool backupSaved = _auth->setUserBackupPIN(uid, effectiveBackupPIN);
             if (!backupSaved) {
                 _auth->removeUser(uid);
                 added = false;
@@ -1055,7 +1099,6 @@ void WebServer::_handleAPIAddUser(AsyncWebServerRequest* request, uint8_t* data,
 
     bool userNotified = false;
     if (added) {
-        _security->beep(1);
         _syncUsersFileFromAuth();
 
         const String onboardingMessage =
@@ -1352,7 +1395,6 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
         Serial.print(" new=");
         Serial.println(rfid);
 
-        _security->beep(3);
         _addLogEntry(_activeApiActorLabel(), "Duplicate RFID " + rfid, "fail");
 
         JsonDocument doc;
@@ -1477,6 +1519,16 @@ void WebServer::_handleAPIEditUser(AsyncWebServerRequest* request, uint8_t* data
 
     if (effectiveBackupPIN.isEmpty()) {
         effectiveBackupPIN = effectivePin;
+    }
+
+    if (!effectiveBackupPIN.isEmpty() && isBackupPinInUse(_auth, effectiveBackupPIN, uid)) {
+        JsonDocument doc;
+        doc["success"] = false;
+        doc["errorCode"] = "BACKUP_PIN_ALREADY_REGISTERED";
+        doc["field"] = "backupPIN";
+        doc["message"] = "This backup PIN is already assigned to another user";
+        _sendJSON(request, 409, doc);
+        return;
     }
 
     bool authUpdated = false;
@@ -1645,11 +1697,16 @@ void WebServer::_handleAPIRfidScan(AsyncWebServerRequest* request) {
         scanStatus = known ? "registered" : "unregistered";
     }
 
+    const bool enrollmentActive = isRfidEnrollmentWindowActive();
+    if (enrollmentActive) {
+        touchRfidEnrollmentWindowHeartbeat();
+    }
+
     JsonDocument doc;
     doc["scanned"] = scanned;
     doc["known"] = known;
     doc["status"] = scanStatus;
-    doc["enrollmentActive"] = isRfidEnrollmentWindowActive();
+    doc["enrollmentActive"] = enrollmentActive;
     doc["enrollmentRemainingMs"] = getRfidEnrollmentWindowRemainingMs();
     doc["enrollmentSource"] = getRfidEnrollmentWindowSource();
     if (scanned) {

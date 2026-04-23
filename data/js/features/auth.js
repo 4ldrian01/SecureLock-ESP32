@@ -516,27 +516,24 @@ export function createAuthFeature({
         startLockoutTimer();
         setAdminPasswordVisibility(false);
 
+        // Always render the login form immediately; session restoration runs in background.
+        setAuthenticatedUI(false, { reachable: true });
+
         const bootSession = readSession();
         if (!isSessionValid(bootSession)) {
             clearApiAuthToken();
             clearSession();
-            setAuthenticatedUI(false, { reachable: true });
             probeBackendReachability();
             startPreAuthHealthPolling();
             DOM.adminLoginUsername.focus();
             return;
         }
 
-        setAuthenticatedUI('pending', { reachable: true });
-
-        if (DOM.authChecking) {
-            DOM.authChecking.textContent = 'Verifying secure connection…';
-        }
-
+        let restoreTimedOut = false;
         const pendingFallbackTimer = setTimeout(() => {
-            if (!authenticated && document.body.dataset.authenticated === 'pending') {
-                setAuthenticatedUI(false, { reachable: false });
-                DOM.adminLoginError.textContent = getOfflineConnectivityHint();
+            restoreTimedOut = true;
+            if (!authenticated) {
+                DOM.adminLoginError.textContent = 'Saved session check timed out. Please login.';
                 DOM.adminLoginUsername.focus();
             }
         }, AUTH_PENDING_FALLBACK_MS);
@@ -550,6 +547,9 @@ export function createAuthFeature({
             })
             .finally(() => {
                 clearTimeout(pendingFallbackTimer);
+                if (!authenticated && !restoreTimedOut && !String(DOM.adminLoginError.textContent || '').trim()) {
+                    DOM.adminLoginError.textContent = '';
+                }
                 if (!authenticated) {
                     startPreAuthHealthPolling();
                 }

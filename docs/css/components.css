@@ -1,0 +1,242 @@
+/* ============================================================
+   Reusable Component Primitives (Phase 1 Foundation)
+   ============================================================ */
+
+.card {
+    background: color-mix(in srgb, var(--surface) 92%, #ffffff 8%);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+    color: var(--text-main);
+}
+
+.glass-panel,
+.glass-card {
+    background: var(--surface-glass);
+    border: 1px solid var(--border-glass);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+
+.btn {
+    --btn-bg: color-mix(in srgb, var(--surface) 88%, #ffffff 12%);
+    --btn-fg: var(--text-main);
+    --btn-border: var(--border-strong);
+
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-height: 2.45rem;
+    padding: 0.58rem 0.95rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--btn-border);
+    background: var(--btn-bg);
+    color: var(--btn-fg);
+    font-size: 0.875rem;
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
+    user-select: none;
+    transition:
+        background var(--transition-fast),
+        border-color var(--transition-fast),
+        color var(--transition-fast),
+        transform var(--transition-fast),
+        box-shadow var(--transition-fast);
+}
+
+.btn:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--btn-bg) 84%, #ffffff 16%);
+    transform: translateY(-1px);
+}
+
+.btn:active:not(:disabled) {
+    transform: translateY(0);
+}
+
+.btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+    transform: none;
+}
+
+.btn-primary {
+    --btn-bg: linear-gradient(180deg, color-mix(in srgb, var(--primary) 90%, #ffffff 10%), var(--primary));
+    --btn-fg: var(--primary-foreground);
+    --btn-border: color-mix(in srgb, var(--primary) 78%, #ffffff 22%);
+}
+
+.btn-danger {
+    --btn-bg: linear-gradient(180deg, color-mix(in srgb, var(--danger) 88%, #ffffff 12%), var(--danger));
+    --btn-fg: var(--danger-foreground);
+    --btn-border: color-mix(in srgb, var(--danger) 78%, #ffffff 22%);
+}
+
+.btn-warning {
+    --btn-bg: linear-gradient(180deg, color-mix(in srgb, var(--warning) 88%, #ffffff 12%), var(--warning));
+    --btn-fg: var(--warning-foreground);
+    --btn-border: color-mix(in srgb, var(--warning) 76%, #ffffff 24%);
+}
+
+.btn-ghost {
+    --btn-bg: transparent;
+    --btn-fg: var(--text-main);
+    --btn-border: color-mix(in srgb, var(--border) 72%, #ffffff 28%);
+}
+
+.btn-ghost:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--surface) 90%, #ffffff 10%);
+}
+
+.input,
+.select,
+.textarea {
+    width: 100%;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: color-mix(in srgb, var(--surface) 92%, #ffffff 8%);
+    color: var(--text-main);
+    padding: 0.62rem 0.8rem;
+    font-size: 0.9rem;
+    line-height: 1.25;
+    transition:
+        border-color var(--transition-fast),
+        background var(--transition-fast),
+        box-shadow var(--transition-fast);
+}
+
+.input::placeholder,
+.textarea::placeholder {
+    color: var(--text-subtle);
+}
+
+.input:hover,
+.select:hover,
+.textarea:hover {
+    border-color: var(--border-strong);
+}
+
+.input:focus,
+.select:focus,
+.textarea:focus {
+    outline: none;
+    border-color: color-mix(in srgb, var(--primary) 76%, #ffffff 24%);
+    box-shadow: 0 0 0 3px var(--ring);
+}
+
+.badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 1.4rem;
+    padding: 0.2rem 0.55rem;
+    border-radius: var(--radius-full);
+    border: 1px solid color-mix(in srgb, var(--border-strong) 78%, #ffffff 22%);
+    background: color-mix(in srgb, var(--surface) 84%, #ffffff 16%);
+    color: var(--text-main);
+    font-size: 0.72rem;
+    line-height: 1;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+
+.badge-success {
+    border-color: color-mix(in srgb, var(--success) 70%, #ffffff 30%);
+    background: color-mix(in srgb, var(--success) 22%, transparent 78%);
+    color: var(--success-light);
+}
+
+.badge-warning {
+    border-color: color-mix(in srgb, var(--warning) 70%, #ffffff 30%);
+    background: color-mix(in srgb, var(--warning) 22%, transparent 78%);
+    color: var(--warning);
+}
+
+.badge-danger {
+    border-color: color-mix(in srgb, var(--danger) 70%, #ffffff 30%);
+    background: color-mix(in srgb, var(--danger) 22%, transparent 78%);
+    color: var(--danger-light);
+}
+
+/* Phase 4 polish: diagnostics readability */
+.diagnostics-row {
+    margin-top: var(--space-2);
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+}
+
+.diagnostics-label {
+    flex: 0 0 auto;
+    margin-top: 0.15rem;
+}
+
+.diagnostics-row .diag-status {
+    margin: 0;
+    max-width: min(100%, 76ch);
+    padding: 0.34rem 0.65rem;
+    border-radius: var(--radius-full);
+    border: 1px solid color-mix(in srgb, var(--border-strong) 64%, #ffffff 36%);
+    background: color-mix(in srgb, var(--surface-active) 84%, #ffffff 16%);
+    color: color-mix(in srgb, var(--text-muted) 86%, #ffffff 14%);
+    font-size: 0.74rem;
+    line-height: 1.35;
+    letter-spacing: 0.01em;
+    overflow-wrap: anywhere;
+    text-wrap: pretty;
+}
+
+/* Phase 4 polish: users empty state */
+.users-grid .users-empty {
+    grid-column: 1 / -1;
+    display: grid;
+    justify-items: center;
+    align-content: center;
+    gap: var(--space-2);
+    width: 100%;
+    min-height: 180px;
+    margin: 0;
+    padding: var(--space-8) var(--space-4);
+    text-align: center;
+    border: 1px dashed color-mix(in srgb, var(--border-strong) 68%, #ffffff 32%);
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--surface-active) 76%, #ffffff 24%);
+    color: var(--text-muted);
+}
+
+.users-grid .users-empty::before {
+    content: "👥";
+    font-size: 1.3rem;
+    line-height: 1;
+    opacity: 0.82;
+    filter: saturate(0.82);
+}
+
+/* Phase 4 polish: clearer emergency guest-lock button state */
+.btn.btn-emergency[data-state="guest-lock"] {
+    background: color-mix(in srgb, var(--warning) 24%, var(--surface) 76%);
+    border: 1px solid color-mix(in srgb, var(--warning) 68%, #ffffff 32%);
+    color: var(--warning-foreground);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warning) 42%, transparent 58%);
+}
+
+.btn.btn-emergency[data-state="guest-lock"]:disabled {
+    opacity: 1;
+    filter: none;
+}
+
+@media (max-width: 640px) {
+    .diagnostics-row {
+        justify-content: flex-start;
+    }
+
+    .diagnostics-row .diag-status {
+        border-radius: var(--radius-sm);
+    }
+}

@@ -1,0 +1,354 @@
+/* ============================================================
+   Users Module: user management section tweaks
+   ============================================================ */
+
+.section-header-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--space-5);
+    flex-wrap: wrap;
+    gap: var(--space-3);
+}
+
+.section-header-actions .section-title {
+    margin-right: auto;
+}
+
+.btn-add-user {
+    box-shadow: var(--shadow-xs);
+}
+
+.btn-add-user svg {
+    width: 1rem;
+    height: 1rem;
+    fill: currentColor;
+}
+
+.btn-add-user:hover {
+    box-shadow: var(--shadow-sm);
+}
+
+.users-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-3);
+    align-items: stretch;
+}
+
+@media (min-width: 640px) {
+    .users-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+.users-summary {
+    margin: 0 0 var(--space-3);
+    color: var(--text-subtle);
+    font-size: 0.8rem;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+}
+
+.users-empty {
+    grid-column: 1 / -1;
+    text-align: center;
+    color: var(--text-muted);
+    padding: var(--space-8) var(--space-4);
+    margin: 0;
+}
+
+.user-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    padding: var(--space-5);
+    background: color-mix(in srgb, var(--surface) 90%, #ffffff 10%);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    transition:
+        background var(--transition-fast),
+        border-color var(--transition-fast),
+        transform var(--transition-fast),
+        box-shadow var(--transition-fast);
+    gap: var(--space-4);
+    contain: layout paint;
+}
+
+.user-card-admin,
+.user-card[data-role='admin'] {
+    border-color: color-mix(in srgb, var(--danger) 52%, var(--border) 48%);
+    background:
+        linear-gradient(
+            140deg,
+            color-mix(in srgb, var(--danger) 10%, transparent 90%) 0%,
+            color-mix(in srgb, var(--surface) 92%, #ffffff 8%) 100%
+        );
+}
+
+.user-card-admin:hover,
+.user-card[data-role='admin']:hover {
+    border-color: color-mix(in srgb, var(--danger) 68%, var(--border-strong) 32%);
+    background:
+        linear-gradient(
+            140deg,
+            color-mix(in srgb, var(--danger) 14%, transparent 86%) 0%,
+            color-mix(in srgb, var(--surface-hover) 90%, #ffffff 10%) 100%
+        );
+}
+
+.user-card:hover {
+    background: color-mix(in srgb, var(--surface-hover) 88%, #ffffff 12%);
+    border-color: color-mix(in srgb, var(--primary) 44%, var(--border-strong) 56%);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-sm);
+}
+
+.user-card-locked {
+    border-color: color-mix(in srgb, var(--danger) 36%, var(--border) 64%);
+    background: color-mix(in srgb, var(--danger) 8%, var(--surface) 92%);
+}
+
+.user-card-locked:hover {
+    border-color: color-mix(in srgb, var(--danger) 54%, var(--border-strong) 46%);
+    background: color-mix(in srgb, var(--danger) 10%, var(--surface-hover) 90%);
+}
+
+.user-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+.user-name-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+}
+
+.user-name {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-main);
+    line-height: 1.2;
+}
+
+.user-meta {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+}
+
+.user-uid {
+    font-family: var(--font-mono);
+    font-size: 0.77rem;
+    color: var(--text-subtle);
+    background: color-mix(in srgb, var(--surface-active) 84%, #ffffff 16%);
+    border: 1px solid color-mix(in srgb, var(--border) 78%, transparent 22%);
+    padding: 0.25rem 0.55rem;
+    border-radius: var(--radius-sm);
+}
+
+.user-chat {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    background: color-mix(in srgb, var(--surface-active) 72%, transparent 28%);
+    border: 1px solid color-mix(in srgb, var(--border) 70%, transparent 30%);
+    padding: 0.22rem 0.48rem;
+    border-radius: var(--radius-sm);
+}
+
+.user-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 1.4rem;
+    padding: 0.22rem 0.55rem;
+    border-radius: var(--radius-full);
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border: 1px solid transparent;
+}
+
+.badge-admin {
+    background:
+        linear-gradient(
+            135deg,
+            color-mix(in srgb, var(--danger) 88%, #5f0a0a 12%),
+            color-mix(in srgb, var(--danger) 72%, #4a0505 28%)
+        );
+    color: #fff;
+    border-color: color-mix(in srgb, var(--danger) 78%, #ffd7d7 22%);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--danger) 35%, transparent 65%);
+}
+
+.badge-user {
+    background: color-mix(in srgb, var(--primary) 18%, transparent 82%);
+    color: var(--primary-light);
+    border-color: color-mix(in srgb, var(--primary) 46%, transparent 54%);
+}
+
+.badge-guest {
+    background: color-mix(in srgb, var(--warning) 18%, transparent 82%);
+    color: var(--warning);
+    border-color: color-mix(in srgb, var(--warning) 46%, transparent 54%);
+}
+
+.user-actions {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.btn-edit,
+.btn-delete {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.52rem;
+    min-width: 2.2rem;
+    min-height: 2.2rem;
+    border-radius: var(--radius-sm);
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
+    border: 1px solid transparent;
+}
+
+.btn-edit {
+    background: color-mix(in srgb, var(--primary) 14%, transparent 86%);
+    border-color: color-mix(in srgb, var(--primary) 40%, transparent 60%);
+    color: var(--primary-light);
+}
+
+.btn-delete {
+    background: color-mix(in srgb, var(--danger) 12%, transparent 88%);
+    border-color: color-mix(in srgb, var(--danger) 40%, transparent 60%);
+    color: var(--danger-light);
+}
+
+.btn-edit svg,
+.btn-delete svg {
+    width: 1.1rem;
+    height: 1.1rem;
+    fill: currentColor;
+    flex-shrink: 0;
+}
+
+.btn-edit:hover {
+    background: color-mix(in srgb, var(--primary) 22%, transparent 78%);
+    border-color: color-mix(in srgb, var(--primary) 55%, transparent 45%);
+    transform: translateY(-1px);
+}
+
+.btn-delete:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--danger) 18%, transparent 82%);
+    border-color: color-mix(in srgb, var(--danger) 56%, transparent 44%);
+    transform: translateY(-1px);
+}
+
+.btn-delete:disabled {
+    opacity: 0.46;
+    cursor: not-allowed;
+}
+
+@media (max-width: 1023px) {
+    .users-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+    }
+
+    .users-grid .user-card {
+        margin: 0;
+        height: 100%;
+        padding: var(--space-4);
+        gap: var(--space-3);
+        flex-wrap: nowrap;
+        align-items: flex-start;
+    }
+
+    .users-grid .user-info {
+        min-width: 0;
+    }
+
+    .users-grid .user-name-row {
+        flex-wrap: wrap;
+        gap: var(--space-1);
+    }
+
+    .users-grid .user-name {
+        font-size: 0.95rem;
+    }
+
+    .users-grid .user-meta {
+        gap: var(--space-1);
+        margin-bottom: 0;
+    }
+
+    .users-grid .user-actions {
+        margin-left: auto;
+        gap: var(--space-1);
+        flex-shrink: 0;
+    }
+
+    .users-grid .btn-edit,
+    .users-grid .btn-delete {
+        min-width: 40px;
+        min-height: 40px;
+        padding: 0.55rem;
+    }
+}
+
+@media (max-width: 768px) {
+    .section-header-actions {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .section-header-controls {
+        justify-content: stretch;
+    }
+
+    .section-header-controls .btn-clear-logs,
+    .section-header-controls .btn-add-user {
+        flex: 1 1 180px;
+        justify-content: center;
+    }
+
+    .btn-add-user {
+        width: 100%;
+        justify-content: center;
+    }
+}
+
+@media (max-width: 640px) {
+    .users-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .users-grid .user-card {
+        flex-wrap: wrap;
+        gap: 0.7rem;
+    }
+
+    .users-grid .user-actions {
+        width: 100%;
+        margin-left: 0;
+        justify-content: flex-end;
+    }
+
+    .users-grid .btn-edit,
+    .users-grid .btn-delete {
+        min-width: 42px;
+        min-height: 42px;
+    }
+}

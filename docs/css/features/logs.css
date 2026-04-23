@@ -1,0 +1,431 @@
+/* ============================================================
+   Logs Module: actions + table helper styles
+   ============================================================ */
+
+.logs-table-wrapper {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--surface) 90%, #ffffff 10%);
+    border: 1px solid var(--border);
+    overflow-y: hidden;
+}
+
+.logs-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+    table-layout: fixed;
+}
+
+.logs-table thead {
+    background: color-mix(in srgb, var(--surface-active) 88%, #ffffff 12%);
+    border-bottom: 1px solid var(--border-strong);
+}
+
+.logs-table th {
+    padding: 0.76rem 0.8rem;
+    text-align: left;
+    font-weight: 600;
+    color: var(--text-main);
+    text-transform: uppercase;
+    font-size: 0.72rem;
+    letter-spacing: 0.05em;
+    vertical-align: middle;
+}
+
+.logs-table td {
+    padding: 0.74rem 0.8rem;
+    color: var(--text-muted);
+    vertical-align: middle;
+}
+
+.logs-table tbody tr {
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 86%, transparent 14%);
+    transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.logs-table tbody tr:hover {
+    background: color-mix(in srgb, var(--surface-hover) 88%, #ffffff 12%);
+}
+
+.logs-table tbody tr:last-child {
+    border-bottom: none;
+}
+
+.col-time {
+    color: var(--text-subtle);
+    font-size: 0.84rem;
+    white-space: nowrap;
+    width: 30%;
+    font-variant-numeric: tabular-nums;
+}
+
+.col-user {
+    font-weight: 500;
+    color: var(--text-main);
+    width: 30%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.log-user-cell {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.42rem;
+    max-width: 100%;
+}
+
+.log-user-name {
+    display: inline-block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 12.5rem;
+}
+
+.col-method {
+    width: 24%;
+}
+
+.logs-table th.col-status,
+.logs-table td.col-status {
+    width: 16%;
+    min-width: 104px;
+    text-align: center;
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+}
+
+.method-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 88px;
+    max-width: 100%;
+    padding: 0.28rem 0.52rem;
+    background: color-mix(in srgb, var(--primary) 16%, transparent 84%);
+    border: 1px solid color-mix(in srgb, var(--primary) 48%, transparent 52%);
+    border-radius: var(--radius-sm);
+    color: color-mix(in srgb, var(--primary) 82%, #ffffff 18%);
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    vertical-align: middle;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.method-cell {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+}
+
+.source-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 76px;
+    max-width: 100%;
+    padding: 0.24rem 0.48rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid transparent;
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.source-web {
+    background: color-mix(in srgb, var(--primary) 22%, transparent 78%);
+    border-color: color-mix(in srgb, var(--primary) 56%, transparent 44%);
+    color: var(--primary-light);
+}
+
+.source-telegram {
+    background: color-mix(in srgb, #14b8a6 22%, transparent 78%);
+    border-color: color-mix(in srgb, #14b8a6 54%, transparent 46%);
+    color: #5eead4;
+}
+
+.source-device {
+    background: color-mix(in srgb, #8b5cf6 22%, transparent 78%);
+    border-color: color-mix(in srgb, #8b5cf6 54%, transparent 46%);
+    color: #c4b5fd;
+}
+
+.source-system {
+    background: color-mix(in srgb, var(--surface-active) 85%, #ffffff 15%);
+    border-color: color-mix(in srgb, var(--border-strong) 65%, transparent 35%);
+    color: var(--text-muted);
+}
+
+.actor-role-badge {
+    min-width: 64px;
+    padding: 0.2rem 0.46rem;
+    font-size: 0.62rem;
+    letter-spacing: 0.04em;
+    border: 1px solid transparent;
+    white-space: nowrap;
+}
+
+.actor-role-admin {
+    background: color-mix(in srgb, var(--danger) 20%, transparent 80%);
+    border-color: color-mix(in srgb, var(--danger) 52%, transparent 48%);
+    color: var(--danger-light);
+}
+
+.actor-role-user {
+    background: color-mix(in srgb, var(--primary) 20%, transparent 80%);
+    border-color: color-mix(in srgb, var(--primary) 52%, transparent 48%);
+    color: var(--primary-light);
+}
+
+.actor-role-guest {
+    background: color-mix(in srgb, var(--warning) 18%, transparent 82%);
+    border-color: color-mix(in srgb, var(--warning) 48%, transparent 52%);
+    color: var(--warning);
+}
+
+.actor-role-system {
+    background: color-mix(in srgb, var(--surface-active) 84%, #ffffff 16%);
+    border-color: color-mix(in srgb, var(--border-strong) 66%, transparent 34%);
+    color: var(--text-muted);
+}
+
+.method-guest {
+    background: color-mix(in srgb, var(--warning) 18%, transparent 82%);
+    border-color: color-mix(in srgb, var(--warning) 50%, transparent 50%);
+    color: var(--warning);
+}
+
+.logs-table .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.28rem 0.62rem;
+    border-radius: var(--radius-sm);
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    white-space: nowrap;
+    border: 1px solid transparent;
+}
+
+.status-success {
+    background: color-mix(in srgb, var(--success) 18%, transparent 82%);
+    color: var(--success-light);
+    border-color: color-mix(in srgb, var(--success) 45%, transparent 55%);
+}
+
+.status-error {
+    background: color-mix(in srgb, var(--danger) 16%, transparent 84%);
+    color: var(--danger-light);
+    border-color: color-mix(in srgb, var(--danger) 46%, transparent 54%);
+}
+
+.status-alarm {
+    background: color-mix(in srgb, var(--danger) 24%, transparent 76%);
+    color: var(--danger-foreground);
+    border-color: color-mix(in srgb, var(--danger) 64%, transparent 36%);
+    font-weight: 700;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 48%, transparent 52%);
+}
+
+.status-info {
+    background: color-mix(in srgb, var(--primary) 14%, transparent 86%);
+    color: color-mix(in srgb, var(--primary-light) 75%, #ffffff 25%);
+    border-color: color-mix(in srgb, var(--primary) 40%, transparent 60%);
+}
+
+.logs-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-sm);
+    min-height: 190px;
+    width: 100%;
+    text-align: center;
+    padding: var(--space-lg);
+    color: var(--text-muted);
+}
+
+.logs-empty-icon {
+    font-size: 2.5rem;
+    opacity: 0.5;
+}
+
+.logs-empty-text {
+    font-size: 0.95rem;
+}
+
+.btn-clear-logs {
+    white-space: nowrap;
+    border-color: color-mix(in srgb, var(--danger) 45%, var(--border) 55%);
+    color: color-mix(in srgb, var(--danger-light) 90%, var(--text-main) 10%);
+}
+
+.btn-clear-logs:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--danger) 14%, var(--surface) 86%);
+    border-color: color-mix(in srgb, var(--danger) 56%, var(--border-strong) 44%);
+}
+
+.btn-clear-logs:disabled {
+    opacity: 0.5;
+}
+
+.logs-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) repeat(3, minmax(130px, auto)) auto;
+    gap: 0.65rem;
+    margin-bottom: 0.7rem;
+    align-items: end;
+}
+
+.logs-search-wrap,
+.logs-filter-wrap {
+    display: grid;
+    gap: 0.32rem;
+}
+
+.logs-search-input,
+.logs-status-filter,
+.logs-date-filter {
+    min-height: 2.2rem;
+}
+
+.logs-filter-label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-subtle);
+}
+
+.logs-status-filter {
+    min-width: 140px;
+}
+
+.logs-date-filter {
+    min-width: 140px;
+    font-variant-numeric: tabular-nums;
+}
+
+.btn-logs-clear-filters {
+    min-height: 2.2rem;
+    align-self: end;
+    white-space: nowrap;
+}
+
+.logs-filter-summary {
+    margin: 0 0 0.6rem;
+    min-height: 1.1rem;
+    font-size: 0.78rem;
+    color: var(--text-subtle);
+}
+
+@media (max-width: 768px) {
+    .logs-toolbar {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        align-items: stretch;
+    }
+
+    .logs-search-wrap {
+        grid-column: 1 / -1;
+    }
+
+    .btn-logs-clear-filters {
+        grid-column: 1 / -1;
+    }
+
+    .logs-status-filter {
+        min-width: 0;
+    }
+
+    .col-method {
+        display: none;
+    }
+
+    .col-time {
+        width: 46%;
+    }
+
+    .col-user {
+        width: 36%;
+    }
+
+    .logs-table th,
+    .logs-table td {
+        padding: 0.62rem 0.68rem;
+    }
+}
+
+@media (max-width: 640px) {
+    .logs-filter-summary {
+        font-size: 0.72rem;
+    }
+
+    .logs-toolbar {
+        grid-template-columns: 1fr;
+    }
+
+    .btn-logs-clear-filters {
+        width: 100%;
+    }
+
+    .logs-table-wrapper {
+        overflow-x: hidden;
+    }
+
+    .logs-table {
+        min-width: 0;
+        width: 100%;
+        font-size: 0.7rem;
+    }
+
+    .logs-table th,
+    .logs-table td {
+        padding: 0.42rem 0.32rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .logs-table .col-time {
+        width: 44%;
+    }
+
+    .logs-table .col-user {
+        width: 34%;
+    }
+
+    .log-user-cell {
+        gap: 0.24rem;
+    }
+
+    .log-user-name {
+        max-width: 6rem;
+    }
+
+    .actor-role-badge {
+        min-width: 52px;
+        font-size: 0.58rem;
+        padding: 0.16rem 0.34rem;
+    }
+
+    .logs-table th:last-child,
+    .logs-table td:last-child {
+        width: 22%;
+        text-align: center;
+    }
+
+    .logs-table .status-badge {
+        padding: 0.22rem 0.35rem;
+        font-size: 0.66rem;
+        gap: 0.15rem;
+    }
+}

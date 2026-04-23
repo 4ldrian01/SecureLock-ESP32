@@ -691,6 +691,21 @@ bool WebServer::_isAllowedCORSOrigin(AsyncWebServerRequest* request, const Strin
         return value == prefix || value.startsWith(prefix + ":");
     };
 
+    auto isGitHubPagesOrigin = [&](const String& value) -> bool {
+        if (!value.startsWith("https://")) {
+            return false;
+        }
+
+        const String suffix = ".github.io";
+        int suffixIndex = value.indexOf(suffix);
+        if (suffixIndex <= static_cast<int>(strlen("https://"))) {
+            return false;
+        }
+
+        int endIndex = suffixIndex + suffix.length();
+        return endIndex == value.length() || value.charAt(endIndex) == ':';
+    };
+
     auto isHostOrigin = [&](const String& hostValue) -> bool {
         if (hostValue.length() == 0) {
             return false;
@@ -726,7 +741,8 @@ bool WebServer::_isAllowedCORSOrigin(AsyncWebServerRequest* request, const Strin
         || isPrefixAllowed(normalizedOrigin, "http://127.0.0.1")
         || isPrefixAllowed(normalizedOrigin, "https://127.0.0.1")
         || isPrefixAllowed(normalizedOrigin, "http://[::1]")
-        || isPrefixAllowed(normalizedOrigin, "https://[::1]")) {
+        || isPrefixAllowed(normalizedOrigin, "https://[::1]")
+        || isGitHubPagesOrigin(normalizedOrigin)) {
         return true;
     }
 

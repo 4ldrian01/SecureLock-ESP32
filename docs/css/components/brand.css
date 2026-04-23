@@ -1,0 +1,133 @@
+.brand {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+}
+
+.brand-logo {
+    width: 48px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+    border-radius: var(--radius-md);
+    box-shadow: var(--glow-primary);
+}
+
+.brand-logo svg {
+    width: 28px;
+    height: 28px;
+    fill: var(--text-main);
+}
+
+.brand-text {
+    display: flex;
+    flex-direction: column;
+}
+
+.brand-name {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--text-main);
+    letter-spacing: -0.03em;
+}
+
+.brand-tagline {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+}
+
+.header-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
+}
+
+.header .status-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-sm);
+    background: var(--surface-glass);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    border: 1px solid var(--border-glass);
+    border-radius: var(--radius-full);
+    padding: var(--space-sm) var(--space-md);
+    font-size: 0.875rem;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.header .status-badge[data-status="online"] {
+    border-color: rgba(16, 185, 129, 0.35);
+}
+
+.header .status-badge[data-status="offline"] {
+    border-color: rgba(239, 68, 68, 0.35);
+}
+
+.header .status-indicator {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+}
+
+.header .status-badge[data-status="online"] .status-indicator {
+    background: var(--success);
+    box-shadow: 0 0 8px var(--success);
+}
+
+.header .status-badge[data-status="offline"] .status-indicator {
+    background: var(--danger);
+    box-shadow: 0 0 8px var(--danger);
+    animation: none;
+}
+
+.btn-logout {
+    padding: 0.55rem 0.9rem;
+    border: 1px solid var(--border-glass-strong);
+    border-radius: var(--radius-sm);
+    background: rgba(239, 68, 68, 0.14);
+    color: var(--danger-light);
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.btn-logout:hover {
+    border-color: rgba(239, 68, 68, 0.55);
+    background: rgba(239, 68, 68, 0.24);
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.7; transform: scale(1.1); }
+}
+
+@media (max-width: 1023px) {
+    .brand {
+        gap: 10px;
+        width: 100%;
+    }
+
+    .brand-name {
+        font-size: clamp(1.1rem, 4.5vw, 1.35rem);
+        line-height: 1.2;
+    }
+
+    .brand-tagline {
+        font-size: 0.68rem;
+        letter-spacing: 0.06em;
+    }
+
+    .header-actions {
+        width: 100%;
+        justify-content: space-between;
+    }
+}

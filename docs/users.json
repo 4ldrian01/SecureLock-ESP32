@@ -1,0 +1,8 @@
+{
+  "users": [],
+  "settings": {
+    "maxUsers": 10,
+    "allowGuestCards": false,
+    "requireOTPForGuests": true
+  }
+}

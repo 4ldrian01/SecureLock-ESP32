@@ -1,0 +1,233 @@
+/*
+ * Critical CSS (first paint)
+ * Keeps dashboard structure stable while full stylesheet finishes loading.
+ */
+
+:root {
+    --critical-bg: #07090f;
+    --critical-surface: #10131a;
+    --critical-border: rgba(148, 163, 184, 0.28);
+    --critical-text: #e5e7eb;
+    --critical-muted: #94a3b8;
+    --critical-accent: #3b82f6;
+}
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    margin: 0;
+    min-height: 100%;
+    background: var(--critical-bg);
+    color: var(--critical-text);
+    font-family: Inter, "Segoe UI", Roboto, system-ui, -apple-system, sans-serif;
+    -webkit-text-size-adjust: 100%;
+}
+
+body {
+    line-height: 1.45;
+}
+
+body[data-authenticated="pending"] .dashboard,
+body[data-authenticated="pending"] .dashboard-footer,
+body[data-authenticated="false"] .dashboard,
+body[data-authenticated="false"] .dashboard-footer {
+    pointer-events: none;
+    user-select: none;
+    opacity: 0;
+    visibility: hidden;
+}
+
+body[data-authenticated="true"] .dashboard,
+body[data-authenticated="true"] .dashboard-footer {
+    pointer-events: auto;
+    user-select: auto;
+    opacity: 1;
+    visibility: visible;
+}
+
+.dashboard {
+    width: min(100%, 1280px);
+    margin-inline: auto;
+    padding: 12px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+}
+
+.header,
+.card,
+.auth-card {
+    background: var(--critical-surface);
+    border: 1px solid var(--critical-border);
+    border-radius: 14px;
+    color: var(--critical-text);
+}
+
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 12px;
+}
+
+.dashboard > section > .card {
+    padding: 14px;
+}
+
+.brand-name,
+.section-title,
+.lock-status-label {
+    margin: 0;
+}
+
+.brand-tagline,
+.lock-status-sub,
+.pin-helper,
+.pagination-info,
+.footer-text {
+    color: var(--critical-muted);
+}
+
+.logs-table-wrapper {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.logs-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--critical-border);
+    font-size: 0.82rem;
+    color: var(--critical-text);
+}
+
+.input,
+.btn {
+    font: inherit;
+}
+
+.input {
+    width: 100%;
+    min-height: 40px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    border: 1px solid var(--critical-border);
+    background: #0b1018;
+    color: var(--critical-text);
+}
+
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 40px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--critical-border);
+    background: #172034;
+    color: var(--critical-text);
+}
+
+.btn:disabled {
+    opacity: 0.65;
+}
+
+.auth-overlay {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 16px;
+    background: rgba(2, 6, 23, 0.72);
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+}
+
+.auth-card {
+    width: min(100%, 420px);
+    padding: 18px;
+}
+
+.auth-title {
+    margin: 0 0 8px;
+    font-size: 1.2rem;
+}
+
+.auth-subtitle {
+    margin: 0 0 14px;
+    color: var(--critical-muted);
+}
+
+.auth-field {
+    margin-bottom: 10px;
+}
+
+.auth-field label {
+    display: block;
+    margin-bottom: 6px;
+}
+
+.btn-auth-login {
+    width: 100%;
+    background: linear-gradient(180deg, #3b82f6, #2563eb);
+    border-color: rgba(96, 165, 250, 0.85);
+}
+
+@media (min-width: 1080px) {
+    .dashboard {
+        grid-template-columns: minmax(340px, 0.86fr) minmax(470px, 1.14fr);
+        grid-template-areas:
+            "header header"
+            "hero hero"
+            "guest logs"
+            "users users";
+        gap: 16px;
+    }
+
+    .header {
+        grid-area: header;
+    }
+
+    .hero-section {
+        grid-area: hero;
+    }
+
+    .guest-section {
+        grid-area: guest;
+    }
+
+    .logs-section {
+        grid-area: logs;
+    }
+
+    .users-section {
+        grid-area: users;
+    }
+}
+
+@media (max-width: 640px) {
+    .dashboard {
+        padding: 10px;
+        gap: 10px;
+    }
+
+    .header,
+    .dashboard > section > .card {
+        padding: 12px;
+    }
+}

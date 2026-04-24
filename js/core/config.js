@@ -1,0 +1,107 @@
+function normalizeApiBaseUrl(value) {
+    const raw = String(value || '').trim();
+    if (!raw) {
+        return '';
+    }
+
+    return raw.replace(/\/+$/, '');
+}
+
+function getRuntimeApiBaseUrl() {
+    if (typeof window === 'undefined') {
+        return '';
+    }
+
+    return normalizeApiBaseUrl(window.SECURELOCK_API_BASE_URL);
+}
+
+function buildApiUrl(path) {
+    const apiPath = String(path || '').trim();
+    if (!apiPath) {
+        return '';
+    }
+
+    const runtimeBase = getRuntimeApiBaseUrl();
+    if (!runtimeBase) {
+        return apiPath;
+    }
+
+    return `${runtimeBase}${apiPath.startsWith('/') ? apiPath : `/${apiPath}`}`;
+}
+
+export const CONFIG = {
+    POLL_INTERVAL: 1400,
+    POLL_INTERVAL_MOBILE: 2200,
+    POLL_INTERVAL_HIDDEN: 6000,
+    POLL_INTERVAL_HIDDEN_MOBILE: 9000,
+    POLL_INTERVAL_MAX: 12000,
+    POLL_INTERVAL_GUEST_ACTIVE: 700,
+    POLL_INTERVAL_UNLOCKED: 650,
+    POLL_BACKOFF_MULTIPLIER: 1.6,
+    POLL_INTERVAL_RTT_SLOW_MS: 500,
+    POLL_INTERVAL_RTT_CRITICAL_MS: 900,
+    POLL_INTERVAL_SLOW_MULTIPLIER: 1.35,
+    POLL_INTERVAL_CRITICAL_MULTIPLIER: 1.85,
+    POLL_INTERVAL_SAVE_DATA_MULTIPLIER: 1.5,
+    POLL_JITTER_PCT: 0.08,
+    LAZY_SECTION_PRELOAD_PX: 220,
+    LAZY_SECTION_PRELOAD_PX_MOBILE: 100,
+    LOGS_REFRESH_INTERVAL: 10000,
+    LOGS_REFRESH_INTERVAL_HIDDEN: 20000,
+    USERS_REFRESH_INTERVAL: 15000,
+    USERS_REFRESH_INTERVAL_HIDDEN: 30000,
+    DIAGNOSTICS_INTERVAL: 5000,
+    DIAGNOSTICS_INTERVAL_HIDDEN: 12000,
+    DIAGNOSTICS_INTERVAL_MOBILE: 12000,
+    LOGS_CLOCK_TICK_MS: 20000,
+    LOGS_CLOCK_TICK_MS_MOBILE: 30000,
+    LOGS_PAGE_SIZE_MOBILE: 5,
+    LOGS_PAGE_SIZE_TABLET: 8,
+    LOGS_PAGE_SIZE_DESKTOP: 10,
+    TOAST_DURATION: 3500,
+    EMERGENCY_COOLDOWN: 5,
+    STATUS_TIMEOUT_MS: 4500,
+    DIAGNOSTICS_TIMEOUT_MS: 3200,
+    LOGS_TIMEOUT_MS: 5200,
+    USERS_TIMEOUT_MS: 5200,
+    RFID_TIMEOUT_MS: 1500,
+    AUTH_REACHABILITY_TIMEOUT_MS: 1600,
+    AUTH_BOOT_STATUS_TIMEOUT_MS: 1800,
+    AUTH_BOOT_STATUS_RETRIES: 0,
+    AUTH_PENDING_FALLBACK_MS: 2200,
+    AUTH_PREAUTH_HEALTH_INTERVAL_MS: 7000,
+    RFID_ENROLLMENT_WINDOW_MS: 25000,
+    FALLBACK_AP_BASE_SSID: 'SecureLock-Setup',
+    FALLBACK_AP_DEFAULT_IP: '192.168.4.1',
+    API_RETRY_COUNT: 1,
+    API_RETRY_BASE_DELAY_MS: 170,
+    API_RETRY_MAX_DELAY_MS: 700,
+    RFID_POLL_INTERVAL: 400,
+    RFID_POLL_INTERVAL_HIDDEN: 1000,
+    RFID_POLL_MAX_INTERVAL: 2000,
+    AUTH_SESSION_KEY: 'securelock_admin_api_session_v2',
+    ADMIN_AUTH: {
+        SESSION_TTL_MS: 15 * 60 * 1000,
+        MAX_ATTEMPTS: 5,
+        LOCKOUT_MS: 5 * 60 * 1000
+    },
+    API: {
+        AUTH_LOGIN: buildApiUrl('/api/auth/login'),
+        AUTH_LOGOUT: buildApiUrl('/api/auth/logout'),
+        AUTH_STATUS: buildApiUrl('/api/auth/status'),
+        STATUS: buildApiUrl('/api/status'),
+        UNLOCK: buildApiUrl('/api/unlock'),
+        GUEST_CODE: buildApiUrl('/api/guest-code'),
+        USERS: buildApiUrl('/api/users'),
+        USERS_RESET: buildApiUrl('/api/users/reset'),
+        LOGS: buildApiUrl('/api/logs'),
+        LOGS_CLEAR: buildApiUrl('/api/logs'),
+        RFID_ENROLL_START: buildApiUrl('/api/rfid/enroll/start'),
+        RFID_ENROLL_STOP: buildApiUrl('/api/rfid/enroll/stop'),
+        RFID_SCAN: buildApiUrl('/api/rfid/scan'),
+        DIAGNOSTICS: buildApiUrl('/api/diagnostics')
+    }
+};
+
+export const GUEST_BUTTON_ICON =
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>';

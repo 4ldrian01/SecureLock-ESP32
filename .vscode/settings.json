@@ -1,7 +1,3 @@
 {
-  "C_Cpp.default.configurationProvider": "platformio.platformio-ide",
-  "C_Cpp.intelliSenseEngine": "default",
-  "files.associations": {
-    "*.tcc": "cpp"
-  }
+    "liveServer.settings.port": 5501
 }

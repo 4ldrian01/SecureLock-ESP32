@@ -1,0 +1,2 @@
+/* Legacy compatibility shim: users styles moved to /css/features/users.css */
+@import url('/css/features/users.css');
